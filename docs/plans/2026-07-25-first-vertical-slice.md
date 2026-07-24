@@ -469,7 +469,7 @@ All models are frozen. A rule must never mutate a finding it did not create.
 """
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -534,7 +534,6 @@ class Finding:
     evidence_path: tuple[PathStep, ...]
     remediation: str = ""
     confidence: float = 1.0
-    _ids: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.evidence_path:
@@ -1763,6 +1762,9 @@ def test_scan_of_clean_project_exits_zero(tmp_path: Path):
     assert "No findings" in result.stdout
 
 
+# The two dash characters below are the values under test. This file is the
+# single sanctioned exception to the project-wide no-dash rule; they must not
+# be replaced with hyphens or the assertion becomes meaningless.
 def test_no_em_dashes_in_output():
     """Project convention: hyphens only."""
     result = runner.invoke(app, ["scan", str(FIXTURE)])
