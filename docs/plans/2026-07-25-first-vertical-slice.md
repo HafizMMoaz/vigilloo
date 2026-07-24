@@ -969,7 +969,7 @@ def test_extracts_routes_with_resolved_action():
     search = by_uri["/orders/search"]
     assert search.verbs == ("POST",)
     assert search.action_fqn == "App\\Http\\Controllers\\OrderController::search"
-    assert search.span.start_line == 8
+    assert search.span.start_line == 7
 
 
 def test_routes_are_returned_in_deterministic_order():
@@ -1373,7 +1373,8 @@ def test_finds_the_interprocedural_path_to_the_sink():
     entry, source, propagator, sink = paths[0]
     assert "/orders/search" in entry.snippet
     assert "input" in source.snippet
-    assert source.span.start_line == 18
+    assert source.span.start_line == 17
+    assert propagator.span.start_line == 19
     assert "orderByRaw" in sink.snippet
     assert sink.span.file.name == "OrderRepository.php"
     assert sink.span.start_line == 12
@@ -1894,11 +1895,11 @@ Expected output shape:
 CRITICAL - SQL Injection
   tests/fixtures/laravel-minimal/app/Repositories/OrderRepository.php:12 · CWE-89 · php.sql-injection
 
-  1. api.php:8  entry
+  1. api.php:7  entry
      POST /orders/search -> App\Http\Controllers\OrderController::search
-  2. OrderController.php:18  source
+  2. OrderController.php:17  source
      $sort = $request->input('sort')
-  3. OrderController.php:20  flows
+  3. OrderController.php:19  flows
      $this->orders->search($sort)
   4. OrderRepository.php:12  sink
      ->orderByRaw("created_at {$sort}")
