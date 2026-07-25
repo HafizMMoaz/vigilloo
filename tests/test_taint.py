@@ -317,9 +317,13 @@ def test_raw_blade_echo_is_reached_from_the_route() -> None:
 def test_escaped_and_manually_escaped_echoes_are_silent() -> None:
     """The test that distinguishes a kind set from a boolean flag.
 
-    Lines 3 and 4 of the fixture template render the same tainted value through
-    {{ }} and through {!! e() !!}. Both are safe, and a boolean taint flag
-    would report both.
+    Lines 3 and 4 of the fixture template render the same tainted value
+    through {{ }} and through {!! e() !!}. Only line 4 actually exercises
+    kind-based taint: e($sort) reaches a sink with the html kind cleared.
+    Line 3's {{ $sort }} is rewritten into `e($sort);`, an expression
+    statement rather than an echo (see laravel/blade.py), so it never
+    becomes an echo sink at all and would stay silent even under a boolean
+    taint flag.
     """
     paths = find_taint_paths(load_project(FIXTURE))
     lines = {p[-1].span.start_line for p in paths if p[-1].span.file.name == "show.blade.php"}

@@ -6,7 +6,7 @@ from vigilloo.rules import scan_project
 FIXTURE = Path("tests/fixtures/laravel-minimal")
 
 
-def test_produces_one_critical_sql_injection_finding() -> None:
+def test_produces_the_sql_injection_and_xss_findings() -> None:
     findings = scan_project(load_project(FIXTURE))
     assert len(findings) == 2
 

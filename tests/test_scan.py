@@ -17,7 +17,7 @@ def test_scan_reports_the_finding_with_its_full_path() -> None:
     assert "OrderRepository.php" in out
     assert "/orders/search" in out
     assert "orderByRaw" in out
-    assert "SQL Injection" in out
+    assert "php.sql-injection" in out
 
 
 def test_scan_reports_the_xss_finding() -> None:
