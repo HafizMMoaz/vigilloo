@@ -78,6 +78,49 @@ def expr_kinds(
     return _union_of_children(node, source, local)
 
 
+def _request_like_params(project: Project, fqn: str) -> frozenset[str]:
+    """Parameter names of this method that plausibly hold a Request.
+
+    A parameter counts when its declared type's last namespace segment ends
+    with "Request" (Illuminate\\Http\\Request, FormRequest subclasses, ...),
+    or when it is literally named $request. The name fallback exists because
+    untyped $request parameters are common in the wild and in this repo's own
+    fixtures.
+
+    ponytail: a Request parameter that is neither type-hinted nor named
+    `request` is missed, and a Request stashed on $this is not tracked.
+    Full receiver-type resolution is the upgrade path.
+    """
+    symbol = project.method(fqn)
+    if symbol is None:
+        return frozenset()
+    names: set[str] = set()
+    for param_name, param_type in zip(symbol.params, symbol.param_types, strict=True):
+        if param_name == "request":
+            names.add(param_name)
+        elif param_type is not None and param_type.rsplit("\\", 1)[-1].endswith("Request"):
+            names.add(param_name)
+    return frozenset(names)
+
+
+def _is_request_receiver(call: Node, source: bytes, request_vars: frozenset[str]) -> bool:
+    """Is the object this source-named method was called on plausibly a Request?
+
+    Source-named methods (get, all, query, only, except, json, url, ...) are
+    also Eloquent and Collection methods. Without this check, `Order::where(
+    ...)->get()` is indistinguishable from `$request->get(...)` and gets
+    reported as attacker-controlled request data - a fabricated evidence path.
+    """
+    obj = call.child_by_field_name("object")
+    if obj is None:
+        return False
+    if obj.type == "variable_name":
+        return _var_name(obj, source) in request_vars
+    if obj.type == "function_call_expression":
+        return node_text(obj.child_by_field_name("function"), source) == "request"
+    return False
+
+
 def _call_parts(call: Node, source: bytes) -> tuple[str, str, list[Node]]:
     """Return (receiver text, method name, argument nodes) for a call node."""
     obj = node_text(call.child_by_field_name("object"), source)
@@ -160,6 +203,7 @@ def _walk_method(
     class_fqn = fqn.rpartition("::")[0]
     local = dict(tainted)
     paths: list[list[PathStep]] = []
+    request_vars = _request_like_params(project, fqn)
 
     statements = [n for n in walk(method_node) if n.type in _STATEMENT_TYPES]
 
@@ -173,7 +217,11 @@ def _walk_method(
             target = _var_name(left, source)
 
             calls = find_all(right, "member_call_expression")
-            if any(is_source(node_text(c.child_by_field_name("name"), source)) for c in calls):
+            if any(
+                is_source(node_text(c.child_by_field_name("name"), source))
+                and _is_request_receiver(c, source, request_vars)
+                for c in calls
+            ):
                 local[target] = ALL_KINDS
                 prefix = prefix + [
                     PathStep(

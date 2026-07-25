@@ -168,6 +168,75 @@ def test_computed_view_name_with_tainted_data_is_counted(tmp_path: Path) -> None
     assert stats.unresolved == 1
 
 
+def test_eloquent_get_result_without_a_request_is_not_treated_as_a_source(
+    tmp_path: Path,
+) -> None:
+    """get(), all(), query() etc. are also Eloquent/Collection methods. Only a
+    Request receiver makes them attacker-controlled data (finding 2)."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "resources" / "views" / "orders").mkdir(parents=True)
+
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\OrderController;\n"
+        "use Illuminate\\Support\\Facades\\Route;\n"
+        "Route::get('/orders', [OrderController::class, 'index']);\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "OrderController.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "class OrderController\n"
+        "{\n"
+        "    public function index()\n"
+        "    {\n"
+        "        $orders = Order::where('status', 'paid')->get();\n"
+        "\n"
+        "        return view('orders.show', compact('orders'));\n"
+        "    }\n"
+        "}\n"
+    )
+    (tmp_path / "resources" / "views" / "orders" / "show.blade.php").write_text(
+        "<p>{!! $orders !!}</p>\n"
+    )
+    assert find_taint_paths(load_project(tmp_path)) == []
+
+
+def test_request_receiver_still_produces_a_finding(tmp_path: Path) -> None:
+    """The finding 2 fix must not overcorrect: a genuine request-receiver
+    source call into a raw echo is still reported. Uses ->get(), one of the
+    ambiguous names, on an actual $request to prove the receiver check (not
+    the method name) is what is doing the work."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "resources" / "views" / "orders").mkdir(parents=True)
+
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\OrderController;\n"
+        "use Illuminate\\Support\\Facades\\Route;\n"
+        "Route::get('/orders', [OrderController::class, 'index']);\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "OrderController.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "use Illuminate\\Http\\Request;\n"
+        "class OrderController\n"
+        "{\n"
+        "    public function index(Request $request)\n"
+        "    {\n"
+        "        $sort = $request->get('sort');\n"
+        "\n"
+        "        return view('orders.show', compact('sort'));\n"
+        "    }\n"
+        "}\n"
+    )
+    (tmp_path / "resources" / "views" / "orders" / "show.blade.php").write_text(
+        "<p>{!! $sort !!}</p>\n"
+    )
+    assert len(find_taint_paths(load_project(tmp_path))) == 1
+
+
 def test_numeric_coercion_defeats_the_sql_sink(tmp_path: Path) -> None:
     """intval() makes interpolation safe, and a boolean flag cannot see that.
 
