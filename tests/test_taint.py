@@ -141,6 +141,33 @@ def test_abandoning_a_tainted_argument_is_counted(tmp_path: Path) -> None:
     assert stats.unresolved == 1
 
 
+def test_computed_view_name_with_tainted_data_is_counted(tmp_path: Path) -> None:
+    """view($name, ...) cannot be resolved, but losing tainted data there is a
+    real gap - the walk must not go silent about it (finding 1)."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\C;\nRoute::post('/a', [C::class, 'a']);\n"
+    )
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "C.php").write_text(
+        "<?php\n"
+        "namespace App;\n"
+        "class C\n"
+        "{\n"
+        "    public function a($request)\n"
+        "    {\n"
+        "        $sort = $request->input('sort');\n"
+        "        $name = 'orders.show';\n"
+        "\n"
+        "        return view($name, compact('sort'));\n"
+        "    }\n"
+        "}\n"
+    )
+    stats = WalkStats()
+    find_taint_paths(load_project(tmp_path), stats=stats)
+    assert stats.unresolved == 1
+
+
 def test_numeric_coercion_defeats_the_sql_sink(tmp_path: Path) -> None:
     """intval() makes interpolation safe, and a boolean flag cannot see that.
 

@@ -28,14 +28,19 @@ _SEGMENT = re.compile(r"[A-Za-z0-9_-]+")
 
 @dataclass(frozen=True)
 class ViewBinding:
-    """A resolved view() call: the template, and what was handed to it.
+    """A view() call: the template, and what was handed to it.
+
+    template is None when the call is real but its name could not be resolved
+    to a literal, e.g. view($name, ...). The binding is still returned rather
+    than dropped, so the caller can see the call happened and record the gap
+    instead of it vanishing - see docs/06-taint-analysis and invariant 4.
 
     variables is a tuple of pairs rather than a dict so the record is really
     immutable. Freezing a dataclass that holds a dict only freezes the
     reference, which is a guarantee in name only.
     """
 
-    template: str
+    template: str | None
     variables: tuple[tuple[str, Node], ...] = ()
     compacted: tuple[str, ...] = ()
 
@@ -106,14 +111,17 @@ def _chained_with(view_call: Node, source: bytes) -> list[tuple[str, Node]]:
 
 
 def extract_view_bindings(stmt: Node, source: bytes) -> list[ViewBinding]:
-    """Every resolvable view() call in this statement.
+    """Every view() call in this statement.
 
     A statement can hold more than one, as in a ternary choosing between two
     templates. Returning all of them keeps the second from vanishing without
     a trace.
 
-    A view() call whose template name is computed rather than literal is left
-    out. The caller records that as a coverage gap; guessing would be worse.
+    A view() call whose template name is computed rather than literal still
+    produces a binding, with template=None. Dropping it would let a real
+    view() call disappear before the caller ever learns it existed, which is
+    exactly the gap that makes coverage dishonest; guessing the name would be
+    worse. The caller decides what an unresolved binding means for coverage.
     """
     bindings: list[ViewBinding] = []
 
@@ -125,8 +133,6 @@ def extract_view_bindings(stmt: Node, source: bytes) -> list[ViewBinding]:
         if not args:
             continue
         name = _literal(_unwrap(args[0]), source)
-        if not name:
-            continue
 
         variables: list[tuple[str, Node]] = []
         compacted: list[str] = []

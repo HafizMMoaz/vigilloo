@@ -84,10 +84,24 @@ def test_every_view_call_in_a_statement_is_returned() -> None:
     assert {b.template for b in extract_view_bindings(stmt, source)} == {"a", "b"}
 
 
-def test_computed_template_name_is_unresolvable() -> None:
-    """view($name) cannot be resolved without guessing, so it is not."""
+def test_computed_template_name_is_returned_as_an_unresolved_binding() -> None:
+    """view($name) cannot be resolved without guessing, but the call itself
+    must not vanish - the caller needs it to record the coverage gap."""
     stmt, source = _first_statement("<?php return view($name, ['sort' => $sort]);")
-    assert extract_view_bindings(stmt, source) == []
+    bindings = extract_view_bindings(stmt, source)
+
+    assert len(bindings) == 1
+    assert bindings[0].template is None
+    assert _keys(bindings[0]) == ["sort"]
+
+
+def test_computed_template_name_with_compact_is_unresolved_but_not_dropped() -> None:
+    stmt, source = _first_statement("<?php return view($name, compact('sort'));")
+    bindings = extract_view_bindings(stmt, source)
+
+    assert len(bindings) == 1
+    assert bindings[0].template is None
+    assert bindings[0].compacted == ("sort",)
 
 
 def test_statement_without_a_view_call_binds_nothing() -> None:

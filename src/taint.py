@@ -288,7 +288,12 @@ def _walk_method(
             if not bound:
                 continue
 
-            template = template_path(binding.template)
+            # binding.template is None when the name could not be resolved to
+            # a literal (extract_view_bindings still returns the call rather
+            # than dropping it, see laravel/views.py). That case falls into
+            # the same unresolved path below as a name that resolved to a
+            # file outside the project.
+            template = template_path(binding.template) if binding.template is not None else None
             if template is None or template not in project.blade:
                 # A template that was handed tainted data and could not be
                 # resolved is a real gap in coverage, and invariant 4 says
