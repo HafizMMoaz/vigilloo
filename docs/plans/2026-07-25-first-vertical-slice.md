@@ -839,11 +839,27 @@ def _imports(root: Node, source: bytes) -> dict[str, str]:
     return imports
 
 
+_BUILTIN_TYPES = frozenset({
+    "string", "int", "float", "bool", "array", "object", "mixed",
+    "callable", "iterable", "void", "null", "never", "false", "true",
+    "self", "static", "parent",
+})
+
+
 def _resolve(type_name: str, namespace: str, imports: dict[str, str]) -> str:
-    """Resolve a written type name to a fully qualified name."""
+    """Resolve a written type name to a fully qualified name.
+
+    Builtins and union/intersection types are returned as written. Only class
+    names get namespace resolution - prefixing a scalar would fabricate a type
+    like App\\Repositories\\string and corrupt the property map.
+    """
     type_name = type_name.strip().lstrip("?")
     if not type_name:
         return ""
+    if "|" in type_name or "&" in type_name:
+        return type_name
+    if type_name.lower() in _BUILTIN_TYPES:
+        return type_name.lower()
     if type_name.startswith("\\"):
         return type_name.lstrip("\\")
     head, _, rest = type_name.partition("\\")
