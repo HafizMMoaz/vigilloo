@@ -5,6 +5,8 @@ controller code is the common case; add a CFG when a fixture needs a sanitizer
 applied on only one branch - see docs 05-data-flow-analysis.
 """
 
+from pathlib import Path
+
 from tree_sitter import Node
 
 # Statement kinds that can carry a source, a propagating call or a sink.
@@ -13,6 +15,7 @@ from tree_sitter import Node
 # ->orderByRaw(...)` are where the interesting calls actually live. A walk
 # over expression_statement alone finds nothing in a typical repository.
 from .graph import Project
+from .laravel.views import extract_view_bindings, template_path
 from .laravel.vocabulary import is_source, sanitizer_clears, sink
 from .models import ALL_KINDS, PathStep, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, walk
@@ -98,6 +101,43 @@ def _method_body(project: Project, fqn: str) -> tuple[Node, ParsedFile] | None:
         if span.start_line == symbol.span.start_line:
             return method, parsed
     return None
+
+
+def _walk_template(
+    project: Project,
+    template: Path,
+    bound: dict[str, frozenset[TaintKind]],
+    prefix: list[PathStep],
+) -> list[list[PathStep]]:
+    """Every raw echo in this template that still carries html taint.
+
+    The html sink is scoped to Blade-derived files on purpose. `echo` in a
+    plain PHP script is not usefully a finding, and flagging every one is how a
+    tool teaches people to ignore it.
+
+    ponytail: Response bodies and non-Blade templates when a fixture needs them.
+    """
+    parsed = project.blade.get(template)
+    if parsed is None:
+        return []
+
+    paths: list[list[PathStep]] = []
+    for stmt in find_all(parsed.tree.root_node, "echo_statement"):
+        if TaintKind.HTML not in expr_kinds(stmt, parsed.source, bound):
+            continue
+        line = stmt.start_point[0] + 1
+        paths.append(
+            prefix
+            + [
+                PathStep(
+                    role="sink",
+                    span=node_span(stmt, parsed.path),
+                    snippet=project.blade_line(parsed.path, line),
+                    note="raw echo, no HTML escaping",
+                )
+            ]
+        )
+    return paths
 
 
 def _walk_method(
@@ -230,6 +270,39 @@ def _walk_method(
                     stats,
                 )
             )
+
+        # 3. view() hands data to a template, where html taint can reach a
+        #    raw echo. A statement can hold more than one view() call, as in a
+        #    ternary choosing between two templates, so each is walked.
+        for binding in extract_view_bindings(stmt, source):
+            bound: dict[str, frozenset[TaintKind]] = {}
+            for name, expression in binding.variables:
+                kinds = expr_kinds(expression, source, local)
+                if kinds:
+                    bound[name] = kinds
+            for name in binding.compacted:
+                kinds = local.get(name, frozenset())
+                if kinds:
+                    bound[name] = kinds
+
+            if not bound:
+                continue
+
+            template = template_path(binding.template)
+            if template is None or template not in project.blade:
+                # A template that was handed tainted data and could not be
+                # resolved is a real gap in coverage, and invariant 4 says
+                # gaps are reported rather than hidden.
+                _giveup(stats)
+                continue
+
+            step = PathStep(
+                role="propagator",
+                span=node_span(stmt, parsed.path),
+                snippet=node_text(stmt, source).strip(),
+                note=f"view data into {template}",
+            )
+            paths.extend(_walk_template(project, template, bound, prefix + [step]))
 
     return paths
 

@@ -52,7 +52,7 @@ def _minimal_project(tmp_path: Path, controller_body: str, sink_call: str) -> Pa
 
 def test_finds_the_interprocedural_path_to_the_sink() -> None:
     paths = find_taint_paths(load_project(FIXTURE))
-    assert len(paths) == 1
+    assert len(paths) == 2
 
     roles = [step.role for step in paths[0]]
     assert roles == ["entry", "source", "propagator", "sink"]
@@ -166,3 +166,29 @@ def test_html_escaping_does_not_clear_the_sql_kind(tmp_path: Path) -> None:
         sink_call='DB::table("t")->orderByRaw("created_at " . e($sort))',
     )
     assert len(find_taint_paths(load_project(project_root))) == 1
+
+
+def test_raw_blade_echo_is_reached_from_the_route() -> None:
+    """The full slice 2 path: route, controller, view() call, template sink."""
+    paths = find_taint_paths(load_project(FIXTURE))
+    blade = [p for p in paths if p[-1].span.file.name == "show.blade.php"]
+
+    assert len(blade) == 1
+    roles = [step.role for step in blade[0]]
+    assert roles == ["entry", "source", "propagator", "sink"]
+
+    sink = blade[0][-1]
+    assert sink.span.start_line == 2
+    assert sink.snippet == "<p>Raw: {!! $sort !!}</p>"
+
+
+def test_escaped_and_manually_escaped_echoes_are_silent() -> None:
+    """The test that distinguishes a kind set from a boolean flag.
+
+    Lines 3 and 4 of the fixture template render the same tainted value through
+    {{ }} and through {!! e() !!}. Both are safe, and a boolean taint flag
+    would report both.
+    """
+    paths = find_taint_paths(load_project(FIXTURE))
+    lines = {p[-1].span.start_line for p in paths if p[-1].span.file.name == "show.blade.php"}
+    assert lines == {2}

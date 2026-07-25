@@ -23,4 +23,11 @@ class OrderController
     {
         return $this->orders->recent();
     }
+
+    public function display(Request $request)
+    {
+        $sort = $request->input('sort');
+
+        return view('orders.show', compact('sort'));
+    }
 }

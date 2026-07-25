@@ -31,19 +31,33 @@ SQL_INJECTION = Rule(
     ),
 )
 
+XSS = Rule(
+    id="php.xss",
+    title="Cross-Site Scripting",
+    severity="high",
+    cwe=("CWE-79",),
+    remediation=(
+        "Render the value with {{ }} instead of {!! !!}. Blade escapes {{ }} "
+        "automatically. Reach for {!! !!} only for markup you generated "
+        "yourself, never for anything derived from a request."
+    ),
+)
+
 
 def scan_project(project: Project, stats: WalkStats | None = None) -> list[Finding]:
     """Run every rule over the project graph."""
-    findings = [
-        Finding(
-            rule_id=SQL_INJECTION.id,
-            severity=SQL_INJECTION.severity,
-            title=SQL_INJECTION.title,
-            cwe=SQL_INJECTION.cwe,
-            span=path[-1].span,
-            evidence_path=tuple(path),
-            remediation=SQL_INJECTION.remediation,
+    findings = []
+    for path in find_taint_paths(project, stats=stats):
+        rule = XSS if path[-1].span.file.name.endswith(".blade.php") else SQL_INJECTION
+        findings.append(
+            Finding(
+                rule_id=rule.id,
+                severity=rule.severity,
+                title=rule.title,
+                cwe=rule.cwe,
+                span=path[-1].span,
+                evidence_path=tuple(path),
+                remediation=rule.remediation,
+            )
         )
-        for path in find_taint_paths(project, stats=stats)
-    ]
     return sorted(findings, key=lambda f: (str(f.span.file), f.span.start_line, f.rule_id))
