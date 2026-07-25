@@ -4,15 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status: first vertical slice implemented
 
-The spec in `docs/` is complete. `engine/` is a working Python package: PHP parser, symbol
+The spec in `docs/` is complete. `src/vigilloo/` is a working Python package: PHP parser, symbol
 extraction, Laravel route table, call graph, kind-based interprocedural taint analysis, and SQL
 injection findings with evidence paths. Everything beyond that slice is still spec only.
 
-All commands run from `engine/`, never the repo root:
-
 ```bash
-cd engine
-uv sync                    # --all-extras also works; dev deps are a dependency group
+uv sync --all-extras
 uv run pytest
 uv run ruff format --check .
 uv run ruff check
@@ -23,20 +20,21 @@ CI (`.github/workflows/ci.yml`) runs exactly those four checks on push to `main`
 
 ## Layout
 
-Single repo, two halves:
+**The target layout is specified in [23-dev-guide](docs/23-dev-guide/README.md) - follow it.**
+`src/vigilloo/` grows into the subpackages it names (`cli/`, `parser/`, `graph/`, `analysis/`,
+`security/`, `sdk/`, `plugins/php/`, `plugins/laravel/`, …). The current flat modules are the
+first slice, not a different plan. `sdk/` is the only stability boundary; everything else is
+internal and may be restructured freely. Do not introduce sibling top-level package directories.
 
 - `docs/00-…24-*/README.md` - the specification, one document per subsystem. Numbering is the
   reading order: vision → PRD → architecture → analysis pipeline → detection → interfaces → ops.
   **These are written specs, not stubs. Read the relevant one before designing anything.**
-- `engine/` - the Python package (`src/vigilloo/`), its tests, and the `vigilloo` CLI entry point.
-  `engine/docs/plans/` holds implementation plans; those are working documents, not spec.
+- `docs/plans/` - implementation plans. Working documents, not spec.
+- `src/vigilloo/`, `tests/`, `scripts/` - the package, its tests, and dev utilities.
 - `README.md` - repo front page. `docs/README.md` is the index into the spec.
 - `TEMP/` - original brainstorm notes the specs were derived from. Historical; `docs/` supersedes
   them. `Vigilloo_Docs_Repo.zip` is a stale copy of the pre-expansion docs - ignore it. Gitignored,
   local only.
-
-More packages are expected alongside `engine/` later. Keep new packages as sibling directories
-with their own `pyproject.toml`; do not flatten `engine/` into the root.
 
 ## What Vigilloo is
 

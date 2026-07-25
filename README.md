@@ -11,10 +11,12 @@ Proprietary. See [LICENSE](LICENSE).
 | Path | What |
 |------|------|
 | [`docs/`](docs/README.md) | The specification. Normative - `00`…`24`, numbered in reading order. |
-| [`engine/`](engine/) | The Python analysis engine and the `vigilloo` CLI. |
+| `src/vigilloo/` | The analysis engine and the `vigilloo` CLI. |
+| `tests/` | Test suite and Laravel fixture projects. |
 
 `docs/` is the spec, not notes. A change to detection behaviour, the `Finding` schema, plugin
-interfaces or the CLI surface updates its document in the same commit.
+interfaces or the CLI surface updates its document in the same commit. The target layout for
+`src/vigilloo/` is set out in [docs/23-dev-guide](docs/23-dev-guide/README.md).
 
 ## Status
 
@@ -39,11 +41,8 @@ offline with no API key. See [docs/24-roadmap](docs/24-roadmap/README.md).
 
 ## Development
 
-Everything runs from `engine/`:
-
 ```bash
-cd engine
-uv sync
+uv sync --all-extras
 uv run pytest
 uv run ruff format --check .
 uv run ruff check
