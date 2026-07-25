@@ -139,3 +139,30 @@ def test_abandoning_a_tainted_argument_is_counted(tmp_path: Path) -> None:
     stats = WalkStats()
     find_taint_paths(load_project(tmp_path), stats=stats)
     assert stats.unresolved == 1
+
+
+def test_numeric_coercion_defeats_the_sql_sink(tmp_path: Path) -> None:
+    """intval() makes interpolation safe, and a boolean flag cannot see that.
+
+    This is a false positive the slice 1 engine reports today.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            "        $sort = $request->input('sort');\n        return $this->things->search($sort);"
+        ),
+        sink_call='DB::table("t")->orderByRaw("age > " . intval($sort))',
+    )
+    assert find_taint_paths(load_project(project_root)) == []
+
+
+def test_html_escaping_does_not_clear_the_sql_kind(tmp_path: Path) -> None:
+    """e() is not a SQL sanitizer. Clearing sql here would be a false negative."""
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            "        $sort = $request->input('sort');\n        return $this->things->search($sort);"
+        ),
+        sink_call='DB::table("t")->orderByRaw("created_at " . e($sort))',
+    )
+    assert len(find_taint_paths(load_project(project_root))) == 1

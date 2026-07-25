@@ -75,14 +75,3 @@ def sink(method: str) -> tuple[int, TaintKind] | None:
 
 def sanitizer_clears(name: str) -> frozenset[TaintKind]:
     return SANITIZERS.get(name, frozenset())
-
-
-def sink_arg_index(method: str) -> int | None:
-    """Kind-free view of SINKS, so the taint engine keeps working until Task 2.
-
-    Temporary. Task 2 switches taint.py to sink() and deletes this. It exists
-    only so this commit leaves the test suite green: a commit that knowingly
-    fails its own tests breaks git bisect for everyone who comes later.
-    """
-    found = SINKS.get(method)
-    return found[0] if found is not None else None

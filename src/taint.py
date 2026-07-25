@@ -3,9 +3,6 @@
 ponytail: statement-order walk, no CFG and no branch sensitivity. Straight-line
 controller code is the common case; add a CFG when a fixture needs a sanitizer
 applied on only one branch - see docs 05-data-flow-analysis.
-
-ponytail: tracks only the `sql` taint kind as a boolean. The kind set from
-docs 06-taint-analysis lands with the second sink class.
 """
 
 from tree_sitter import Node
@@ -16,8 +13,8 @@ from tree_sitter import Node
 # ->orderByRaw(...)` are where the interesting calls actually live. A walk
 # over expression_statement alone finds nothing in a typical repository.
 from .graph import Project
-from .laravel.vocabulary import is_source, sink_arg_index
-from .models import PathStep, WalkStats
+from .laravel.vocabulary import is_source, sanitizer_clears, sink
+from .models import ALL_KINDS, PathStep, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
@@ -33,9 +30,49 @@ def _var_name(node: Node, source: bytes) -> str:
     return node_text(node, source).lstrip("$")
 
 
-def _referenced_vars(node: Node, source: bytes) -> set[str]:
-    """Every variable read anywhere inside this expression."""
-    return {_var_name(v, source) for v in find_all(node, "variable_name")}
+def _union_of_children(
+    node: Node, source: bytes, local: dict[str, frozenset[TaintKind]]
+) -> frozenset[TaintKind]:
+    kinds: frozenset[TaintKind] = frozenset()
+    for child in node.children:
+        kinds |= expr_kinds(child, source, local)
+    return kinds
+
+
+def expr_kinds(
+    node: Node, source: bytes, local: dict[str, frozenset[TaintKind]]
+) -> frozenset[TaintKind]:
+    """Which taint kinds are still live in the value this expression produces.
+
+    Replaces slice 1's "does this expression mention a tainted variable", which
+    could not express sanitizing: e($x) mentions $x, so a flat membership test
+    sees taint no matter what wraps it.
+
+    The default case is a union over children, so an unrecognised construct
+    preserves taint rather than dropping it. Silently losing taint is a false
+    negative, and a security tool that under-reports without saying so is worse
+    than one that over-reports.
+    """
+    if node.type == "variable_name":
+        return local.get(_var_name(node, source), frozenset())
+
+    if node.type == "function_call_expression":
+        name = node_text(node.child_by_field_name("function"), source)
+        cleared = sanitizer_clears(name)
+        if cleared:
+            args = node.child_by_field_name("arguments")
+            inner = _union_of_children(args, source, local) if args is not None else frozenset()
+            return inner - cleared
+
+    if node.type == "cast_expression":
+        # cast_type text is "int", without the parentheses.
+        cast = node_text(node.child_by_field_name("type"), source).strip().lower()
+        if cast in ("int", "integer", "float", "double"):
+            value = node.child_by_field_name("value")
+            inner = expr_kinds(value, source, local) if value is not None else frozenset()
+            return inner - {TaintKind.SQL, TaintKind.HTML}
+
+    return _union_of_children(node, source, local)
 
 
 def _call_parts(call: Node, source: bytes) -> tuple[str, str, list[Node]]:
@@ -66,7 +103,7 @@ def _method_body(project: Project, fqn: str) -> tuple[Node, ParsedFile] | None:
 def _walk_method(
     project: Project,
     fqn: str,
-    tainted: set[str],
+    tainted: dict[str, frozenset[TaintKind]],
     prefix: list[PathStep],
     depth: int,
     max_depth: int,
@@ -81,7 +118,7 @@ def _walk_method(
     method_node, parsed = found
     source = parsed.source
     class_fqn = fqn.rpartition("::")[0]
-    local = set(tainted)
+    local = dict(tainted)
     paths: list[list[PathStep]] = []
 
     statements = [n for n in walk(method_node) if n.type in _STATEMENT_TYPES]
@@ -97,7 +134,7 @@ def _walk_method(
 
             calls = find_all(right, "member_call_expression")
             if any(is_source(node_text(c.child_by_field_name("name"), source)) for c in calls):
-                local.add(target)
+                local[target] = ALL_KINDS
                 prefix = prefix + [
                     PathStep(
                         role="source",
@@ -108,22 +145,24 @@ def _walk_method(
                 ]
                 continue
 
-            if _referenced_vars(right, source) & local:
-                local.add(target)
+            kinds = expr_kinds(right, source, local)
+            if kinds:
+                local[target] = kinds
             else:
-                # Reassigned from a clean value: whatever taint the target
-                # carried before this statement no longer applies. Without
-                # this, `$sort = $request->input('sort'); $sort = 'asc';`
-                # would still report $sort as tainted at the sink below.
-                local.discard(target)
+                # Reassigned from a clean or fully sanitized value: whatever
+                # taint the target carried before this statement no longer
+                # applies. Without this, `$sort = $request->input('sort');
+                # $sort = 'asc';` would still report $sort as tainted below.
+                local.pop(target, None)
 
         # 2. Calls: either a sink, or a step deeper into another method.
         for call in find_all(stmt, "member_call_expression"):
             obj, name, args = _call_parts(call, source)
 
-            index = sink_arg_index(name)
-            if index is not None and index < len(args):
-                if _referenced_vars(args[index], source) & local:
+            sink_found = sink(name)
+            if sink_found is not None:
+                index, kind = sink_found
+                if index < len(args) and kind in expr_kinds(args[index], source, local):
                     paths.append(
                         prefix
                         + [
@@ -137,13 +176,15 @@ def _walk_method(
                     )
                 continue
 
-            # Which arguments carry tainted data. Computed before the give-up
-            # checks because a give-up only counts as a lost trail when there
-            # was something to lose: counting every unresolved receiver fires
-            # on benign calls like $request->input() and a ->get() chain
-            # terminator, and a counter that reports gaps on correct code
-            # trains people to ignore it.
-            passed = {i for i, arg in enumerate(args) if _referenced_vars(arg, source) & local}
+            # Which arguments carry tainted data, and which kinds. Computed
+            # before the give-up checks because a give-up only counts as a lost
+            # trail when there was something to lose: counting every unresolved
+            # receiver fires on benign calls like $request->input() and a
+            # ->get() chain terminator, and a counter that reports gaps on
+            # correct code trains people to ignore it.
+            passed = {
+                i: kinds for i, arg in enumerate(args) if (kinds := expr_kinds(arg, source, local))
+            }
 
             # $this->prop->method($tainted) - follow into the callee.
             if not obj.startswith("$this->"):
@@ -166,7 +207,9 @@ def _walk_method(
             if not passed:
                 continue
 
-            callee_tainted = {callee.params[i] for i in passed if i < len(callee.params)}
+            callee_tainted = {
+                callee.params[i]: kinds for i, kinds in passed.items() if i < len(callee.params)
+            }
             if not callee_tainted:
                 continue
 
@@ -207,7 +250,7 @@ def find_taint_paths(
             snippet=f"{'|'.join(route.verbs)} {route.uri} -> {route.action_fqn}",
             note="HTTP entry point",
         )
-        paths.extend(_walk_method(project, route.action_fqn, set(), [entry], 0, max_depth, stats))
+        paths.extend(_walk_method(project, route.action_fqn, {}, [entry], 0, max_depth, stats))
 
     # Walking nested statements can reach the same call twice, so collapse
     # paths that are step-for-step identical before returning.
