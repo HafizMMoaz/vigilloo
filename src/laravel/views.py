@@ -9,7 +9,8 @@ do not carry taint across template files in this slice, so taint stops at the
 template it was handed to.
 """
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from tree_sitter import Node
@@ -18,19 +19,38 @@ from ..parser import find_all, node_text
 
 _VIEW_ROOT = Path("resources/views")
 
+# One segment of a dotted template name. Deliberately strict: names are read
+# out of the analysed codebase, which is untrusted input, and a segment like
+# ".." or one containing a slash would walk the built path out of
+# resources/views.
+_SEGMENT = re.compile(r"[A-Za-z0-9_-]+")
+
 
 @dataclass(frozen=True)
 class ViewBinding:
-    """A resolved view() call: the template, and what was handed to it."""
+    """A resolved view() call: the template, and what was handed to it.
+
+    variables is a tuple of pairs rather than a dict so the record is really
+    immutable. Freezing a dataclass that holds a dict only freezes the
+    reference, which is a guarantee in name only.
+    """
 
     template: str
-    variables: dict[str, Node] = field(default_factory=dict)
+    variables: tuple[tuple[str, Node], ...] = ()
     compacted: tuple[str, ...] = ()
 
 
-def template_path(name: str) -> Path:
-    """'orders.show' -> resources/views/orders/show.blade.php."""
-    return _VIEW_ROOT / (name.replace(".", "/") + ".blade.php")
+def template_path(name: str) -> Path | None:
+    """'orders.show' -> resources/views/orders/show.blade.php.
+
+    Returns None for anything that is not a plain dotted name. Path('a') / '/b'
+    is '/b', because pathlib discards the base when the right side looks
+    absolute, so an unchecked name beginning with a dot escapes the view root.
+    """
+    segments = name.split(".")
+    if not all(_SEGMENT.fullmatch(segment) for segment in segments):
+        return None
+    return _VIEW_ROOT.joinpath(*segments[:-1], segments[-1] + ".blade.php")
 
 
 def _literal(node: Node, source: bytes) -> str | None:
@@ -59,60 +79,83 @@ def _unwrap(argument: Node) -> Node:
     return named[0] if named else argument
 
 
-def extract_view_binding(stmt: Node, source: bytes) -> ViewBinding | None:
-    """Resolve the view() call in this statement, if there is a resolvable one.
+def _chained_with(view_call: Node, source: bytes) -> list[tuple[str, Node]]:
+    """Bindings from ->with('key', $value) chained onto this view() call.
 
-    Returns None when the statement has no view() call, or when the template
-    name is computed rather than literal. The caller records the second case as
-    a coverage gap; guessing at it would be worse than reporting it.
+    Walks up the parent chain rather than scanning the statement, because
+    with() is also Eloquent's eager-loading method. A constrained eager load
+    like $q->with('items', $callback) has exactly the same shape and would
+    otherwise bind a template variable that does not exist.
     """
-    view_call = next(
-        (
-            c
-            for c in find_all(stmt, "function_call_expression")
-            if node_text(c.child_by_field_name("function"), source) == "view"
-        ),
-        None,
-    )
-    if view_call is None:
-        return None
-
-    args = _arguments(view_call)
-    if not args:
-        return None
-    name = _literal(_unwrap(args[0]), source)
-    if name is None:
-        return None
-
-    variables: dict[str, Node] = {}
-    compacted: list[str] = []
-
-    if len(args) > 1:
-        data = _unwrap(args[1])
-        if data.type == "array_creation_expression":
-            for element in find_all(data, "array_element_initializer"):
-                parts = [c for c in element.children if c.is_named]
-                if len(parts) == 2:
-                    key = _literal(parts[0], source)
-                    if key is not None:
-                        variables[key] = parts[1]
-        elif (
-            data.type == "function_call_expression"
-            and node_text(data.child_by_field_name("function"), source) == "compact"
-        ):
-            for argument in _arguments(data):
-                key = _literal(_unwrap(argument), source)
+    pairs: list[tuple[str, Node]] = []
+    node = view_call
+    while True:
+        parent = node.parent
+        if parent is None or parent.type != "member_call_expression":
+            return pairs
+        receiver = parent.child_by_field_name("object")
+        if receiver is None or receiver.id != node.id:
+            return pairs
+        if node_text(parent.child_by_field_name("name"), source) == "with":
+            args = _arguments(parent)
+            if len(args) == 2:
+                key = _literal(_unwrap(args[0]), source)
                 if key:
-                    compacted.append(key)
+                    pairs.append((key, _unwrap(args[1])))
+        node = parent
 
-    # ->with('key', $value) chained onto the same statement.
-    for call in find_all(stmt, "member_call_expression"):
-        if node_text(call.child_by_field_name("name"), source) != "with":
+
+def extract_view_bindings(stmt: Node, source: bytes) -> list[ViewBinding]:
+    """Every resolvable view() call in this statement.
+
+    A statement can hold more than one, as in a ternary choosing between two
+    templates. Returning all of them keeps the second from vanishing without
+    a trace.
+
+    A view() call whose template name is computed rather than literal is left
+    out. The caller records that as a coverage gap; guessing would be worse.
+    """
+    bindings: list[ViewBinding] = []
+
+    for call in find_all(stmt, "function_call_expression"):
+        if node_text(call.child_by_field_name("function"), source) != "view":
             continue
-        with_args = _arguments(call)
-        if len(with_args) == 2:
-            key = _literal(_unwrap(with_args[0]), source)
-            if key:
-                variables[key] = _unwrap(with_args[1])
 
-    return ViewBinding(template=name, variables=variables, compacted=tuple(compacted))
+        args = _arguments(call)
+        if not args:
+            continue
+        name = _literal(_unwrap(args[0]), source)
+        if not name:
+            continue
+
+        variables: list[tuple[str, Node]] = []
+        compacted: list[str] = []
+
+        if len(args) > 1:
+            data = _unwrap(args[1])
+            if data.type == "array_creation_expression":
+                for element in find_all(data, "array_element_initializer"):
+                    parts = [c for c in element.children if c.is_named]
+                    if len(parts) == 2:
+                        key = _literal(parts[0], source)
+                        if key:
+                            variables.append((key, parts[1]))
+            elif (
+                data.type == "function_call_expression"
+                and node_text(data.child_by_field_name("function"), source) == "compact"
+            ):
+                for argument in _arguments(data):
+                    key = _literal(_unwrap(argument), source)
+                    if key:
+                        compacted.append(key)
+
+        variables.extend(_chained_with(call, source))
+        bindings.append(
+            ViewBinding(
+                template=name,
+                variables=tuple(variables),
+                compacted=tuple(compacted),
+            )
+        )
+
+    return bindings
