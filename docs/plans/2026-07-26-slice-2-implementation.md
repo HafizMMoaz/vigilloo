@@ -802,12 +802,20 @@ git commit -m "feat: load Blade templates into the project graph"
 
 ### Task 5: Bind controller variables to template variables
 
+> **The code below is superseded. Read `src/laravel/views.py` instead.** Review of this task
+> found two Critical defects in the sample code here, both of which shipped and were then fixed:
+> the `->with()` scan matched Eloquent's eager-loading `with()` anywhere in the statement and
+> bound phantom template variables, and `template_path` built paths by string replacement, so a
+> name with a leading dot escaped `resources/views` entirely. The shipped module walks the
+> parent chain from the `view()` call, validates each name segment, returns `Path | None`, and
+> exposes `extract_view_bindings` returning a list. Task 6's text already reflects that API.
+
 **Files:**
 - Create: `src/laravel/views.py`
 - Create: `tests/test_views.py`
 
 **Interfaces:**
-- Produces: `ViewBinding` (frozen dataclass with `template: str`, `variables: dict[str, Node]`, `compacted: tuple[str, ...]`), `template_path(name: str) -> Path`, and `extract_view_binding(stmt: Node, source: bytes) -> ViewBinding | None`, all in `vigilloo.laravel.views`.
+- Produces: `ViewBinding` (frozen dataclass with `template: str`, `variables: tuple[tuple[str, Node], ...]`, `compacted: tuple[str, ...]`), `template_path(name: str) -> Path | None`, and `extract_view_bindings(stmt: Node, source: bytes) -> list[ViewBinding]`, all in `vigilloo.laravel.views`.
 
 `variables` maps a template variable name to the controller **expression node** bound to it. `compacted` lists names passed through `compact()`, where the template variable and the controller variable share a name and there is no separate expression to evaluate.
 
@@ -1130,7 +1138,7 @@ Expected: FAIL, `assert 0 == 1` because no path reaches a Blade file.
 In `src/taint.py`, add to the imports:
 
 ```python
-from .laravel.views import extract_view_binding, template_path
+from .laravel.views import extract_view_bindings, template_path
 ```
 
 Add a template walker, placed immediately before `_walk_method`:
@@ -1179,38 +1187,37 @@ Inside `_walk_method`, at the end of the per-statement loop body and after the e
 
 ```python
         # 3. view() hands data to a template, where html taint can reach a
-        #    raw echo.
-        binding = extract_view_binding(stmt, source)
-        if binding is None:
-            continue
+        #    raw echo. A statement can hold more than one view() call, as in a
+        #    ternary choosing between two templates, so each is walked.
+        for binding in extract_view_bindings(stmt, source):
+            bound: dict[str, frozenset[TaintKind]] = {}
+            for name, expression in binding.variables:
+                kinds = expr_kinds(expression, source, local)
+                if kinds:
+                    bound[name] = kinds
+            for name in binding.compacted:
+                kinds = local.get(name, frozenset())
+                if kinds:
+                    bound[name] = kinds
 
-        bound: dict[str, frozenset[TaintKind]] = {}
-        for name, expression in binding.variables.items():
-            kinds = expr_kinds(expression, source, local)
-            if kinds:
-                bound[name] = kinds
-        for name in binding.compacted:
-            kinds = local.get(name, frozenset())
-            if kinds:
-                bound[name] = kinds
+            if not bound:
+                continue
 
-        if not bound:
-            continue
+            template = template_path(binding.template)
+            if template is None or template not in project.blade:
+                # A template that was handed tainted data and could not be
+                # resolved is a real gap in coverage, and invariant 4 says
+                # gaps are reported rather than hidden.
+                _giveup(stats)
+                continue
 
-        template = template_path(binding.template)
-        if template not in project.blade:
-            # An unresolvable template that was handed tainted data is a real
-            # gap in coverage, and invariant 4 says gaps are reported.
-            _giveup(stats)
-            continue
-
-        step = PathStep(
-            role="propagator",
-            span=node_span(stmt, parsed.path),
-            snippet=node_text(stmt, source).strip(),
-            note=f"view data into {template}",
-        )
-        paths.extend(_walk_template(project, template, bound, prefix + [step]))
+            step = PathStep(
+                role="propagator",
+                span=node_span(stmt, parsed.path),
+                snippet=node_text(stmt, source).strip(),
+                note=f"view data into {template}",
+            )
+            paths.extend(_walk_template(project, template, bound, prefix + [step]))
 ```
 
 - [ ] **Step 5: Add the rule**
