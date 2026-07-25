@@ -42,7 +42,19 @@ def scan(
 ) -> None:
     """Scan a Laravel project for security findings."""
     console = Console()
+
+    if not path.exists():
+        typer.secho(f"Error: path does not exist: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+    if not path.is_dir():
+        typer.secho(f"Error: not a directory: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+
     project = load_project(path)
+
+    if not project.files and not project.failed:
+        console.print(f"[yellow]No PHP files found under {path}.[/yellow]")
+        raise typer.Exit(0)
 
     if project.failed:
         console.print(
