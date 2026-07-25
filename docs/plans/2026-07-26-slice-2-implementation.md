@@ -201,16 +201,25 @@ def sink(method: str) -> tuple[int, TaintKind] | None:
 
 def sanitizer_clears(name: str) -> frozenset[TaintKind]:
     return SANITIZERS.get(name, frozenset())
+
+
+def sink_arg_index(method: str) -> int | None:
+    """Kind-free view of SINKS, so the taint engine keeps working until Task 2.
+
+    Temporary. Task 2 switches taint.py to sink() and deletes this. It exists
+    only so this commit leaves the test suite green: a commit that knowingly
+    fails its own tests breaks git bisect for everyone who comes later.
+    """
+    found = SINKS.get(method)
+    return found[0] if found is not None else None
 ```
 
 Also update the module docstring's last line from `This module carries the subset needed for the SQL taint kind.` to `This module carries the subset needed for the sql and html taint kinds.`
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `uv run pytest tests/test_vocabulary.py -v`
-Expected: PASS, 6 tests
-
-`uv run pytest` as a whole will still fail here: `taint.py` imports `sink_arg_index`, which no longer exists. That is expected and Task 2 fixes it.
+Run: `uv run pytest -v`
+Expected: PASS, the full suite. The temporary `sink_arg_index` shim keeps `taint.py` working, so this commit leaves the tree green. Task 2 removes the shim.
 
 - [ ] **Step 6: Commit**
 
@@ -232,6 +241,7 @@ The risky task, sequenced alone and before any Blade code exists. It rewrites th
 **Interfaces:**
 - Consumes: `TaintKind`, `ALL_KINDS` from `vigilloo.models`; `sink`, `sanitizer_clears`, `is_source` from `vigilloo.laravel.vocabulary`.
 - Produces: `expr_kinds(node: Node, source: bytes, local: dict[str, frozenset[TaintKind]]) -> frozenset[TaintKind]` in `vigilloo.taint`. The walk's `tainted` parameter changes from `set[str]` to `dict[str, frozenset[TaintKind]]`.
+- Removes: the temporary `sink_arg_index` shim added by Task 1. Delete it from `src/laravel/vocabulary.py` as part of step 3, once `taint.py` no longer calls it. It must not survive this task.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -270,7 +280,7 @@ def test_html_escaping_does_not_clear_the_sql_kind(tmp_path: Path) -> None:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_taint.py -v`
-Expected: FAIL. Every test in the file errors with `ImportError: cannot import name 'sink_arg_index'`, because Task 1 removed it.
+Expected: FAIL on the two new tests only. `test_numeric_coercion_defeats_the_sql_sink` fails because the boolean engine reports the sanitized path. The other tests still pass, because Task 1's shim keeps the engine running.
 
 - [ ] **Step 3: Rewrite the taint state and add the evaluator**
 
