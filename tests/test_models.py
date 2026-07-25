@@ -34,3 +34,13 @@ def test_fingerprint_is_stable_across_line_moves() -> None:
     b = Finding("php.sql-injection", "critical", "t", ("CWE-89",), _span(62), steps_b)
     assert a.fingerprint == b.fingerprint
     assert a.id != b.id
+
+
+def test_fingerprint_distinguishes_findings_in_different_files() -> None:
+    """The same pattern in two files is two findings, not one."""
+    steps = (PathStep("source", _span(10), "$r->input('s')", ""),
+             PathStep("sink", _span(42), "orderByRaw", ""))
+    a = Finding("php.sql-injection", "critical", "t", ("CWE-89",), _span(42), steps)
+    b = Finding("php.sql-injection", "critical", "t", ("CWE-89",),
+                Span(Path("b.php"), 42, 0, 42, 10), steps)
+    assert a.fingerprint != b.fingerprint

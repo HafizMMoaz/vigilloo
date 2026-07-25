@@ -551,7 +551,12 @@ class Finding:
 
     @property
     def fingerprint(self) -> str:
-        """Location-independent identity, so baselines survive a reformat."""
+        """Identity that survives line movement within a file.
+
+        The file path is deliberately part of the hash: the same pattern in
+        two files is two distinct findings, and collapsing them would
+        silently drop one.
+        """
         parts = [self.rule_id, str(self.span.file)]
         parts += [f"{s.role}:{s.snippet.strip()}" for s in self.evidence_path]
         return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
