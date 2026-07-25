@@ -35,8 +35,15 @@ _LITERAL_PLACEHOLDER = "\x00vigilloo-blade-literal\x00"
 
 
 def _keep_lines(replacement: str, matched: str) -> str:
-    """Pad a replacement so it spans as many lines as the text it replaced."""
-    return replacement + "\n" * matched.count("\n")
+    """Pad a replacement so it spans as many lines as the text it replaced.
+
+    Only the shortfall is added. The echo and @php replacements splice the
+    captured expression back in verbatim, so they already carry that
+    construct's own newlines; padding by the full count would double them
+    and push every later line down.
+    """
+    deficit = matched.count("\n") - replacement.count("\n")
+    return replacement + "\n" * max(deficit, 0)
 
 
 def to_php(text: str) -> str:
@@ -45,7 +52,7 @@ def to_php(text: str) -> str:
 
     def _stash(match: re.Match[str]) -> str:
         literals.append(match.group(0))
-        return _keep_lines(_LITERAL_PLACEHOLDER, match.group(0))
+        return _LITERAL_PLACEHOLDER
 
     text = _LITERAL.sub(_stash, text)
     text = _COMMENT.sub(lambda m: _keep_lines("", m.group(0)), text)
@@ -54,5 +61,5 @@ def to_php(text: str) -> str:
     text = _ESCAPED_ECHO.sub(lambda m: _keep_lines(f"<?php e({m.group(1)}); ?>", m.group(0)), text)
 
     for literal in literals:
-        text = text.replace(_LITERAL_PLACEHOLDER, literal.replace("\n", ""), 1)
+        text = text.replace(_LITERAL_PLACEHOLDER, literal, 1)
     return text

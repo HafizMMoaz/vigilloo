@@ -47,6 +47,15 @@ def test_multiline_construct_preserves_the_line_count() -> None:
     assert len(to_php(template).splitlines()) == 6
 
 
+def test_multiline_echo_preserves_the_line_count() -> None:
+    """A raw echo split across lines must not shift the lines below it."""
+    assert len(to_php("a\n{!! $x +\n $y !!}\nb").splitlines()) == 4
+
+
+def test_multiline_php_block_preserves_the_line_count() -> None:
+    assert len(to_php("@php\n$a = 1;\n@endphp").splitlines()) == 3
+
+
 def test_surrounding_markup_is_left_as_inert_text() -> None:
     """The text-mode grammar treats non-PHP as inert, so blanking it is wasted work."""
     assert "<div>" in to_php("<div>{{ $x }}</div>")
