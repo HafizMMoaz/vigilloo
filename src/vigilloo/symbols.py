@@ -7,6 +7,12 @@ from tree_sitter import Node
 from vigilloo.models import Span, Symbol
 from vigilloo.parser import ParsedFile, find_all, node_span, node_text
 
+_BUILTIN_TYPES = frozenset({
+    "string", "int", "float", "bool", "array", "object", "mixed",
+    "callable", "iterable", "void", "null", "never", "false", "true",
+    "self", "static", "parent",
+})
+
 
 @dataclass(frozen=True)
 class ClassInfo:
@@ -46,10 +52,21 @@ def _imports(root: Node, source: bytes) -> dict[str, str]:
 
 
 def _resolve(type_name: str, namespace: str, imports: dict[str, str]) -> str:
-    """Resolve a written type name to a fully qualified name."""
+    """Resolve a written type name to a fully qualified name.
+
+    Only class-like names get namespace resolution. Scalar/builtin type
+    hints (string, int, self, ...) and union/intersection types are not
+    class names and must be returned unchanged, otherwise a promoted
+    parameter like `private int $perPage` would be recorded as a bogus
+    class property.
+    """
     type_name = type_name.strip().lstrip("?")
     if not type_name:
         return ""
+    if "|" in type_name or "&" in type_name:
+        return type_name
+    if type_name.lower() in _BUILTIN_TYPES:
+        return type_name.lower()
     if type_name.startswith("\\"):
         return type_name.lstrip("\\")
     head, _, rest = type_name.partition("\\")
@@ -106,9 +123,9 @@ def extract_symbols(parsed: ParsedFile) -> FileSymbols:
                     _resolve(t, namespace, imports) if t else None for t in types
                 ),
             )
-            # Promoted constructor parameters become properties. This is how
-            # idiomatic Laravel injects collaborators, and it is what makes
-            # $this->orders->search() resolvable in the call graph.
+            # PHP 8 constructor property promotion declares a property and a
+            # parameter in one place. Capturing it here is what lets a later
+            # layer resolve $this->prop->method() to a concrete class.
             params_node = method.child_by_field_name("parameters")
             if params_node is not None:
                 for promoted in find_all(params_node, "property_promotion_parameter"):
