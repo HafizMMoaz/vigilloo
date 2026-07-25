@@ -29,9 +29,13 @@ class ParsedFile:
     has_errors: bool
 
 
-def parse_php(path: Path) -> ParsedFile:
-    """Parse one PHP file. Never raises for malformed input."""
-    source = path.read_bytes()
+def parse_source(path: Path, source: bytes) -> ParsedFile:
+    """Parse text that is already in hand, attributed to `path`.
+
+    Separate from parse_php so a caller holding derived text - Blade rewritten
+    into PHP - can have it parsed while spans still point at the original file.
+    The parser stays unaware of what produced the text.
+    """
     tree = _parser().parse(source)
     return ParsedFile(
         path=path,
@@ -39,6 +43,11 @@ def parse_php(path: Path) -> ParsedFile:
         tree=tree,
         has_errors=tree.root_node.has_error,
     )
+
+
+def parse_php(path: Path) -> ParsedFile:
+    """Parse one PHP file. Never raises for malformed input."""
+    return parse_source(path, path.read_bytes())
 
 
 def node_text(node: Node | None, source: bytes) -> str:
