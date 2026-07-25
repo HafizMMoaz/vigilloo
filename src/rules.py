@@ -5,9 +5,9 @@ Fully deterministic. Same project, same ruleset, same findings, every time.
 
 from dataclasses import dataclass
 
-from vigilloo.graph import Project
-from vigilloo.models import Finding, WalkStats
-from vigilloo.taint import find_taint_paths
+from .graph import Project
+from .models import Finding, WalkStats
+from .taint import find_taint_paths
 
 
 @dataclass(frozen=True)

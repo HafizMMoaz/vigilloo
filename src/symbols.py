@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 
 from tree_sitter import Node
 
-from vigilloo.models import Span, Symbol
-from vigilloo.parser import ParsedFile, find_all, node_span, node_text
+from .models import Span, Symbol
+from .parser import ParsedFile, find_all, node_span, node_text
 
 _BUILTIN_TYPES = frozenset(
     {

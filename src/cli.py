@@ -5,11 +5,11 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from vigilloo import __version__
-from vigilloo.graph import load_project
-from vigilloo.models import WalkStats
-from vigilloo.report import render
-from vigilloo.rules import scan_project
+from . import __version__
+from .graph import load_project
+from .models import WalkStats
+from .report import render
+from .rules import scan_project
 
 app = typer.Typer(
     name="vigilloo",

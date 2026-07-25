@@ -18,3 +18,17 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check
       - run: uv run mypy
+
+      # src/ is mapped onto the vigilloo import name, and subpackages are listed by
+      # hand in pyproject.toml. An unregistered one still imports in the editable dev
+      # install but vanishes from the wheel, so the built artifact is tested directly.
+      - name: Wheel installs and runs outside the source tree
+        run: |
+          set -euo pipefail
+          uv build --wheel -o dist
+          cd "$(mktemp -d)"
+          uv venv v
+          VIRTUAL_ENV=v uv pip install "$GITHUB_WORKSPACE"/dist/*.whl
+          ./v/bin/python -c 'import vigilloo, vigilloo.laravel.routes'
+          ./v/bin/vigilloo --version
+          ./v/bin/vigilloo scan "$GITHUB_WORKSPACE/tests/fixtures/laravel-minimal"

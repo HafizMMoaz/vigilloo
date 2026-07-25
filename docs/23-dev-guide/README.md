@@ -16,8 +16,11 @@ uv run pytest                 # fast suite
 
 ## Repository layout
 
+`src/` is itself the `vigilloo` package. There is no `src/vigilloo/` directory; the build maps
+the directory onto the import name, so `src/cli/` is imported as `vigilloo.cli`.
+
 ```text
-src/vigilloo/
+src/               = the vigilloo package
   cli/            Typer commands, Rich/Textual output
   workspace/      project root, config, run manifest
   parser/         Tree-sitter integration, symbols, imports
@@ -40,6 +43,17 @@ docs/             these documents
 `sdk/` is the only package with a stability guarantee. Everything else is internal and may be
 restructured freely - keeping that boundary explicit is what allows the internals to change
 without breaking plugins.
+
+Two rules follow from `src/` being the package rather than containing it:
+
+- **Imports inside `src/` are relative.** `from .models import Finding`, not
+  `from vigilloo.models import Finding`. There is no `vigilloo/` directory on disk to import
+  absolutely. Tests and external callers still use the absolute `vigilloo.` name.
+- **Every new subpackage is registered in `pyproject.toml`,** in both `package-dir` and
+  `packages`. A renaming `package-dir` does not compose with `packages.find`, so setuptools
+  cannot discover them. Adding `src/analysis/` without registering it produces a wheel that
+  silently omits the directory while the editable dev install keeps working. The guard is
+  `uv build --wheel` plus an install into a clean environment, which CI runs on every push.
 
 ## Standards
 

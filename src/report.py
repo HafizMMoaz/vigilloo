@@ -6,7 +6,7 @@ every other scanner already prints.
 
 from rich.console import Console
 
-from vigilloo.models import Finding
+from .models import Finding
 
 _SEVERITY_STYLE = {
     "critical": "bold red",

@@ -2,9 +2,9 @@
 
 from tree_sitter import Node
 
-from vigilloo.models import Route, WalkStats
-from vigilloo.parser import ParsedFile, find_all, node_span, node_text
-from vigilloo.symbols import FileSymbols
+from ..models import Route, WalkStats
+from ..parser import ParsedFile, find_all, node_span, node_text
+from ..symbols import FileSymbols
 
 # Route::get/post/... verb methods and the verbs they register.
 _VERB_METHODS: dict[str, tuple[str, ...]] = {

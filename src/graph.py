@@ -7,10 +7,10 @@ incrementality, which this slice does not need - see docs 17-database.
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from vigilloo.laravel.routes import extract_routes
-from vigilloo.models import Route, Symbol, WalkStats
-from vigilloo.parser import ParsedFile, parse_php
-from vigilloo.symbols import ClassInfo, FileSymbols, extract_symbols
+from .laravel.routes import extract_routes
+from .models import Route, Symbol, WalkStats
+from .parser import ParsedFile, parse_php
+from .symbols import ClassInfo, FileSymbols, extract_symbols
 
 _EXCLUDED_DIRS = {"vendor", "node_modules", "storage", "bootstrap", ".git"}
 

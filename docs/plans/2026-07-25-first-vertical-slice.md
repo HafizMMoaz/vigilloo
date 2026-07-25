@@ -1,5 +1,10 @@
 # First Vertical Slice Implementation Plan
 
+> **Completed, and historical.** The paths below say `src/vigilloo/` and the build backend says
+> hatchling. Both changed after this plan was executed: the package now lives directly in `src/`
+> and is built with setuptools. Do not copy paths or packaging config out of this document -
+> see [23-dev-guide](../23-dev-guide/README.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `vigilloo scan <laravel-app>` detects one SQL injection in a fixture Laravel app and prints the complete evidence path from HTTP route to unsanitized sink.

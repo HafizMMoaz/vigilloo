@@ -12,7 +12,7 @@ from pathlib import Path
 import tree_sitter_php
 from tree_sitter import Language, Node, Parser, Tree
 
-from vigilloo.models import Span
+from .models import Span
 
 
 @cache

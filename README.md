@@ -11,12 +11,12 @@ Proprietary. See [LICENSE](LICENSE).
 | Path | What |
 |------|------|
 | [`docs/`](docs/README.md) | The specification. Normative - `00`…`24`, numbered in reading order. |
-| `src/vigilloo/` | The analysis engine and the `vigilloo` CLI. |
+| `src/` | The analysis engine and the `vigilloo` CLI. This directory *is* the `vigilloo` package. |
 | `tests/` | Test suite and Laravel fixture projects. |
 
 `docs/` is the spec, not notes. A change to detection behaviour, the `Finding` schema, plugin
 interfaces or the CLI surface updates its document in the same commit. The target layout for
-`src/vigilloo/` is set out in [docs/23-dev-guide](docs/23-dev-guide/README.md).
+`src/` is set out in [docs/23-dev-guide](docs/23-dev-guide/README.md).
 
 ## Status
 

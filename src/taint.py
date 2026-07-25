@@ -15,10 +15,10 @@ from tree_sitter import Node
 # directly, so `return $repo->search($x);` and `return DB::table(...)
 # ->orderByRaw(...)` are where the interesting calls actually live. A walk
 # over expression_statement alone finds nothing in a typical repository.
-from vigilloo.graph import Project
-from vigilloo.laravel.vocabulary import is_source, sink_arg_index
-from vigilloo.models import PathStep, WalkStats
-from vigilloo.parser import ParsedFile, find_all, node_span, node_text, walk
+from .graph import Project
+from .laravel.vocabulary import is_source, sink_arg_index
+from .models import PathStep, WalkStats
+from .parser import ParsedFile, find_all, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
 

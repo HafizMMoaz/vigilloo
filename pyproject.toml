@@ -17,11 +17,22 @@ vigilloo = "vigilloo.cli:app"
 dev = ["pytest>=8.0", "mypy>=1.11", "ruff>=0.6"]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/vigilloo"]
+# src/ IS the vigilloo package - there is no src/vigilloo/ directory. The build maps
+# the directory onto the import name, so src/cli.py installs as vigilloo/cli.py.
+#
+# Two consequences, both load-bearing:
+#   1. Imports inside src/ must be relative. There is no vigilloo/ on disk to import.
+#   2. Every subpackage must be listed in both tables below. setuptools cannot
+#      auto-discover them, because a renaming package-dir does not compose with
+#      packages.find. Adding src/foo/ without adding it here builds a wheel that
+#      silently omits it. Hatchling was dropped for this layout: it cannot do
+#      editable installs when sources renames a prefix.
+[tool.setuptools]
+package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel" }
+packages = ["vigilloo", "vigilloo.laravel"]
 
 [tool.ruff]
 line-length = 100
