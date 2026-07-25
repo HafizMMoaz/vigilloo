@@ -1433,10 +1433,17 @@ docs 06-taint-analysis lands with the second sink class.
 
 from tree_sitter import Node
 
+# Statement kinds that can carry a source, a propagating call or a sink.
+# return_statement is not optional: idiomatic Laravel returns the query
+# directly, so `return $repo->search($x);` and `return DB::table(...)
+# ->orderByRaw(...)` are where the interesting calls actually live. A walk
+# over expression_statement alone finds nothing in a typical repository.
 from vigilloo.graph import Project
 from vigilloo.laravel.vocabulary import is_source, sink_arg_index
 from vigilloo.models import PathStep
-from vigilloo.parser import ParsedFile, find_all, node_span, node_text
+from vigilloo.parser import ParsedFile, find_all, node_span, node_text, walk
+
+_STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
 
 
 def _var_name(node: Node, source: bytes) -> str:
@@ -1493,7 +1500,9 @@ def _walk_method(
     local = set(tainted)
     paths: list[list[PathStep]] = []
 
-    for stmt in find_all(method_node, "expression_statement"):
+    statements = [n for n in walk(method_node) if n.type in _STATEMENT_TYPES]
+
+    for stmt in statements:
         # 1. Assignment from a Request source, or from an already tainted value.
         for assign in find_all(stmt, "assignment_expression"):
             left = assign.child_by_field_name("left")
@@ -1595,7 +1604,16 @@ def find_taint_paths(project: Project, max_depth: int = 5) -> list[list[PathStep
             _walk_method(project, route.action_fqn, set(), [entry], 0, max_depth)
         )
 
-    return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))
+    # Walking nested statements can reach the same call twice, so collapse
+    # paths that are step-for-step identical before returning.
+    unique: dict[tuple[tuple[str, str, int], ...], list[PathStep]] = {}
+    for path in paths:
+        key = tuple((s.role, str(s.span.file), s.span.start_line) for s in path)
+        unique.setdefault(key, path)
+
+    return sorted(
+        unique.values(), key=lambda p: (str(p[-1].span.file), p[-1].span.start_line)
+    )
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
