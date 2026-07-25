@@ -1,0 +1,103 @@
+from pathlib import Path
+
+from vigilloo.graph import load_project
+from vigilloo.taint import find_taint_paths
+
+FIXTURE = Path("tests/fixtures/laravel-minimal")
+
+
+def _minimal_project(tmp_path: Path, controller_body: str, sink_call: str) -> Path:
+    """A tiny routed controller -> repository project, body and sink swappable."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "app" / "Repositories").mkdir(parents=True)
+
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\ThingController;\n"
+        "use Illuminate\\Support\\Facades\\Route;\n"
+        "Route::post('/things', [ThingController::class, 'act']);\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "ThingController.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "use App\\Repositories\\ThingRepository;\n"
+        "use Illuminate\\Http\\Request;\n"
+        "class ThingController\n"
+        "{\n"
+        "    public function __construct(private ThingRepository $things)\n"
+        "    {\n"
+        "    }\n"
+        "    public function act(Request $request)\n"
+        "    {\n"
+        f"{controller_body}\n"
+        "    }\n"
+        "}\n"
+    )
+    (tmp_path / "app" / "Repositories" / "ThingRepository.php").write_text(
+        "<?php\n"
+        "namespace App\\Repositories;\n"
+        "use Illuminate\\Support\\Facades\\DB;\n"
+        "class ThingRepository\n"
+        "{\n"
+        "    public function search(string $sort)\n"
+        "    {\n"
+        f"        return {sink_call};\n"
+        "    }\n"
+        "}\n"
+    )
+    return tmp_path
+
+
+def test_finds_the_interprocedural_path_to_the_sink() -> None:
+    paths = find_taint_paths(load_project(FIXTURE))
+    assert len(paths) == 1
+
+    roles = [step.role for step in paths[0]]
+    assert roles == ["entry", "source", "propagator", "sink"]
+
+    entry, source, propagator, sink = paths[0]
+    assert "/orders/search" in entry.snippet
+    assert "input" in source.snippet
+    assert source.span.start_line == 17
+    assert propagator.span.start_line == 19
+    assert "orderByRaw" in sink.snippet
+    assert sink.span.file.name == "OrderRepository.php"
+    assert sink.span.start_line == 12
+
+
+def test_safe_action_produces_no_path() -> None:
+    """The recent() action uses a bound orderBy and must stay silent."""
+    paths = find_taint_paths(load_project(FIXTURE))
+    assert all("recent" not in step.snippet for path in paths for step in path)
+
+
+def test_paths_are_deterministic() -> None:
+    project = load_project(FIXTURE)
+    assert find_taint_paths(project) == find_taint_paths(project)
+
+
+def test_reassignment_to_a_constant_untaints_the_variable(tmp_path: Path) -> None:
+    """$sort is overwritten with a literal before it ever reaches the sink."""
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            "        $sort = $request->input('sort');\n"
+            "        $sort = 'created_at asc';\n"
+            "        return $this->things->search($sort);"
+        ),
+        sink_call='DB::table("t")->orderByRaw("created_at {$sort}")',
+    )
+    assert find_taint_paths(load_project(project_root)) == []
+
+
+def test_select_with_tainted_argument_produces_no_path(tmp_path: Path) -> None:
+    """->select([$x]) is a safe builder call, not the raw DB::select() facade."""
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            "        $sort = $request->input('sort');\n        return $this->things->search($sort);"
+        ),
+        sink_call='DB::table("t")->select([$sort])',
+    )
+    assert find_taint_paths(load_project(project_root)) == []

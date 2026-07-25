@@ -469,7 +469,7 @@ All models are frozen. A rule must never mutate a finding it did not create.
 """
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -534,7 +534,6 @@ class Finding:
     evidence_path: tuple[PathStep, ...]
     remediation: str = ""
     confidence: float = 1.0
-    _ids: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.evidence_path:
@@ -552,7 +551,12 @@ class Finding:
 
     @property
     def fingerprint(self) -> str:
-        """Location-independent identity, so baselines survive a reformat."""
+        """Identity that survives line movement within a file.
+
+        The file path is deliberately part of the hash: the same pattern in
+        two files is two distinct findings, and collapsing them would
+        silently drop one.
+        """
         parts = [self.rule_id, str(self.span.file)]
         parts += [f"{s.role}:{s.snippet.strip()}" for s in self.evidence_path]
         return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
@@ -835,11 +839,27 @@ def _imports(root: Node, source: bytes) -> dict[str, str]:
     return imports
 
 
+_BUILTIN_TYPES = frozenset({
+    "string", "int", "float", "bool", "array", "object", "mixed",
+    "callable", "iterable", "void", "null", "never", "false", "true",
+    "self", "static", "parent",
+})
+
+
 def _resolve(type_name: str, namespace: str, imports: dict[str, str]) -> str:
-    """Resolve a written type name to a fully qualified name."""
+    """Resolve a written type name to a fully qualified name.
+
+    Builtins and union/intersection types are returned as written. Only class
+    names get namespace resolution - prefixing a scalar would fabricate a type
+    like App\\Repositories\\string and corrupt the property map.
+    """
     type_name = type_name.strip().lstrip("?")
     if not type_name:
         return ""
+    if "|" in type_name or "&" in type_name:
+        return type_name
+    if type_name.lower() in _BUILTIN_TYPES:
+        return type_name.lower()
     if type_name.startswith("\\"):
         return type_name.lstrip("\\")
     head, _, rest = type_name.partition("\\")
@@ -970,7 +990,7 @@ def test_extracts_routes_with_resolved_action():
     search = by_uri["/orders/search"]
     assert search.verbs == ("POST",)
     assert search.action_fqn == "App\\Http\\Controllers\\OrderController::search"
-    assert search.span.start_line == 8
+    assert search.span.start_line == 7
 
 
 def test_routes_are_returned_in_deterministic_order():
@@ -1374,7 +1394,8 @@ def test_finds_the_interprocedural_path_to_the_sink():
     entry, source, propagator, sink = paths[0]
     assert "/orders/search" in entry.snippet
     assert "input" in source.snippet
-    assert source.span.start_line == 18
+    assert source.span.start_line == 17
+    assert propagator.span.start_line == 19
     assert "orderByRaw" in sink.snippet
     assert sink.span.file.name == "OrderRepository.php"
     assert sink.span.start_line == 12
@@ -1412,10 +1433,17 @@ docs 06-taint-analysis lands with the second sink class.
 
 from tree_sitter import Node
 
+# Statement kinds that can carry a source, a propagating call or a sink.
+# return_statement is not optional: idiomatic Laravel returns the query
+# directly, so `return $repo->search($x);` and `return DB::table(...)
+# ->orderByRaw(...)` are where the interesting calls actually live. A walk
+# over expression_statement alone finds nothing in a typical repository.
 from vigilloo.graph import Project
 from vigilloo.laravel.vocabulary import is_source, sink_arg_index
 from vigilloo.models import PathStep
-from vigilloo.parser import ParsedFile, find_all, node_span, node_text
+from vigilloo.parser import ParsedFile, find_all, node_span, node_text, walk
+
+_STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
 
 
 def _var_name(node: Node, source: bytes) -> str:
@@ -1472,7 +1500,9 @@ def _walk_method(
     local = set(tainted)
     paths: list[list[PathStep]] = []
 
-    for stmt in find_all(method_node, "expression_statement"):
+    statements = [n for n in walk(method_node) if n.type in _STATEMENT_TYPES]
+
+    for stmt in statements:
         # 1. Assignment from a Request source, or from an already tainted value.
         for assign in find_all(stmt, "assignment_expression"):
             left = assign.child_by_field_name("left")
@@ -1574,7 +1604,16 @@ def find_taint_paths(project: Project, max_depth: int = 5) -> list[list[PathStep
             _walk_method(project, route.action_fqn, set(), [entry], 0, max_depth)
         )
 
-    return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))
+    # Walking nested statements can reach the same call twice, so collapse
+    # paths that are step-for-step identical before returning.
+    unique: dict[tuple[tuple[str, str, int], ...], list[PathStep]] = {}
+    for path in paths:
+        key = tuple((s.role, str(s.span.file), s.span.start_line) for s in path)
+        unique.setdefault(key, path)
+
+    return sorted(
+        unique.values(), key=lambda p: (str(p[-1].span.file), p[-1].span.start_line)
+    )
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1763,6 +1802,9 @@ def test_scan_of_clean_project_exits_zero(tmp_path: Path):
     assert "No findings" in result.stdout
 
 
+# The two dash characters below are the values under test. This file is the
+# single sanctioned exception to the project-wide no-dash rule; they must not
+# be replaced with hyphens or the assertion becomes meaningless.
 def test_no_em_dashes_in_output():
     """Project convention: hyphens only."""
     result = runner.invoke(app, ["scan", str(FIXTURE)])
@@ -1892,11 +1934,11 @@ Expected output shape:
 CRITICAL - SQL Injection
   tests/fixtures/laravel-minimal/app/Repositories/OrderRepository.php:12 · CWE-89 · php.sql-injection
 
-  1. api.php:8  entry
+  1. api.php:7  entry
      POST /orders/search -> App\Http\Controllers\OrderController::search
-  2. OrderController.php:18  source
+  2. OrderController.php:17  source
      $sort = $request->input('sort')
-  3. OrderController.php:20  flows
+  3. OrderController.php:19  flows
      $this->orders->search($sort)
   4. OrderRepository.php:12  sink
      ->orderByRaw("created_at {$sort}")
