@@ -1,6 +1,7 @@
 """Core data models shared by every subsystem.
 
-All models are frozen. A rule must never mutate a finding it did not create.
+All models are frozen, except WalkStats: a plain mutable counter, not a
+finding-shaped record.
 """
 
 import hashlib
@@ -17,9 +18,6 @@ class Span:
     start_col: int
     end_line: int
     end_col: int
-
-    def __str__(self) -> str:
-        return f"{self.file}:{self.start_line}"
 
 
 @dataclass(frozen=True)
@@ -68,7 +66,6 @@ class Finding:
     span: Span
     evidence_path: tuple[PathStep, ...]
     remediation: str = ""
-    confidence: float = 1.0
 
     def __post_init__(self) -> None:
         if not self.evidence_path:
@@ -98,3 +95,17 @@ class Finding:
         parts = [self.rule_id, str(self.span.file)]
         parts += [f"{s.role}:{s.snippet.strip()}" for s in self.evidence_path]
         return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
+
+
+@dataclass
+class WalkStats:
+    """A running count of call sites the analysis had to give up on.
+
+    Not frozen: every other model here is an immutable record of something
+    that happened, this is a counter incremented in place while the walk
+    runs. Shared by vigilloo.taint and vigilloo.laravel.routes, both of which
+    already depend on this module, so it lives here rather than in either of
+    them to avoid an import cycle.
+    """
+
+    unresolved: int = 0

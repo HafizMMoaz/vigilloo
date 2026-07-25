@@ -60,9 +60,5 @@ def walk(node: Node) -> Iterator[Node]:
         yield from walk(child)
 
 
-def children_of_type(node: Node, type_name: str) -> list[Node]:
-    return [c for c in node.children if c.type == type_name]
-
-
 def find_all(node: Node, type_name: str) -> list[Node]:
     return [n for n in walk(node) if n.type == type_name]

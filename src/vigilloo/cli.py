@@ -7,6 +7,7 @@ from rich.console import Console
 
 from vigilloo import __version__
 from vigilloo.graph import load_project
+from vigilloo.models import WalkStats
 from vigilloo.report import render
 from vigilloo.rules import scan_project
 
@@ -50,17 +51,36 @@ def scan(
         typer.secho(f"Error: not a directory: {path}", err=True, fg="red")
         raise typer.Exit(2)
 
-    project = load_project(path)
+    stats = WalkStats()
+    project = load_project(path, stats)
 
     if not project.files and not project.failed:
         console.print(f"[yellow]No PHP files found under {path}.[/yellow]")
         raise typer.Exit(0)
 
     if project.failed:
+        console.print(f"[yellow]{len(project.failed)} file(s) could not be read.[/yellow]")
+
+    # Coverage caveats are printed before any finding, so a clean report can
+    # never appear on screen without whatever gap produced it also on screen.
+    if project.unparsed:
+        shown = ", ".join(str(p) for p in project.unparsed[:5])
+        more = f" and {len(project.unparsed) - 5} more" if len(project.unparsed) > 5 else ""
         console.print(
-            f"[yellow]{len(project.failed)} file(s) could not be read.[/yellow]"
+            f"[yellow]{len(project.unparsed)} file(s) had syntax errors and were only "
+            f"partially analysed: {shown}{more}.[/yellow]"
         )
 
-    findings = scan_project(project)
+    if project.files and not project.routes:
+        console.print(
+            "[yellow]No HTTP entry points discovered; route-reachable findings "
+            "cannot be reported.[/yellow]"
+        )
+
+    findings = scan_project(project, stats)
+
+    if stats.unresolved:
+        console.print(f"[yellow]{stats.unresolved} call site(s) could not be resolved.[/yellow]")
+
     render(findings, console)
     raise typer.Exit(1 if findings else 0)

@@ -6,7 +6,7 @@ Fully deterministic. Same project, same ruleset, same findings, every time.
 from dataclasses import dataclass
 
 from vigilloo.graph import Project
-from vigilloo.models import Finding
+from vigilloo.models import Finding, WalkStats
 from vigilloo.taint import find_taint_paths
 
 
@@ -16,7 +16,6 @@ class Rule:
     title: str
     severity: str
     cwe: tuple[str, ...]
-    owasp: tuple[str, ...]
     remediation: str
 
 
@@ -25,7 +24,6 @@ SQL_INJECTION = Rule(
     title="SQL Injection",
     severity="critical",
     cwe=("CWE-89",),
-    owasp=("A03:2021",),
     remediation=(
         "Pass user input as a query binding rather than interpolating it into "
         "the SQL string, or validate it against an allowlist. For an ORDER BY "
@@ -34,7 +32,7 @@ SQL_INJECTION = Rule(
 )
 
 
-def scan_project(project: Project) -> list[Finding]:
+def scan_project(project: Project, stats: WalkStats | None = None) -> list[Finding]:
     """Run every rule over the project graph."""
     findings = [
         Finding(
@@ -46,6 +44,6 @@ def scan_project(project: Project) -> list[Finding]:
             evidence_path=tuple(path),
             remediation=SQL_INJECTION.remediation,
         )
-        for path in find_taint_paths(project)
+        for path in find_taint_paths(project, stats=stats)
     ]
     return sorted(findings, key=lambda f: (str(f.span.file), f.span.start_line, f.rule_id))

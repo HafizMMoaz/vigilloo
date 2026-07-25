@@ -24,3 +24,10 @@ def test_findings_are_stable_across_runs() -> None:
     b = scan_project(load_project(FIXTURE))
     assert [f.id for f in a] == [f.id for f in b]
     assert [f.fingerprint for f in a] == [f.fingerprint for f in b]
+
+
+def test_fingerprint_is_independent_of_how_the_root_was_spelled() -> None:
+    """A relative and an absolute scan of the same code must share a baseline."""
+    relative = scan_project(load_project(FIXTURE))
+    absolute = scan_project(load_project(FIXTURE.resolve()))
+    assert [f.fingerprint for f in relative] == [f.fingerprint for f in absolute]

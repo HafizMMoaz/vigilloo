@@ -7,11 +7,27 @@ from tree_sitter import Node
 from vigilloo.models import Span, Symbol
 from vigilloo.parser import ParsedFile, find_all, node_span, node_text
 
-_BUILTIN_TYPES = frozenset({
-    "string", "int", "float", "bool", "array", "object", "mixed",
-    "callable", "iterable", "void", "null", "never", "false", "true",
-    "self", "static", "parent",
-})
+_BUILTIN_TYPES = frozenset(
+    {
+        "string",
+        "int",
+        "float",
+        "bool",
+        "array",
+        "object",
+        "mixed",
+        "callable",
+        "iterable",
+        "void",
+        "null",
+        "never",
+        "false",
+        "true",
+        "self",
+        "static",
+        "parent",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -119,9 +135,7 @@ def extract_symbols(parsed: ParsedFile) -> FileSymbols:
                 kind="method",
                 span=node_span(method, parsed.path),
                 params=names,
-                param_types=tuple(
-                    _resolve(t, namespace, imports) if t else None for t in types
-                ),
+                param_types=tuple(_resolve(t, namespace, imports) if t else None for t in types),
             )
             # PHP 8 constructor property promotion declares a property and a
             # parameter in one place. Capturing it here is what lets a later

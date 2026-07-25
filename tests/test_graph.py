@@ -16,9 +16,7 @@ def test_loads_all_php_files_and_routes() -> None:
 def test_resolves_injected_property_to_class() -> None:
     """$this->orders must resolve to OrderRepository for the call graph."""
     project = load_project(FIXTURE)
-    resolved = project.resolve_property_type(
-        "App\\Http\\Controllers\\OrderController", "orders"
-    )
+    resolved = project.resolve_property_type("App\\Http\\Controllers\\OrderController", "orders")
     assert resolved == "App\\Repositories\\OrderRepository"
 
 

@@ -17,10 +17,16 @@ from tree_sitter import Node
 # over expression_statement alone finds nothing in a typical repository.
 from vigilloo.graph import Project
 from vigilloo.laravel.vocabulary import is_source, sink_arg_index
-from vigilloo.models import PathStep
+from vigilloo.models import PathStep, WalkStats
 from vigilloo.parser import ParsedFile, find_all, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
+
+
+def _giveup(stats: WalkStats | None) -> None:
+    """Record one more call site the walk could not follow."""
+    if stats is not None:
+        stats.unresolved += 1
 
 
 def _var_name(node: Node, source: bytes) -> str:
@@ -64,6 +70,7 @@ def _walk_method(
     prefix: list[PathStep],
     depth: int,
     max_depth: int,
+    stats: WalkStats | None = None,
 ) -> list[list[PathStep]]:
     """Walk one method body, returning every completed source-to-sink path."""
     if depth > max_depth:
@@ -103,6 +110,12 @@ def _walk_method(
 
             if _referenced_vars(right, source) & local:
                 local.add(target)
+            else:
+                # Reassigned from a clean value: whatever taint the target
+                # carried before this statement no longer applies. Without
+                # this, `$sort = $request->input('sort'); $sort = 'asc';`
+                # would still report $sort as tainted at the sink below.
+                local.discard(target)
 
         # 2. Calls: either a sink, or a step deeper into another method.
         for call in find_all(stmt, "member_call_expression"):
@@ -126,25 +139,24 @@ def _walk_method(
 
             # $this->prop->method($tainted) - follow into the callee.
             if not obj.startswith("$this->"):
+                _giveup(stats)
                 continue
             prop = obj.removeprefix("$this->")
             target_class = project.resolve_property_type(class_fqn, prop)
             if target_class is None:
+                _giveup(stats)
                 continue
             callee_fqn = f"{target_class}::{name}"
             callee = project.method(callee_fqn)
             if callee is None:
+                _giveup(stats)
                 continue
 
-            passed = {
-                i for i, arg in enumerate(args) if _referenced_vars(arg, source) & local
-            }
+            passed = {i for i, arg in enumerate(args) if _referenced_vars(arg, source) & local}
             if not passed:
                 continue
 
-            callee_tainted = {
-                callee.params[i] for i in passed if i < len(callee.params)
-            }
+            callee_tainted = {callee.params[i] for i in passed if i < len(callee.params)}
             if not callee_tainted:
                 continue
 
@@ -156,20 +168,28 @@ def _walk_method(
             )
             paths.extend(
                 _walk_method(
-                    project, callee_fqn, callee_tainted,
-                    prefix + [step], depth + 1, max_depth,
+                    project,
+                    callee_fqn,
+                    callee_tainted,
+                    prefix + [step],
+                    depth + 1,
+                    max_depth,
+                    stats,
                 )
             )
 
     return paths
 
 
-def find_taint_paths(project: Project, max_depth: int = 5) -> list[list[PathStep]]:
+def find_taint_paths(
+    project: Project, max_depth: int = 5, stats: WalkStats | None = None
+) -> list[list[PathStep]]:
     """Every source-to-sink path reachable from a route entry point."""
     paths: list[list[PathStep]] = []
 
     for route in project.routes:
         if not route.action_fqn:
+            _giveup(stats)
             continue
         entry = PathStep(
             role="entry",
@@ -177,9 +197,7 @@ def find_taint_paths(project: Project, max_depth: int = 5) -> list[list[PathStep
             snippet=f"{'|'.join(route.verbs)} {route.uri} -> {route.action_fqn}",
             note="HTTP entry point",
         )
-        paths.extend(
-            _walk_method(project, route.action_fqn, set(), [entry], 0, max_depth)
-        )
+        paths.extend(_walk_method(project, route.action_fqn, set(), [entry], 0, max_depth, stats))
 
     # Walking nested statements can reach the same call twice, so collapse
     # paths that are step-for-step identical before returning.
@@ -188,6 +206,4 @@ def find_taint_paths(project: Project, max_depth: int = 5) -> list[list[PathStep
         key = tuple((s.role, str(s.span.file), s.span.start_line) for s in path)
         unique.setdefault(key, path)
 
-    return sorted(
-        unique.values(), key=lambda p: (str(p[-1].span.file), p[-1].span.start_line)
-    )
+    return sorted(unique.values(), key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))

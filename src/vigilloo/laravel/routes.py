@@ -2,7 +2,7 @@
 
 from tree_sitter import Node
 
-from vigilloo.models import Route
+from vigilloo.models import Route, WalkStats
 from vigilloo.parser import ParsedFile, find_all, node_span, node_text
 from vigilloo.symbols import FileSymbols
 
@@ -40,7 +40,9 @@ def _action_fqn(node: Node, source: bytes, symbols: FileSymbols) -> str:
     return ""
 
 
-def extract_routes(parsed: ParsedFile, symbols: FileSymbols) -> list[Route]:
+def extract_routes(
+    parsed: ParsedFile, symbols: FileSymbols, stats: WalkStats | None = None
+) -> list[Route]:
     """Find Route::verb(uri, action) calls.
 
     ponytail: no group/prefix/resource expansion yet. The fixture registers flat
@@ -59,11 +61,17 @@ def extract_routes(parsed: ParsedFile, symbols: FileSymbols) -> list[Route]:
         if verbs is None:
             continue
 
+        # Recognised as a verb-registering Route call, but the argument shape
+        # did not match what a route registration looks like.
         args_node = call.child_by_field_name("arguments")
         if args_node is None:
+            if stats is not None:
+                stats.unresolved += 1
             continue
         args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
         if len(args) < 2:
+            if stats is not None:
+                stats.unresolved += 1
             continue
 
         routes.append(
