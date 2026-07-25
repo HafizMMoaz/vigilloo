@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from vigilloo.graph import load_project
+from vigilloo.models import WalkStats
 from vigilloo.taint import find_taint_paths
 
 FIXTURE = Path("tests/fixtures/laravel-minimal")
@@ -101,3 +102,40 @@ def test_select_with_tainted_argument_produces_no_path(tmp_path: Path) -> None:
         sink_call='DB::table("t")->select([$sort])',
     )
     assert find_taint_paths(load_project(project_root)) == []
+
+
+def test_clean_project_reports_no_lost_trails() -> None:
+    """A give-up counter that fires on correct code trains users to ignore it.
+
+    The fixture resolves everything that matters, so nothing was lost. Benign
+    unresolved receivers - the $request->input() source call, a ->get() chain
+    terminator - must not be counted.
+    """
+    stats = WalkStats()
+    find_taint_paths(load_project(FIXTURE), stats=stats)
+    assert stats.unresolved == 0
+
+
+def test_abandoning_a_tainted_argument_is_counted(tmp_path: Path) -> None:
+    """Losing the trail on tainted data is exactly what the counter is for."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\C;\nRoute::post('/a', [C::class, 'a']);\n"
+    )
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "C.php").write_text(
+        "<?php\n"
+        "namespace App;\n"
+        "class C\n"
+        "{\n"
+        "    public function a($request)\n"
+        "    {\n"
+        "        $sort = $request->input('sort');\n"
+        "\n"
+        "        return $unknown->handle($sort);\n"
+        "    }\n"
+        "}\n"
+    )
+    stats = WalkStats()
+    find_taint_paths(load_project(tmp_path), stats=stats)
+    assert stats.unresolved == 1

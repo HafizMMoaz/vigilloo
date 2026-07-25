@@ -137,22 +137,32 @@ def _walk_method(
                     )
                 continue
 
+            # Which arguments carry tainted data. Computed before the give-up
+            # checks because a give-up only counts as a lost trail when there
+            # was something to lose: counting every unresolved receiver fires
+            # on benign calls like $request->input() and a ->get() chain
+            # terminator, and a counter that reports gaps on correct code
+            # trains people to ignore it.
+            passed = {i for i, arg in enumerate(args) if _referenced_vars(arg, source) & local}
+
             # $this->prop->method($tainted) - follow into the callee.
             if not obj.startswith("$this->"):
-                _giveup(stats)
+                if passed:
+                    _giveup(stats)
                 continue
             prop = obj.removeprefix("$this->")
             target_class = project.resolve_property_type(class_fqn, prop)
             if target_class is None:
-                _giveup(stats)
+                if passed:
+                    _giveup(stats)
                 continue
             callee_fqn = f"{target_class}::{name}"
             callee = project.method(callee_fqn)
             if callee is None:
-                _giveup(stats)
+                if passed:
+                    _giveup(stats)
                 continue
 
-            passed = {i for i, arg in enumerate(args) if _referenced_vars(arg, source) & local}
             if not passed:
                 continue
 
