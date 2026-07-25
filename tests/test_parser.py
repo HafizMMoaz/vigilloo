@@ -23,12 +23,9 @@ def test_finds_method_declarations() -> None:
     assert {"__construct", "search", "recent"} <= names
 
 
-def test_broken_file_is_partial_not_fatal() -> None:
+def test_broken_file_is_partial_not_fatal(tmp_path: Path) -> None:
     """A parse error degrades one file, it never aborts a scan."""
-    broken = Path("tests/fixtures/broken.php")
+    broken = tmp_path / "broken.php"
     broken.write_text("<?php class { function (")
-    try:
-        parsed = parse_php(broken)
-        assert parsed.has_errors
-    finally:
-        broken.unlink()
+    parsed = parse_php(broken)
+    assert parsed.has_errors
