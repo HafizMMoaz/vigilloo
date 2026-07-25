@@ -7,3 +7,8 @@ __pycache__/
 dist/
 .vigilloo/
 .DS_Store
+
+# Local-only: superseded brainstorm notes, agent state, per-machine settings.
+TEMP/
+.superpowers/
+.claude/settings.local.json
