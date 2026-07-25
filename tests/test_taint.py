@@ -237,6 +237,42 @@ def test_request_receiver_still_produces_a_finding(tmp_path: Path) -> None:
     assert len(find_taint_paths(load_project(tmp_path))) == 1
 
 
+def test_tainted_data_into_a_blade_loop_is_an_honest_gap(tmp_path: Path) -> None:
+    """@foreach is inert text to the Blade rewriter, so $row inside the loop
+    is never aliased to $rows's taint. Silence would be a false negative;
+    the walk must at least say it gave up (finding 3)."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "resources" / "views" / "orders").mkdir(parents=True)
+
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\OrderController;\n"
+        "use Illuminate\\Support\\Facades\\Route;\n"
+        "Route::get('/orders', [OrderController::class, 'index']);\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "OrderController.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "use Illuminate\\Http\\Request;\n"
+        "class OrderController\n"
+        "{\n"
+        "    public function index(Request $request)\n"
+        "    {\n"
+        "        $rows = $request->input('rows');\n"
+        "\n"
+        "        return view('orders.list', compact('rows'));\n"
+        "    }\n"
+        "}\n"
+    )
+    (tmp_path / "resources" / "views" / "orders" / "list.blade.php").write_text(
+        "@foreach ($rows as $row)\n  <li>{!! $row !!}</li>\n@endforeach\n"
+    )
+    stats = WalkStats()
+    find_taint_paths(load_project(tmp_path), stats=stats)
+    assert stats.unresolved == 1
+
+
 def test_numeric_coercion_defeats_the_sql_sink(tmp_path: Path) -> None:
     """intval() makes interpolation safe, and a boolean flag cannot see that.
 

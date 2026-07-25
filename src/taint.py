@@ -5,6 +5,7 @@ controller code is the common case; add a CFG when a fixture needs a sanitizer
 applied on only one branch - see docs 05-data-flow-analysis.
 """
 
+import re
 from pathlib import Path
 
 from tree_sitter import Node
@@ -21,6 +22,10 @@ from .models import ALL_KINDS, PathStep, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
+
+# A template handed tainted data whose original text contains one of these is
+# a gap the walk cannot see past - see _walk_template.
+_LOOP_DIRECTIVE = re.compile(r"@(?:foreach|forelse|for|while)\b")
 
 
 def _giveup(stats: WalkStats | None) -> None:
@@ -151,6 +156,7 @@ def _walk_template(
     template: Path,
     bound: dict[str, frozenset[TaintKind]],
     prefix: list[PathStep],
+    stats: WalkStats | None = None,
 ) -> list[list[PathStep]]:
     """Every raw echo in this template that still carries html taint.
 
@@ -163,6 +169,21 @@ def _walk_template(
     parsed = project.blade.get(template)
     if parsed is None:
         return []
+
+    # @foreach and friends are left as inert text by the Blade rewriter (see
+    # laravel/blade.py), so a loop variable like $row is never aliased to the
+    # kinds carried by the collection it iterates. `bound` is only non-empty
+    # here because the caller already confirmed this template was handed
+    # tainted data, so a loop directive in its text is a real, silent gap.
+    # Counted once per template, not once per directive or echo, so the
+    # counter still means "one lost trail" and not "how many loops".
+    #
+    # ponytail: loop variables are not aliased to the collection's kinds.
+    # Upgrade path is a small alias pass in _walk_template once a fixture
+    # needs foreach precision - see docs/06-taint-analysis.
+    text = "\n".join(project.blade_lines.get(template, []))
+    if _LOOP_DIRECTIVE.search(text):
+        _giveup(stats)
 
     paths: list[list[PathStep]] = []
     for stmt in find_all(parsed.tree.root_node, "echo_statement"):
@@ -355,7 +376,7 @@ def _walk_method(
                 snippet=node_text(stmt, source).strip(),
                 note=f"view data into {template}",
             )
-            paths.extend(_walk_template(project, template, bound, prefix + [step]))
+            paths.extend(_walk_template(project, template, bound, prefix + [step], stats))
 
     return paths
 
