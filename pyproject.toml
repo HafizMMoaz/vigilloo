@@ -42,6 +42,12 @@ exclude = ["docs"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+# isort infers first-party packages by finding a directory of that name. No directory
+# is called vigilloo, so without this it sorts `from vigilloo import ...` in the tests
+# into the third-party block. Same root cause as the package-dir mapping above.
+[tool.ruff.lint.isort]
+known-first-party = ["vigilloo"]
+
 [tool.mypy]
 strict = true
 files = ["src"]
