@@ -45,9 +45,16 @@ XSS = Rule(
 
 
 def scan_project(project: Project, stats: WalkStats | None = None) -> list[Finding]:
-    """Run every rule over the project graph."""
+    """Assemble findings from every taint path the analysis produced."""
     findings = []
     for path in find_taint_paths(project, stats=stats):
+        # ponytail: the rule is chosen by the sink's file extension. That works
+        # only because the two sink sets are disjoint by construction - html
+        # sinks are echo statements that exist only in project.blade, and
+        # graph.py keeps .blade.php out of project.files - so no PHP file can
+        # produce an html sink and no template can produce a sql one. The
+        # third rule breaks that assumption: at which point PathStep carries
+        # the rule identity from the walk and this branch goes away.
         rule = XSS if path[-1].span.file.name.endswith(".blade.php") else SQL_INJECTION
         findings.append(
             Finding(
