@@ -1,8 +1,14 @@
 """Command line interface for Vigilloo."""
 
+from pathlib import Path
+
 import typer
+from rich.console import Console
 
 from vigilloo import __version__
+from vigilloo.graph import load_project
+from vigilloo.report import render
+from vigilloo.rules import scan_project
 
 app = typer.Typer(
     name="vigilloo",
@@ -28,3 +34,21 @@ def main(
     ),
 ) -> None:
     """Vigilloo command line interface."""
+
+
+@app.command()
+def scan(
+    path: Path = typer.Argument(Path("."), help="Project root to scan."),  # noqa: B008
+) -> None:
+    """Scan a Laravel project for security findings."""
+    console = Console()
+    project = load_project(path)
+
+    if project.failed:
+        console.print(
+            f"[yellow]{len(project.failed)} file(s) could not be read.[/yellow]"
+        )
+
+    findings = scan_project(project)
+    render(findings, console)
+    raise typer.Exit(1 if findings else 0)
