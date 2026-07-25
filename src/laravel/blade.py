@@ -1,0 +1,58 @@
+"""Blade template rewriting.
+
+Blade is not PHP. Laravel compiles it; Vigilloo rewrites it into a normalised
+form the PHP grammar can read, preserving the escaping mode of every echo,
+because that distinction is the XSS rule - see docs/03-parser.
+
+The transformation is line-preserving: output line N came from input line N.
+That is what lets evidence paths cite real .blade.php line numbers with no
+mapping table to drift out of sync. Columns are not preserved, which is
+accepted: reports render a line number and a snippet, and the snippet is taken
+from the original Blade text.
+
+Surrounding markup is left alone rather than blanked. The text-mode PHP grammar
+treats anything outside <?php ... ?> as inert, so each rewritten echo is an
+island in text the parser already ignores.
+
+ponytail: regex-level rewriting, not a Blade parser. Handles the echo forms,
+comments and @php blocks, which is what this slice's rules reach. If this hits
+@verbatim or deeply nested directives, vendoring EmranMR/tree-sitter-blade is
+the escape hatch - see the slice 2 design.
+"""
+
+import re
+
+# Order matters. Comments are stripped before echoes so a commented-out echo
+# does not become a sink. The literal @{{ form is protected before {{ is
+# rewritten, or a JS template would be analysed as PHP.
+_COMMENT = re.compile(r"\{\{--.*?--\}\}", re.S)
+_LITERAL = re.compile(r"@\{\{.*?\}\}", re.S)
+_RAW_ECHO = re.compile(r"\{!!(.*?)!!\}", re.S)
+_ESCAPED_ECHO = re.compile(r"\{\{(.*?)\}\}", re.S)
+_PHP_BLOCK = re.compile(r"@php(.*?)@endphp", re.S)
+
+_LITERAL_PLACEHOLDER = "\x00vigilloo-blade-literal\x00"
+
+
+def _keep_lines(replacement: str, matched: str) -> str:
+    """Pad a replacement so it spans as many lines as the text it replaced."""
+    return replacement + "\n" * matched.count("\n")
+
+
+def to_php(text: str) -> str:
+    """Rewrite Blade into PHP the tree-sitter php grammar can read."""
+    literals: list[str] = []
+
+    def _stash(match: re.Match[str]) -> str:
+        literals.append(match.group(0))
+        return _keep_lines(_LITERAL_PLACEHOLDER, match.group(0))
+
+    text = _LITERAL.sub(_stash, text)
+    text = _COMMENT.sub(lambda m: _keep_lines("", m.group(0)), text)
+    text = _PHP_BLOCK.sub(lambda m: _keep_lines(f"<?php {m.group(1)}?>", m.group(0)), text)
+    text = _RAW_ECHO.sub(lambda m: _keep_lines(f"<?php echo {m.group(1)}; ?>", m.group(0)), text)
+    text = _ESCAPED_ECHO.sub(lambda m: _keep_lines(f"<?php e({m.group(1)}); ?>", m.group(0)), text)
+
+    for literal in literals:
+        text = text.replace(_LITERAL_PLACEHOLDER, literal.replace("\n", ""), 1)
+    return text
