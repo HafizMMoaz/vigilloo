@@ -8,10 +8,10 @@ FIXTURE = Path("tests/fixtures/laravel-minimal")
 
 def test_produces_the_sql_injection_and_xss_findings() -> None:
     findings = scan_project(load_project(FIXTURE))
-    assert len(findings) == 2
+    by_rule = {f.rule_id for f in findings}
+    assert by_rule == {"php.sql-injection", "php.xss", "laravel.mass-assignment"}
 
-    finding = findings[0]
-    assert finding.rule_id == "php.sql-injection"
+    finding = next(f for f in findings if f.rule_id == "php.sql-injection")
     assert finding.severity == "critical"
     assert finding.cwe == ("CWE-89",)
     assert finding.span.file.name == "OrderRepository.php"

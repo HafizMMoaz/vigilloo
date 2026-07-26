@@ -16,9 +16,18 @@ from tree_sitter import Node
 # ->orderByRaw(...)` are where the interesting calls actually live. A walk
 # over expression_statement alone finds nothing in a typical repository.
 from .graph import Project
+from .laravel.models import Protection, model_config
 from .laravel.views import extract_view_bindings, template_path
-from .laravel.vocabulary import is_source, sanitizer_clears, sink
-from .models import ALL_KINDS, PathStep, TaintKind, WalkStats
+from .laravel.vocabulary import (
+    MASS_ASSIGNMENT_RULE,
+    XSS_RULE,
+    eloquent_write,
+    is_source,
+    sanitizer_clears,
+    sink,
+    source_kinds,
+)
+from .models import PathStep, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
@@ -39,22 +48,33 @@ def _var_name(node: Node, source: bytes) -> str:
 
 
 def _union_of_children(
-    node: Node, source: bytes, local: dict[str, frozenset[TaintKind]]
+    node: Node,
+    source: bytes,
+    local: dict[str, frozenset[TaintKind]],
+    request_vars: frozenset[str],
 ) -> frozenset[TaintKind]:
     kinds: frozenset[TaintKind] = frozenset()
     for child in node.children:
-        kinds |= expr_kinds(child, source, local)
+        kinds |= expr_kinds(child, source, local, request_vars)
     return kinds
 
 
 def expr_kinds(
-    node: Node, source: bytes, local: dict[str, frozenset[TaintKind]]
+    node: Node,
+    source: bytes,
+    local: dict[str, frozenset[TaintKind]],
+    request_vars: frozenset[str] = frozenset(),
 ) -> frozenset[TaintKind]:
     """Which taint kinds are still live in the value this expression produces.
 
     Replaces slice 1's "does this expression mention a tainted variable", which
     could not express sanitizing: e($x) mentions $x, so a flat membership test
     sees taint no matter what wraps it.
+
+    Sources are recognised here rather than only at assignment, so an inline
+    `User::create($request->all())` or `whereRaw($request->input('sort'))` is
+    seen at all. Recognising them only where they were stored in a variable
+    made the single most idiomatic form of both calls invisible.
 
     The default case is a union over children, so an unrecognised construct
     preserves taint rather than dropping it. Silently losing taint is a false
@@ -64,12 +84,22 @@ def expr_kinds(
     if node.type == "variable_name":
         return local.get(_var_name(node, source), frozenset())
 
+    if node.type == "member_call_expression":
+        name = node_text(node.child_by_field_name("name"), source)
+        entering = source_kinds(name)
+        if entering and _is_request_receiver(node, source, request_vars):
+            return entering
+
     if node.type == "function_call_expression":
         name = node_text(node.child_by_field_name("function"), source)
         cleared = sanitizer_clears(name)
         if cleared:
             args = node.child_by_field_name("arguments")
-            inner = _union_of_children(args, source, local) if args is not None else frozenset()
+            inner = (
+                _union_of_children(args, source, local, request_vars)
+                if args is not None
+                else frozenset()
+            )
             return inner - cleared
 
     if node.type == "cast_expression":
@@ -77,10 +107,12 @@ def expr_kinds(
         cast = node_text(node.child_by_field_name("type"), source).strip().lower()
         if cast in ("int", "integer", "float", "double"):
             value = node.child_by_field_name("value")
-            inner = expr_kinds(value, source, local) if value is not None else frozenset()
+            inner = (
+                expr_kinds(value, source, local, request_vars) if value is not None else frozenset()
+            )
             return inner - {TaintKind.SQL, TaintKind.HTML}
 
-    return _union_of_children(node, source, local)
+    return _union_of_children(node, source, local, request_vars)
 
 
 def _request_like_params(project: Project, fqn: str) -> frozenset[str]:
@@ -124,6 +156,123 @@ def _is_request_receiver(call: Node, source: bytes, request_vars: frozenset[str]
     if obj.type == "function_call_expression":
         return node_text(obj.child_by_field_name("function"), source) == "request"
     return False
+
+
+def _crosses_source(node: Node, source: bytes, request_vars: frozenset[str]) -> bool:
+    """Does evaluating this expression read from a Request source?"""
+    return any(
+        is_source(node_text(c.child_by_field_name("name"), source))
+        and _is_request_receiver(c, source, request_vars)
+        for c in find_all(node, "member_call_expression")
+    )
+
+
+def _inline_source_steps(
+    arg: Node, parsed: ParsedFile, request_vars: frozenset[str]
+) -> list[PathStep]:
+    """The source step for a sink argument that reads the Request directly.
+
+    `User::create($request->all())` never assigns the source to a variable, so
+    nothing in the statement loop emits a source step for it. Without this the
+    path jumps from the route to the sink and never says where the data
+    entered, which is exactly the gap invariant 2 exists to prevent.
+    """
+    if not _crosses_source(arg, parsed.source, request_vars):
+        return []
+    return [
+        PathStep(
+            role="source",
+            span=node_span(arg, parsed.path),
+            snippet=node_text(arg, parsed.source).strip(),
+            note="attacker-controlled request data",
+        )
+    ]
+
+
+def _constructed_class(node: Node, source: bytes, project: Project, file: Path) -> str | None:
+    """The class a `new Foo(...)` or `Foo::bar(...)` expression yields, if any.
+
+    Deliberately shallow: it does not try to know that `find()` returns a model
+    while `count()` returns an integer. A wrong class here can only cause a
+    miss, because the sink additionally requires the class to be a model and
+    the argument to carry mass_assign taint.
+    """
+    if node.type == "object_creation_expression":
+        for child in node.children:
+            if child.type in ("name", "qualified_name"):
+                return project.resolve_class_name(file, node_text(child, source))
+        return None
+    if node.type == "scoped_call_expression":
+        scope = node.child_by_field_name("scope")
+        if scope is not None and scope.type in ("name", "qualified_name"):
+            return project.resolve_class_name(file, node_text(scope, source))
+    return None
+
+
+def _mass_assign_steps(
+    project: Project,
+    call: Node,
+    method: str,
+    args: list[Node],
+    receiver_fqn: str | None,
+    parsed: ParsedFile,
+    local: dict[str, frozenset[TaintKind]],
+    request_vars: frozenset[str],
+) -> list[PathStep] | None:
+    """The model and sink steps for an Eloquent array write, if it is unsafe.
+
+    Three-way result, and the distinction matters to the coverage counter:
+
+    - None: not an Eloquent write on a class this walk knows. The caller falls
+      through to its propagator handling, which may record a lost trail.
+    - []: a write this walk fully resolved and judged safe. The caller stops,
+      and records nothing, because nothing was lost. Counting a call whose
+      receiver, model configuration and argument kinds were all read as an
+      unresolved gap would report gaps on correct code, which is how a
+      coverage counter becomes something people ignore.
+    - steps: the finding.
+    """
+    write = eloquent_write(method)
+    if write is None or receiver_fqn is None:
+        return None
+    config = model_config(project.classes, receiver_fqn)
+    if config is None:
+        return None
+
+    index, bypasses_protection = write
+    if index >= len(args):
+        return []
+    if TaintKind.MASS_ASSIGN not in expr_kinds(args[index], parsed.source, local, request_vars):
+        return []
+    if config.protection is Protection.GUARDED and not bypasses_protection:
+        return []
+
+    if bypasses_protection:
+        note = f"{method}() bypasses both $fillable and $guarded"
+        model_span = project.classes[receiver_fqn].span
+    elif config.protection is Protection.PRIVILEGED_FILLABLE:
+        note = f"$fillable allows the privileged column {config.privileged_column}"
+        model_span = config.reason_span or project.classes[receiver_fqn].span
+    else:
+        note = "$guarded = [] - mass assignment protection disabled"
+        model_span = config.reason_span or project.classes[receiver_fqn].span
+
+    return [
+        *_inline_source_steps(args[index], parsed, request_vars),
+        PathStep(
+            role="model",
+            span=model_span,
+            snippet=receiver_fqn,
+            note=note,
+        ),
+        PathStep(
+            role="sink",
+            span=node_span(call, parsed.path),
+            snippet=node_text(call, parsed.source).strip(),
+            note=f"request-supplied array written to {receiver_fqn.rsplit('\\', 1)[-1]}",
+            rule_id=MASS_ASSIGNMENT_RULE,
+        ),
+    ]
 
 
 def _call_parts(call: Node, source: bytes) -> tuple[str, str, list[Node]]:
@@ -198,6 +347,7 @@ def _walk_template(
                     span=node_span(stmt, parsed.path),
                     snippet=project.blade_line(parsed.path, line),
                     note="raw echo, no HTML escaping",
+                    rule_id=XSS_RULE,
                 )
             ]
         )
@@ -226,6 +376,17 @@ def _walk_method(
     paths: list[list[PathStep]] = []
     request_vars = _request_like_params(project, fqn)
 
+    # Variable name -> class FQN, for `$order->update($request->all())`. Seeded
+    # from the signature, because a type-hinted parameter is route-model
+    # binding, and `$order->update(...)` in an action whose signature binds the
+    # model is where this bug actually ships.
+    local_types: dict[str, str] = {}
+    symbol = project.method(fqn)
+    if symbol is not None:
+        for param_name, param_type in zip(symbol.params, symbol.param_types, strict=True):
+            if param_type:
+                local_types[param_name] = param_type
+
     statements = [n for n in walk(method_node) if n.type in _STATEMENT_TYPES]
 
     for stmt in statements:
@@ -237,24 +398,16 @@ def _walk_method(
                 continue
             target = _var_name(left, source)
 
-            calls = find_all(right, "member_call_expression")
-            if any(
-                is_source(node_text(c.child_by_field_name("name"), source))
-                and _is_request_receiver(c, source, request_vars)
-                for c in calls
-            ):
-                local[target] = ALL_KINDS
-                prefix = prefix + [
-                    PathStep(
-                        role="source",
-                        span=node_span(assign, parsed.path),
-                        snippet=node_text(assign, source).strip(),
-                        note="attacker-controlled request data",
-                    )
-                ]
-                continue
+            # `$u = User::find($id)` and `$u = new User(...)` both make $u a
+            # User, which is what lets the instance-form Eloquent writes below
+            # resolve their receiver.
+            constructed = _constructed_class(right, source, project, parsed.path)
+            if constructed is not None:
+                local_types[target] = constructed
+            else:
+                local_types.pop(target, None)
 
-            kinds = expr_kinds(right, source, local)
+            kinds = expr_kinds(right, source, local, request_vars)
             if kinds:
                 local[target] = kinds
             else:
@@ -264,22 +417,88 @@ def _walk_method(
                 # $sort = 'asc';` would still report $sort as tainted below.
                 local.pop(target, None)
 
-        # 2. Calls: either a sink, or a step deeper into another method.
+            # expr_kinds computes *what* the value carries; the evidence path
+            # still has to record *where* it entered, so the crossing is
+            # detected separately. The step is emitted even when a sanitizer
+            # cleared every kind, because it costs nothing on a path that then
+            # never reaches a sink, and omitting it would drop the source step
+            # from a path where only one kind was cleared.
+            if _crosses_source(right, source, request_vars):
+                prefix = prefix + [
+                    PathStep(
+                        role="source",
+                        span=node_span(assign, parsed.path),
+                        snippet=node_text(assign, source).strip(),
+                        note="attacker-controlled request data",
+                    )
+                ]
+
+        # 2a. Static calls. `User::create($request->all())` names its class at
+        #     the call site, so it needs no receiver inference - which is why
+        #     it is the form the mass-assignment rule leans on. Static calls
+        #     are not followed as propagators yet; that arrives with the
+        #     facade and container resolution the slice 1 table defers.
+        for call in find_all(stmt, "scoped_call_expression"):
+            scope_node = call.child_by_field_name("scope")
+            name_node = call.child_by_field_name("name")
+            args_node = call.child_by_field_name("arguments")
+            if scope_node is None or name_node is None:
+                continue
+            args = (
+                [a for a in args_node.children if a.type not in ("(", ")", ",")]
+                if args_node is not None
+                else []
+            )
+            steps = _mass_assign_steps(
+                project,
+                call,
+                node_text(name_node, source),
+                args,
+                project.resolve_class_name(parsed.path, node_text(scope_node, source)),
+                parsed,
+                local,
+                request_vars,
+            )
+            if steps:
+                paths.append(prefix + steps)
+
+        # 2b. Calls: either a sink, or a step deeper into another method.
         for call in find_all(stmt, "member_call_expression"):
             obj, name, args = _call_parts(call, source)
 
+            steps = _mass_assign_steps(
+                project,
+                call,
+                name,
+                args,
+                local_types.get(obj.lstrip("$")),
+                parsed,
+                local,
+                request_vars,
+            )
+            if steps is not None:
+                # Empty means "resolved and safe" - stop here without letting
+                # the propagator handling below record a lost trail.
+                if steps:
+                    paths.append(prefix + steps)
+                continue
+
             sink_found = sink(name)
             if sink_found is not None:
-                index, kind = sink_found
-                if index < len(args) and kind in expr_kinds(args[index], source, local):
+                index, kind, rule_id = sink_found
+                if index < len(args) and kind in expr_kinds(
+                    args[index], source, local, request_vars
+                ):
                     paths.append(
                         prefix
+                        + _inline_source_steps(args[index], parsed, request_vars)
                         + [
                             PathStep(
                                 role="sink",
                                 span=node_span(call, parsed.path),
                                 snippet=node_text(call, source).strip(),
                                 note="unparameterised SQL fragment",
+                                rule_id=rule_id,
                             )
                         ]
                     )
@@ -292,7 +511,9 @@ def _walk_method(
             # ->get() chain terminator, and a counter that reports gaps on
             # correct code trains people to ignore it.
             passed = {
-                i: kinds for i, arg in enumerate(args) if (kinds := expr_kinds(arg, source, local))
+                i: kinds
+                for i, arg in enumerate(args)
+                if (kinds := expr_kinds(arg, source, local, request_vars))
             }
 
             # $this->prop->method($tainted) - follow into the callee.
@@ -346,7 +567,7 @@ def _walk_method(
         for binding in extract_view_bindings(stmt, source):
             bound: dict[str, frozenset[TaintKind]] = {}
             for name, expression in binding.variables:
-                kinds = expr_kinds(expression, source, local)
+                kinds = expr_kinds(expression, source, local, request_vars)
                 if kinds:
                     bound[name] = kinds
             for name in binding.compacted:

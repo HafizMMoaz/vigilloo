@@ -18,12 +18,19 @@ class TaintKind(StrEnum):
     sink can consume it and no sanitizer can clear it would claim reasoning the
     engine cannot do. Each remaining kind arrives with its sinks.
 
-    ponytail: two kinds. js, shell, path, url, code, ldap, xpath, header and log
-    land with their own sink tables - see docs/06-taint-analysis.
+    ponytail: three kinds. js, shell, path, url, code, ldap, xpath, header and
+    log land with their own sink tables - see docs/06-taint-analysis.
     """
 
     SQL = "sql"
     HTML = "html"
+
+    # Not an injection kind like the others: it marks a value whose *keys* the
+    # attacker chose, which is what makes an Eloquent array write dangerous.
+    # $request->only([...]) and ->validated() are XSS- and SQL-dangerous while
+    # being perfectly safe to mass-assign, and no boolean over the other kinds
+    # can express that difference.
+    MASS_ASSIGN = "mass_assign"
 
 
 ALL_KINDS: frozenset[TaintKind] = frozenset(TaintKind)
@@ -67,12 +74,20 @@ class PathStep:
     """One step in a finding's evidence path.
 
     role is one of: source, propagator, sanitizer, sink, entry.
+
+    rule_id is set on sink steps and empty everywhere else. The taint walk is
+    the only layer that knows which sink it matched, and the security engine is
+    the only layer that knows what rules are, so the walk names the rule and
+    rules.py looks it up. Passing a Rule object here instead would put the
+    security engine's vocabulary inside the graph layer, which the layering
+    rule forbids.
     """
 
     role: str
     span: Span
     snippet: str
     note: str = ""
+    rule_id: str = ""
 
 
 @dataclass(frozen=True)

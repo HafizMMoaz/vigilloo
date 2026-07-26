@@ -63,3 +63,27 @@ def test_builtin_and_union_types_resolve_verbatim(tmp_path: Path) -> None:
     cls = syms.classes["App\\Services\\Svc"]
     assert cls.properties == {"perPage": "int", "tag": "string"}
     assert cls.methods["mix"].param_types == ("int|string", "self")
+
+
+def test_extracts_base_class_and_array_property_defaults(tmp_path: Path) -> None:
+    """Model configuration the mass-assignment rule reads."""
+    path = tmp_path / "User.php"
+    path.write_text(
+        "<?php\n"
+        "namespace App\\Models;\n"
+        "use Illuminate\\Database\\Eloquent\\Model;\n"
+        "class User extends Model\n"
+        "{\n"
+        "    protected $guarded = [];\n"
+        "    protected $fillable = ['name', 'is_admin'];\n"
+        "    protected $unreadable = [self::LOCKED];\n"
+        "}\n"
+    )
+    info = extract_symbols(parse_php(path)).classes["App\\Models\\User"]
+
+    assert info.parent == "Illuminate\\Database\\Eloquent\\Model"
+    assert info.array_props["guarded"] == ()
+    assert info.array_props["fillable"] == ("name", "is_admin")
+    # Unreadable is absent, not empty: the two mean opposite things.
+    assert "unreadable" not in info.array_props
+    assert info.array_prop_spans["guarded"].start_line == 6

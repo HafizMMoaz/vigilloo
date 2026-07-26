@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Status: first vertical slice implemented
 
 The spec in `docs/` is complete. `src/` is a working Python package: PHP parser, symbol
-extraction, Laravel route table, call graph, kind-based interprocedural taint analysis, and SQL
-injection findings with evidence paths. Everything beyond that slice is still spec only.
+extraction, Laravel route table, call graph, kind-based interprocedural taint analysis, Eloquent
+model configuration, and SQL injection, XSS and mass-assignment findings with evidence paths.
+Everything beyond those slices is still spec only.
 
 ```bash
 uv sync --all-extras
@@ -114,8 +115,10 @@ produce them: mass assignment via `$guarded = []`, IDOR from route-model binding
 Two details that decide precision, both in [06-taint-analysis](docs/06-taint-analysis/README.md):
 
 - **Taint is kind-based, not boolean.** `e()` clears `html`, not `sql`. A boolean flag produces
-  both false positives and false negatives. Implemented for `sql` and `html`; the other nine
-  kinds in [06-taint-analysis](docs/06-taint-analysis/README.md) arrive with their own sinks.
+  both false positives and false negatives. Implemented for `sql`, `html` and `mass_assign`; the
+  other nine kinds in [06-taint-analysis](docs/06-taint-analysis/README.md) arrive with their
+  own sinks. `mass_assign` is why the kind set is not just about injection: `$request->only([...])`
+  is safe to mass-assign and still dangerous to print.
 - **`whereRaw('age > ?', [$age])` is safe; `whereRaw("age > $age")` is not.** Rules must check
   which argument taint reaches. Flagging every `*Raw` call is the noise that makes developers
   stop reading security reports.
