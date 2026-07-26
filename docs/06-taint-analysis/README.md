@@ -20,6 +20,13 @@ carries a **kind set**, and a sanitizer clears only the kinds it actually addres
 | `url` | HTTP clients (SSRF), redirects | host allowlist, scheme check |
 | `code` | `eval`, `unserialize`, dynamic include | nothing - never accept untrusted input here |
 | `ldap`, `xpath`, `header`, `log` | respective sinks | respective encoders |
+| `mass_assign` | Eloquent array writes on a model with protection disabled | `validated()`, `safe()`, `only([...])`, an explicit array literal |
+
+`mass_assign` is not an injection kind like the others. It marks a value whose **keys** the
+attacker chose, which is what makes an Eloquent array write dangerous. It is a kind rather than
+a property of the sink because `$request->only([...])` and `$request->validated()` are still
+fully `html`- and `sql`-dangerous while being perfectly safe to mass-assign, and no boolean over
+the other kinds can express that difference. `except([...])` is a blacklist and stays dangerous.
 
 A value can hold several kinds at once, and typically does: `$request->input('name')` starts as
 all of them.

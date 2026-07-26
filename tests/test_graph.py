@@ -7,7 +7,7 @@ FIXTURE = Path("tests/fixtures/laravel-minimal")
 
 def test_loads_all_php_files_and_routes() -> None:
     project = load_project(FIXTURE)
-    assert len(project.routes) == 3
+    assert {r.uri for r in project.routes} >= {"/orders/search", "/orders/display"}
     assert not project.failed
     assert "App\\Http\\Controllers\\OrderController" in project.classes
     assert "App\\Repositories\\OrderRepository" in project.classes

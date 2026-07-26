@@ -52,12 +52,15 @@ def _minimal_project(tmp_path: Path, controller_body: str, sink_call: str) -> Pa
 
 def test_finds_the_interprocedural_path_to_the_sink() -> None:
     paths = find_taint_paths(load_project(FIXTURE))
-    assert len(paths) == 2
+    # Selected by sink rather than by list position: the fixture grows with
+    # every slice, and an index would silently start asserting about a
+    # different path.
+    sql = next(p for p in paths if p[-1].span.file.name == "OrderRepository.php")
 
-    roles = [step.role for step in paths[0]]
+    roles = [step.role for step in sql]
     assert roles == ["entry", "source", "propagator", "sink"]
 
-    entry, source, propagator, sink = paths[0]
+    entry, source, propagator, sink = sql
     assert "/orders/search" in entry.snippet
     assert "input" in source.snippet
     assert source.span.start_line == 17
@@ -328,3 +331,28 @@ def test_escaped_and_manually_escaped_echoes_are_silent() -> None:
     paths = find_taint_paths(load_project(FIXTURE))
     lines = {p[-1].span.start_line for p in paths if p[-1].span.file.name == "show.blade.php"}
     assert lines == {2}
+
+
+def test_inline_source_reaches_the_sink_without_a_variable(tmp_path: Path) -> None:
+    """whereRaw($request->input('sort')) with no intermediate assignment.
+
+    Source recognition used to live only in the assignment branch, so the most
+    idiomatic form of the call - the one with nothing stored in a variable -
+    produced no finding at all.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=('        return DB::table("t")->orderByRaw($request->input("sort"));'),
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    paths = find_taint_paths(load_project(project_root))
+    assert len(paths) == 1
+    assert paths[0][-1].role == "sink"
+    assert "orderByRaw" in paths[0][-1].snippet
+
+
+def test_only_the_matched_rule_is_named_on_the_sink_step() -> None:
+    """rules.py dispatches on this string, not on the sink's file extension."""
+    by_file = {p[-1].span.file.name: p[-1].rule_id for p in find_taint_paths(load_project(FIXTURE))}
+    assert by_file["OrderRepository.php"] == "php.sql-injection"
+    assert by_file["show.blade.php"] == "php.xss"

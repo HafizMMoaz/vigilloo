@@ -11,7 +11,7 @@ from .laravel.blade import to_php
 from .laravel.routes import extract_routes
 from .models import Route, Symbol, WalkStats
 from .parser import ParsedFile, parse_php, parse_source
-from .symbols import ClassInfo, FileSymbols, extract_symbols
+from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
 
 _EXCLUDED_DIRS = {"vendor", "node_modules", "storage", "bootstrap", ".git"}
 
@@ -36,6 +36,19 @@ class Project:
     def resolve_property_type(self, class_fqn: str, prop: str) -> str | None:
         info = self.classes.get(class_fqn)
         return info.properties.get(prop) if info else None
+
+    def resolve_class_name(self, file: Path, written: str) -> str | None:
+        """Resolve a class name as written in `file` to its FQN.
+
+        `User::create(...)` names the class at the call site, so this is all
+        the resolution a static call needs - no receiver type inference.
+        Returns None when the file has no symbol table, rather than guessing a
+        global-namespace name that would not match any known class.
+        """
+        syms = self.symbols.get(file)
+        if syms is None:
+            return None
+        return resolve_type_name(written, syms.namespace, syms.imports)
 
     def blade_line(self, path: Path, line: int) -> str:
         """The original Blade text of a 1-indexed line, for evidence snippets.

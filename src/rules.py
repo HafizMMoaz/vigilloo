@@ -6,6 +6,7 @@ Fully deterministic. Same project, same ruleset, same findings, every time.
 from dataclasses import dataclass
 
 from .graph import Project
+from .laravel.vocabulary import MASS_ASSIGNMENT_RULE, SQL_INJECTION_RULE, XSS_RULE
 from .models import Finding, WalkStats
 from .taint import find_taint_paths
 
@@ -20,7 +21,7 @@ class Rule:
 
 
 SQL_INJECTION = Rule(
-    id="php.sql-injection",
+    id=SQL_INJECTION_RULE,
     title="SQL Injection",
     severity="critical",
     cwe=("CWE-89",),
@@ -32,7 +33,7 @@ SQL_INJECTION = Rule(
 )
 
 XSS = Rule(
-    id="php.xss",
+    id=XSS_RULE,
     title="Cross-Site Scripting",
     severity="high",
     cwe=("CWE-79",),
@@ -44,18 +45,32 @@ XSS = Rule(
 )
 
 
+MASS_ASSIGNMENT = Rule(
+    id=MASS_ASSIGNMENT_RULE,
+    title="Mass Assignment",
+    severity="high",
+    cwe=("CWE-915",),
+    remediation=(
+        "Replace the model's $guarded = [] with an explicit $fillable listing "
+        "only the columns a user may set, or pass $request->validated() / "
+        "$request->only([...]) instead of $request->all()."
+    ),
+)
+
+_BY_ID: dict[str, Rule] = {rule.id: rule for rule in (SQL_INJECTION, XSS, MASS_ASSIGNMENT)}
+
+
 def scan_project(project: Project, stats: WalkStats | None = None) -> list[Finding]:
     """Assemble findings from every taint path the analysis produced."""
     findings = []
     for path in find_taint_paths(project, stats=stats):
-        # ponytail: the rule is chosen by the sink's file extension. That works
-        # only because the two sink sets are disjoint by construction - html
-        # sinks are echo statements that exist only in project.blade, and
-        # graph.py keeps .blade.php out of project.files - so no PHP file can
-        # produce an html sink and no template can produce a sql one. The
-        # third rule breaks that assumption: at which point PathStep carries
-        # the rule identity from the walk and this branch goes away.
-        rule = XSS if path[-1].span.file.name.endswith(".blade.php") else SQL_INJECTION
+        # The walk names the rule on the sink step. A path whose sink names a
+        # rule this module does not define is dropped rather than guessed at:
+        # emitting it under the wrong ID would put a finding in users'
+        # baselines under an identity that never matches again.
+        rule = _BY_ID.get(path[-1].rule_id)
+        if rule is None:
+            continue
         findings.append(
             Finding(
                 rule_id=rule.id,

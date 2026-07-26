@@ -20,6 +20,7 @@ _ROLE_LABEL = {
     "entry": "entry",
     "source": "source",
     "propagator": "flows",
+    "model": "model",
     "sink": "sink",
 }
 
