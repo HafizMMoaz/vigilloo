@@ -7,10 +7,12 @@ incrementality, which this slice does not need - see docs 17-database.
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from tree_sitter import Node
+
 from .laravel.blade import to_php
 from .laravel.routes import extract_routes
 from .models import Route, Symbol, WalkStats
-from .parser import ParsedFile, parse_php, parse_source
+from .parser import ParsedFile, find_all, node_span, parse_php, parse_source
 from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
 
 _EXCLUDED_DIRS = {"vendor", "node_modules", "storage", "bootstrap", ".git"}
@@ -32,6 +34,26 @@ class Project:
         class_fqn, _, method_name = fqn.rpartition("::")
         info = self.classes.get(class_fqn)
         return info.methods.get(method_name) if info else None
+
+    def method_node(self, fqn: str) -> tuple[Node, ParsedFile] | None:
+        """The syntax node of a method's declaration, and the file it lives in.
+
+        Symbol carries a span, not a node, so any analysis that needs to read a
+        method's body has to find it again. That lookup belongs here rather than
+        in one analysis: the taint walk and the structural rules both need it,
+        and a second private copy would be a second place to get the matching
+        wrong.
+        """
+        symbol = self.method(fqn)
+        if symbol is None:
+            return None
+        parsed = self.files.get(symbol.span.file)
+        if parsed is None:
+            return None
+        for method in find_all(parsed.tree.root_node, "method_declaration"):
+            if node_span(method, parsed.path).start_line == symbol.span.start_line:
+                return method, parsed
+        return None
 
     def resolve_property_type(self, class_fqn: str, prop: str) -> str | None:
         info = self.classes.get(class_fqn)

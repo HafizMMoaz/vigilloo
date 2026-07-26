@@ -22,6 +22,9 @@ _ROLE_LABEL = {
     "propagator": "flows",
     "model": "model",
     "sink": "sink",
+    "binding": "binding",
+    "policy": "policy",
+    "gap": "gap",
 }
 
 

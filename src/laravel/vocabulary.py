@@ -60,6 +60,7 @@ XSS_RULE = "php.xss"
 # than invented to match the php. prefixes above, because invariant 7 makes it
 # permanent the moment it ships.
 MASS_ASSIGNMENT_RULE = "laravel.mass-assignment"
+MISSING_AUTHORIZATION_RULE = "laravel.missing-authorization"
 
 # Eloquent array writes -> (index of the mass-assigned argument, bypasses
 # protection).

@@ -6,8 +6,14 @@ Fully deterministic. Same project, same ruleset, same findings, every time.
 from dataclasses import dataclass
 
 from .graph import Project
-from .laravel.vocabulary import MASS_ASSIGNMENT_RULE, SQL_INJECTION_RULE, XSS_RULE
+from .laravel.vocabulary import (
+    MASS_ASSIGNMENT_RULE,
+    MISSING_AUTHORIZATION_RULE,
+    SQL_INJECTION_RULE,
+    XSS_RULE,
+)
 from .models import Finding, WalkStats
+from .structural import find_structural_paths
 from .taint import find_taint_paths
 
 
@@ -57,13 +63,33 @@ MASS_ASSIGNMENT = Rule(
     ),
 )
 
-_BY_ID: dict[str, Rule] = {rule.id: rule for rule in (SQL_INJECTION, XSS, MASS_ASSIGNMENT)}
+MISSING_AUTHORIZATION = Rule(
+    id=MISSING_AUTHORIZATION_RULE,
+    title="Missing Authorization on Model-Bound Route",
+    severity="high",
+    cwe=("CWE-639",),
+    remediation=(
+        "Add $this->authorize('view', $model) as the first statement of the "
+        "action, or attach can:view,model middleware to the route. "
+        "Authenticating a request says who the caller is; it never says which "
+        "records that caller may read."
+    ),
+)
+
+_BY_ID: dict[str, Rule] = {
+    rule.id: rule for rule in (SQL_INJECTION, XSS, MASS_ASSIGNMENT, MISSING_AUTHORIZATION)
+}
 
 
 def scan_project(project: Project, stats: WalkStats | None = None) -> list[Finding]:
-    """Assemble findings from every taint path the analysis produced."""
+    """Assemble findings from every evidence path the analysis produced.
+
+    Two producers, not one: taint paths and structural paths. Both yield the
+    same shape and both name their rule on the final step, so the dispatch below
+    does not need to know which produced what.
+    """
     findings = []
-    for path in find_taint_paths(project, stats=stats):
+    for path in find_taint_paths(project, stats=stats) + find_structural_paths(project):
         # The walk names the rule on the sink step. A path whose sink names a
         # rule this module does not define is dropped rather than guessed at:
         # emitting it under the wrong ID would put a finding in users'

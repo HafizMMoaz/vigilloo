@@ -73,10 +73,11 @@ class Route:
 class PathStep:
     """One step in a finding's evidence path.
 
-    role is one of: source, propagator, sanitizer, sink, entry.
+    role is one of: entry, source, propagator, sanitizer, model, sink for a
+    taint path, and entry, binding, policy, gap for a structural one.
 
-    rule_id is set on sink steps and empty everywhere else. The taint walk is
-    the only layer that knows which sink it matched, and the security engine is
+    rule_id is set on the final step and empty everywhere else. The analysis is
+    the only layer that knows which rule it matched, and the security engine is
     the only layer that knows what rules are, so the walk names the rule and
     rules.py looks it up. Passing a Rule object here instead would put the
     security engine's vocabulary inside the graph layer, which the layering

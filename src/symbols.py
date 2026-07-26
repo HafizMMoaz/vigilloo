@@ -117,7 +117,7 @@ def _base_class(cls: Node, source: bytes, namespace: str, imports: dict[str, str
     return None
 
 
-def _array_literal(node: Node, source: bytes) -> tuple[str, ...] | None:
+def array_literal(node: Node, source: bytes) -> tuple[str, ...] | None:
     """The string literals in an array literal, or None if it holds anything else.
 
     None means "unreadable", which callers must not confuse with an empty
@@ -214,7 +214,7 @@ def extract_symbols(parsed: ParsedFile) -> FileSymbols:
                     )
                 default = element.child_by_field_name("default_value")
                 if default is not None and default.type == "array_creation_expression":
-                    values = _array_literal(default, source)
+                    values = array_literal(default, source)
                     if values is not None:
                         info.array_props[p_name] = values
                         info.array_prop_spans[p_name] = node_span(prop, parsed.path)

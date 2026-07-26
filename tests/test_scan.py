@@ -27,7 +27,7 @@ def test_scan_reports_the_xss_finding() -> None:
     assert "Cross-Site Scripting" in out
     assert "CWE-79" in out
     assert "show.blade.php" in out
-    assert "6 findings" in out
+    assert "10 findings" in out
 
 
 def test_scan_exit_code_is_one_when_findings_exist() -> None:
