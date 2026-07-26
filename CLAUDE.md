@@ -8,6 +8,8 @@ The spec in `docs/` is complete. `src/` is a working Python package: PHP parser,
 extraction, Laravel route table with its middleware stack, call graph, kind-based
 interprocedural taint analysis, Eloquent model configuration, policy discovery, and SQL
 injection, XSS, mass-assignment and missing-authorization findings with evidence paths.
+`workspace/` owns the project root and its `.vigilloo/` directory; the SQLite store that
+belongs there is not built yet, so nothing persists between runs.
 Everything beyond those slices is still spec only.
 
 Findings come from **two producers**, not one: `taint.py` walks data from a source to a sink,

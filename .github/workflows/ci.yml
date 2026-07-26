@@ -29,7 +29,7 @@ jobs:
           cd "$(mktemp -d)"
           uv venv v
           VIRTUAL_ENV=v uv pip install "$GITHUB_WORKSPACE"/dist/*.whl
-          ./v/bin/python -c 'import vigilloo, vigilloo.laravel.routes'
+          ./v/bin/python -c 'import vigilloo, vigilloo.laravel.routes, vigilloo.workspace'
           ./v/bin/vigilloo --version
           # scan exits 1 when it finds something, which is the expected result here.
           out=$(./v/bin/vigilloo scan "$GITHUB_WORKSPACE/tests/fixtures/laravel-minimal") && rc=0 || rc=$?

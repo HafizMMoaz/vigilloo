@@ -10,6 +10,7 @@ from .graph import load_project
 from .models import WalkStats
 from .report import render
 from .rules import scan_project
+from .workspace import Workspace
 
 app = typer.Typer(
     name="vigilloo",
@@ -51,8 +52,11 @@ def scan(
         typer.secho(f"Error: not a directory: {path}", err=True, fg="red")
         raise typer.Exit(2)
 
+    # The graph still takes a bare root because it holds nothing across runs. It takes
+    # the workspace itself once it writes to the store that lives under workspace.dir.
+    workspace = Workspace.open(path)
     stats = WalkStats()
-    project = load_project(path, stats)
+    project = load_project(workspace.root, stats)
 
     if not project.files and not project.failed:
         console.print(f"[yellow]No PHP files found under {path}.[/yellow]")
