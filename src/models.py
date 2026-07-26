@@ -6,7 +6,27 @@ finding-shaped record.
 
 import hashlib
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+
+
+class TaintKind(StrEnum):
+    """A category of danger a tainted value carries.
+
+    docs/06-taint-analysis tables eleven kinds. Only those with both sinks and
+    sanitizers wired are declared here: marking a source `code`-tainted when no
+    sink can consume it and no sanitizer can clear it would claim reasoning the
+    engine cannot do. Each remaining kind arrives with its sinks.
+
+    ponytail: two kinds. js, shell, path, url, code, ldap, xpath, header and log
+    land with their own sink tables - see docs/06-taint-analysis.
+    """
+
+    SQL = "sql"
+    HTML = "html"
+
+
+ALL_KINDS: frozenset[TaintKind] = frozenset(TaintKind)
 
 
 @dataclass(frozen=True)

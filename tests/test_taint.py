@@ -52,7 +52,7 @@ def _minimal_project(tmp_path: Path, controller_body: str, sink_call: str) -> Pa
 
 def test_finds_the_interprocedural_path_to_the_sink() -> None:
     paths = find_taint_paths(load_project(FIXTURE))
-    assert len(paths) == 1
+    assert len(paths) == 2
 
     roles = [step.role for step in paths[0]]
     assert roles == ["entry", "source", "propagator", "sink"]
@@ -139,3 +139,192 @@ def test_abandoning_a_tainted_argument_is_counted(tmp_path: Path) -> None:
     stats = WalkStats()
     find_taint_paths(load_project(tmp_path), stats=stats)
     assert stats.unresolved == 1
+
+
+def test_computed_view_name_with_tainted_data_is_counted(tmp_path: Path) -> None:
+    """view($name, ...) cannot be resolved, but losing tainted data there is a
+    real gap - the walk must not go silent about it (finding 1)."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\C;\nRoute::post('/a', [C::class, 'a']);\n"
+    )
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "C.php").write_text(
+        "<?php\n"
+        "namespace App;\n"
+        "class C\n"
+        "{\n"
+        "    public function a($request)\n"
+        "    {\n"
+        "        $sort = $request->input('sort');\n"
+        "        $name = 'orders.show';\n"
+        "\n"
+        "        return view($name, compact('sort'));\n"
+        "    }\n"
+        "}\n"
+    )
+    stats = WalkStats()
+    find_taint_paths(load_project(tmp_path), stats=stats)
+    assert stats.unresolved == 1
+
+
+def test_eloquent_get_result_without_a_request_is_not_treated_as_a_source(
+    tmp_path: Path,
+) -> None:
+    """get(), all(), query() etc. are also Eloquent/Collection methods. Only a
+    Request receiver makes them attacker-controlled data (finding 2)."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "resources" / "views" / "orders").mkdir(parents=True)
+
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\OrderController;\n"
+        "use Illuminate\\Support\\Facades\\Route;\n"
+        "Route::get('/orders', [OrderController::class, 'index']);\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "OrderController.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "class OrderController\n"
+        "{\n"
+        "    public function index()\n"
+        "    {\n"
+        "        $orders = Order::where('status', 'paid')->get();\n"
+        "\n"
+        "        return view('orders.show', compact('orders'));\n"
+        "    }\n"
+        "}\n"
+    )
+    (tmp_path / "resources" / "views" / "orders" / "show.blade.php").write_text(
+        "<p>{!! $orders !!}</p>\n"
+    )
+    assert find_taint_paths(load_project(tmp_path)) == []
+
+
+def test_request_receiver_still_produces_a_finding(tmp_path: Path) -> None:
+    """The finding 2 fix must not overcorrect: a genuine request-receiver
+    source call into a raw echo is still reported. Uses ->get(), one of the
+    ambiguous names, on an actual $request to prove the receiver check (not
+    the method name) is what is doing the work."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "resources" / "views" / "orders").mkdir(parents=True)
+
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\OrderController;\n"
+        "use Illuminate\\Support\\Facades\\Route;\n"
+        "Route::get('/orders', [OrderController::class, 'index']);\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "OrderController.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "use Illuminate\\Http\\Request;\n"
+        "class OrderController\n"
+        "{\n"
+        "    public function index(Request $request)\n"
+        "    {\n"
+        "        $sort = $request->get('sort');\n"
+        "\n"
+        "        return view('orders.show', compact('sort'));\n"
+        "    }\n"
+        "}\n"
+    )
+    (tmp_path / "resources" / "views" / "orders" / "show.blade.php").write_text(
+        "<p>{!! $sort !!}</p>\n"
+    )
+    assert len(find_taint_paths(load_project(tmp_path))) == 1
+
+
+def test_tainted_data_into_a_blade_loop_is_an_honest_gap(tmp_path: Path) -> None:
+    """@foreach is inert text to the Blade rewriter, so $row inside the loop
+    is never aliased to $rows's taint. Silence would be a false negative;
+    the walk must at least say it gave up (finding 3)."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "resources" / "views" / "orders").mkdir(parents=True)
+
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\OrderController;\n"
+        "use Illuminate\\Support\\Facades\\Route;\n"
+        "Route::get('/orders', [OrderController::class, 'index']);\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "OrderController.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "use Illuminate\\Http\\Request;\n"
+        "class OrderController\n"
+        "{\n"
+        "    public function index(Request $request)\n"
+        "    {\n"
+        "        $rows = $request->input('rows');\n"
+        "\n"
+        "        return view('orders.list', compact('rows'));\n"
+        "    }\n"
+        "}\n"
+    )
+    (tmp_path / "resources" / "views" / "orders" / "list.blade.php").write_text(
+        "@foreach ($rows as $row)\n  <li>{!! $row !!}</li>\n@endforeach\n"
+    )
+    stats = WalkStats()
+    find_taint_paths(load_project(tmp_path), stats=stats)
+    assert stats.unresolved == 1
+
+
+def test_numeric_coercion_defeats_the_sql_sink(tmp_path: Path) -> None:
+    """intval() makes interpolation safe, and a boolean flag cannot see that.
+
+    This is a false positive the slice 1 engine reports today.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            "        $sort = $request->input('sort');\n        return $this->things->search($sort);"
+        ),
+        sink_call='DB::table("t")->orderByRaw("age > " . intval($sort))',
+    )
+    assert find_taint_paths(load_project(project_root)) == []
+
+
+def test_html_escaping_does_not_clear_the_sql_kind(tmp_path: Path) -> None:
+    """e() is not a SQL sanitizer. Clearing sql here would be a false negative."""
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            "        $sort = $request->input('sort');\n        return $this->things->search($sort);"
+        ),
+        sink_call='DB::table("t")->orderByRaw("created_at " . e($sort))',
+    )
+    assert len(find_taint_paths(load_project(project_root))) == 1
+
+
+def test_raw_blade_echo_is_reached_from_the_route() -> None:
+    """The full slice 2 path: route, controller, view() call, template sink."""
+    paths = find_taint_paths(load_project(FIXTURE))
+    blade = [p for p in paths if p[-1].span.file.name == "show.blade.php"]
+
+    assert len(blade) == 1
+    roles = [step.role for step in blade[0]]
+    assert roles == ["entry", "source", "propagator", "sink"]
+
+    sink = blade[0][-1]
+    assert sink.span.start_line == 2
+    assert sink.snippet == "<p>Raw: {!! $sort !!}</p>"
+
+
+def test_escaped_and_manually_escaped_echoes_are_silent() -> None:
+    """The test that distinguishes a kind set from a boolean flag.
+
+    Lines 3 and 4 of the fixture template render the same tainted value
+    through {{ }} and through {!! e() !!}. Only line 4 actually exercises
+    kind-based taint: e($sort) reaches a sink with the html kind cleared.
+    Line 3's {{ $sort }} is rewritten into `e($sort);`, an expression
+    statement rather than an echo (see laravel/blade.py), so it never
+    becomes an echo sink at all and would stay silent even under a boolean
+    taint flag.
+    """
+    paths = find_taint_paths(load_project(FIXTURE))
+    lines = {p[-1].span.start_line for p in paths if p[-1].span.file.name == "show.blade.php"}
+    assert lines == {2}

@@ -114,7 +114,8 @@ produce them: mass assignment via `$guarded = []`, IDOR from route-model binding
 Two details that decide precision, both in [06-taint-analysis](docs/06-taint-analysis/README.md):
 
 - **Taint is kind-based, not boolean.** `e()` clears `html`, not `sql`. A boolean flag produces
-  both false positives and false negatives.
+  both false positives and false negatives. Implemented for `sql` and `html`; the other nine
+  kinds in [06-taint-analysis](docs/06-taint-analysis/README.md) arrive with their own sinks.
 - **`whereRaw('age > ?', [$age])` is safe; `whereRaw("age > $age")` is not.** Rules must check
   which argument taint reaches. Flagging every `*Raw` call is the noise that makes developers
   stop reading security reports.

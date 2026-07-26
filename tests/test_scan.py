@@ -17,7 +17,17 @@ def test_scan_reports_the_finding_with_its_full_path() -> None:
     assert "OrderRepository.php" in out
     assert "/orders/search" in out
     assert "orderByRaw" in out
-    assert "1 finding" in out
+    assert "php.sql-injection" in out
+
+
+def test_scan_reports_the_xss_finding() -> None:
+    result = runner.invoke(app, ["scan", str(FIXTURE)])
+    out = result.stdout
+
+    assert "Cross-Site Scripting" in out
+    assert "CWE-79" in out
+    assert "show.blade.php" in out
+    assert "2 findings" in out
 
 
 def test_scan_exit_code_is_one_when_findings_exist() -> None:

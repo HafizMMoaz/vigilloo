@@ -12,7 +12,7 @@ def test_extracts_routes_with_resolved_action() -> None:
     routes = extract_routes(parsed, extract_symbols(parsed))
     by_uri = {r.uri: r for r in routes}
 
-    assert set(by_uri) == {"/orders/search", "/orders/recent"}
+    assert set(by_uri) == {"/orders/search", "/orders/recent", "/orders/display"}
     search = by_uri["/orders/search"]
     assert search.verbs == ("POST",)
     assert search.action_fqn == "App\\Http\\Controllers\\OrderController::search"

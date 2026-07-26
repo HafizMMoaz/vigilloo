@@ -1,6 +1,6 @@
 # Slice 2 Design: Kind-Based Taint and XSS Through Blade
 
-**Status:** approved, not yet implemented.
+**Status:** implemented.
 **Supersedes nothing.** Builds directly on the first vertical slice.
 **Normative references:** [06-taint-analysis](../06-taint-analysis/README.md),
 [03-parser](../03-parser/README.md), [08-framework-adapters](../08-framework-adapters/README.md).
