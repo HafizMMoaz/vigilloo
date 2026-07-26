@@ -286,20 +286,6 @@ def _call_parts(call: Node, source: bytes) -> tuple[str, str, list[Node]]:
     return obj, name, args
 
 
-def _method_body(project: Project, fqn: str) -> tuple[Node, ParsedFile] | None:
-    symbol = project.method(fqn)
-    if symbol is None:
-        return None
-    parsed = project.files.get(symbol.span.file)
-    if parsed is None:
-        return None
-    for method in find_all(parsed.tree.root_node, "method_declaration"):
-        span = node_span(method, parsed.path)
-        if span.start_line == symbol.span.start_line:
-            return method, parsed
-    return None
-
-
 def _walk_template(
     project: Project,
     template: Path,
@@ -366,7 +352,7 @@ def _walk_method(
     """Walk one method body, returning every completed source-to-sink path."""
     if depth > max_depth:
         return []
-    found = _method_body(project, fqn)
+    found = project.method_node(fqn)
     if found is None:
         return []
     method_node, parsed = found

@@ -6,10 +6,15 @@ from vigilloo.rules import scan_project
 FIXTURE = Path("tests/fixtures/laravel-minimal")
 
 
-def test_produces_the_sql_injection_and_xss_findings() -> None:
+def test_every_implemented_rule_fires_on_the_fixture() -> None:
     findings = scan_project(load_project(FIXTURE))
     by_rule = {f.rule_id for f in findings}
-    assert by_rule == {"php.sql-injection", "php.xss", "laravel.mass-assignment"}
+    assert by_rule == {
+        "php.sql-injection",
+        "php.xss",
+        "laravel.mass-assignment",
+        "laravel.missing-authorization",
+    }
 
     finding = next(f for f in findings if f.rule_id == "php.sql-injection")
     assert finding.severity == "critical"
