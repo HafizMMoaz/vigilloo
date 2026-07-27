@@ -1,0 +1,11 @@
+# The formatter and linter CI runs, run again before the commit exists.
+#
+# Install once with `uv run pre-commit install`. The rev is pinned to the same ruff minor
+# as the dev group in pyproject.toml: pre-commit builds its own isolated environment, so a
+# floating rev would format one way locally and another way in CI. Bump both together.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff-format
+      - id: ruff-check
