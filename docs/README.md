@@ -7,8 +7,14 @@ Not another vulnerability scanner: an autonomous AI Security Engineer that build
 graph of an application, reasons over data flow, proves exploitability, and explains every
 finding with evidence.
 
-This repository holds the **architecture and specification documents**. Implementation has not
-started.
+This repository holds the **architecture and specification documents** in `docs/`, and the
+implementation in `src/`. The first vertical slices are merged: PHP parsing and symbol
+extraction, the Laravel route table with its middleware stack, the call graph, kind-based
+interprocedural taint for the `sql`, `html` and `mass_assign` kinds, Eloquent model
+configuration, policy discovery, the four rules `php.sql-injection`, `php.xss`,
+`laravel.mass-assignment` and `laravel.missing-authorization` with their evidence paths, and a
+workspace whose SQLite store records every scan. Everything beyond those slices is still spec
+only; the per-capability status table is in [24-roadmap](24-roadmap/README.md).
 
 ## Current target
 
@@ -94,5 +100,11 @@ pytest · MkDocs Material
 
 ## Licence
 
-Open core. CLI, SDK, plugins, MCP and the graph engine are open source. Cloud, collaboration
-and compliance are commercial. See [21-cloud](21-cloud/README.md).
+**Proprietary and confidential. All rights reserved** - see [LICENSE](../LICENSE). Access to
+this repository grants no right to use it, and no part of Vigilloo is published under an
+open-source licence today. Portions ship under free and paid commercial terms, set out in the
+applicable service agreement.
+
+[21-cloud](21-cloud/README.md) documents an open-core boundary - which layers could be opened
+and which stay commercial - as a **v3.0 decision**, recorded early so it is not expensive to
+move later. It describes a possible future split, not the current licence.
