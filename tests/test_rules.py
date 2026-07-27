@@ -1,7 +1,8 @@
+import dataclasses
 from pathlib import Path
 
 from vigilloo.graph import load_project
-from vigilloo.rules import scan_project
+from vigilloo.rules import _BY_ID, RULESET_HASH, _ruleset_hash, scan_project
 
 FIXTURE = Path("tests/fixtures/laravel-minimal")
 
@@ -22,6 +23,16 @@ def test_every_implemented_rule_fires_on_the_fixture() -> None:
     assert finding.span.file.name == "OrderRepository.php"
     assert len(finding.evidence_path) == 4
     assert finding.remediation
+
+
+def test_ruleset_hash_tracks_the_rules_and_not_their_order() -> None:
+    """A stored scan's ruleset_hash is only useful if a changed rule moves it."""
+    assert _ruleset_hash(dict(reversed(list(_BY_ID.items())))) == RULESET_HASH
+
+    for field in ("id", "severity", "cwe"):
+        rule = _BY_ID["php.xss"]
+        changed = dataclasses.replace(rule, **{field: ("CWE-1",) if field == "cwe" else "x"})
+        assert _ruleset_hash({**_BY_ID, "php.xss": changed}) != RULESET_HASH
 
 
 def test_findings_are_stable_across_runs() -> None:

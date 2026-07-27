@@ -1,6 +1,6 @@
 # Slice 6 Design: The SQLite Store
 
-**Status:** planned.
+**Status:** implemented.
 **Supersedes nothing.** Builds directly on slice 5, which gave the workspace its `.vigilloo/`
 directory and left the store that belongs inside it unbuilt.
 

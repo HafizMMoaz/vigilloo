@@ -3,6 +3,7 @@
 Fully deterministic. Same project, same ruleset, same findings, every time.
 """
 
+import hashlib
 from dataclasses import dataclass
 
 from .graph import Project
@@ -79,6 +80,25 @@ MISSING_AUTHORIZATION = Rule(
 _BY_ID: dict[str, Rule] = {
     rule.id: rule for rule in (SQL_INJECTION, XSS, MASS_ASSIGNMENT, MISSING_AUTHORIZATION)
 }
+
+
+def _ruleset_hash(rules: dict[str, Rule]) -> str:
+    """Content-derive an identity for the rule table.
+
+    Sorted by id, so it does not depend on dict iteration order, and taken over the whole
+    frozen dataclass repr, so any field change moves it: id, severity and cwe, and the prose
+    fields too, since those are stored on every finding.
+    """
+    return hashlib.sha256(
+        "\n".join(repr(rules[rule_id]) for rule_id in sorted(rules)).encode()
+    ).hexdigest()[:16]
+
+
+# Stored on every scan, so an old row can be told apart from one today's ruleset would produce
+# (docs/17-database: ruleset_hash plus engine_version are what make a result reproducible). The
+# store never computes it, because it sits below the security engine and must not learn what a
+# rule is; the CLI reads it here and carries it down.
+RULESET_HASH: str = _ruleset_hash(_BY_ID)
 
 
 def scan_project(project: Project, stats: WalkStats | None = None) -> list[Finding]:
