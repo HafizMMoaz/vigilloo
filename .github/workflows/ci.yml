@@ -19,6 +19,11 @@ jobs:
       - run: uv run ruff check
       - run: uv run mypy
 
+      # Informational. The ponytail: markers are the debt ledger, generated from the code so
+      # it cannot go stale; this prints it into the build log. It reports, it never gates.
+      - name: Deliberate-shortcut ledger
+        run: uv run python scripts/debt.py
+
       # src/ is mapped onto the vigilloo import name, and subpackages are listed by
       # hand in pyproject.toml. An unregistered one still imports in the editable dev
       # install but vanishes from the wheel, so the built artifact is tested directly.
