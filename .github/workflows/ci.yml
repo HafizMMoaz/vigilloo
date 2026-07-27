@@ -19,6 +19,17 @@ jobs:
       - run: uv run ruff check
       - run: uv run mypy
 
+      # docs/23-dev-guide section "Security of Vigilloo itself": a pinned lockfile plus
+      # pip-audit. We do not get to skip our own advice. The environment audited is the one
+      # uv resolved from uv.lock, so an advisory hit here is one a developer also has.
+      - name: Audit dependencies
+        run: uv run pip-audit
+
+      # Informational. The ponytail: markers are the debt ledger, generated from the code so
+      # it cannot go stale; this prints it into the build log. It reports, it never gates.
+      - name: Deliberate-shortcut ledger
+        run: uv run python scripts/debt.py
+
       # src/ is mapped onto the vigilloo import name, and subpackages are listed by
       # hand in pyproject.toml. An unregistered one still imports in the editable dev
       # install but vanishes from the wheel, so the built artifact is tested directly.

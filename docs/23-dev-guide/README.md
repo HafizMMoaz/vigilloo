@@ -10,6 +10,7 @@ Tree-sitter grammars ship as wheels.
 ```bash
 git clone <repo> && cd vigilloo
 uv sync --all-extras          # includes dev dependencies
+uv run pre-commit install     # ruff format and ruff check before every commit
 uv run vigilloo doctor        # verify the environment
 uv run pytest                 # fast suite
 ```

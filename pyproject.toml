@@ -13,8 +13,19 @@ dependencies = [
 [project.scripts]
 vigilloo = "vigilloo.cli:app"
 
+# Pinned to a single minor each. An open upper bound lets an upstream release turn main
+# red with no change in this repo: a ruff minor adds lint rules and reformats, and a mypy
+# minor tightens inference. Upgrading is then a deliberate commit that carries whatever
+# fixes it needs, which is also what the pinned-lockfile promise in docs/23-dev-guide
+# section "Security of Vigilloo itself" means in practice.
 [dependency-groups]
-dev = ["pytest>=8.0", "mypy>=1.11", "ruff>=0.6"]
+dev = [
+    "pytest>=9.1,<9.2",
+    "mypy>=2.3,<2.4",
+    "ruff>=0.16,<0.17",
+    "pip-audit>=2.9,<2.10",
+    "pre-commit>=4.4,<4.5",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
