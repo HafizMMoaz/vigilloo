@@ -11,6 +11,7 @@ Proprietary. See [LICENSE](LICENSE).
 | Path | What |
 |------|------|
 | [`docs/`](docs/README.md) | The specification. Normative - `00`…`24`, numbered in reading order. |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release record. Every rule ID added or removed is announced here. |
 | `src/` | The analysis engine and the `vigilloo` CLI. This directory *is* the `vigilloo` package. |
 | `tests/` | Test suite and Laravel fixture projects. |
 
