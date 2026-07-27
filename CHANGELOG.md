@@ -81,7 +81,20 @@ Ruleset hash: `520914c8731f4c0d`.
   findings. Nothing reads this history back yet; the readers (`report --compare`, baselines) are
   their own slices.
 
+- **Slice 8 - the graph tables** (branch `slice-8-graph-ids`, design
+  [`docs/plans/2026-07-28-slice-8-graph-ids-design.md`](docs/plans/2026-07-28-slice-8-graph-ids-design.md)).
+  The store gained `nodes` and `edges` with the five indexes from
+  [docs/17-database](docs/17-database/README.md), and batch insert helpers that write a whole
+  batch in one statement rather than one per row. Nothing writes graph rows into them yet; that
+  is the slice that turns the in-memory `Project` into nodes and edges.
+
 ### Changed
+
+- **The store schema is version 2, and a database at any other version is now refused** with an
+  error naming the file to delete. There is no migration runner yet, so opening a version 1
+  `.vigilloo/vigilloo.db` would otherwise fail much later with "no such table: nodes". Delete
+  the file and re-scan; nothing has been released, so no findings history exists that a
+  migration would have had to preserve.
 
 - The specification and the engine were consolidated into a single repository, and `src/` was
   made the `vigilloo` package itself rather than a directory containing it. CI builds the wheel

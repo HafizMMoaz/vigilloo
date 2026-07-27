@@ -1,14 +1,17 @@
-"""The SQLite store: `.vigilloo/vigilloo.db`, one row per scan and per finding.
+"""The SQLite store: `.vigilloo/vigilloo.db`, the graph tables, and one row per scan
+and per finding.
 
-Write-only this slice (docs/plans/2026-07-27-slice-6-store-design.md): nothing reads history
-back yet, so the only entry points are opening the database and recording a completed scan.
-Knows nothing about rules or taint - `engine_version` and `ruleset_hash` arrive as parameters,
-never computed here, so the store stays below the security engine in the layering CLAUDE.md
-describes.
+Write-only (docs/plans/2026-07-27-slice-6-store-design.md): nothing reads history back yet,
+so the entry points are opening the database, recording a completed scan, and the batch
+node/edge inserts a graph write needs. Knows nothing about rules or taint - `engine_version`
+and `ruleset_hash` arrive as parameters, never computed here, so the store stays below the
+security engine in the layering CLAUDE.md describes.
 """
 
 import json
 import sqlite3
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -17,7 +20,7 @@ from .models import Finding
 from .workspace import Workspace
 
 _DB_FILENAME = "vigilloo.db"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 # Spec correction (docs/plans/2026-07-27-slice-6-store-design.md, "Spec correction" section):
 # docs/17-database still shows `findings.id TEXT PRIMARY KEY` plus a redundant
@@ -71,6 +74,35 @@ CREATE TABLE files (
     UNIQUE (project_id, path)
 );
 
+CREATE TABLE nodes (
+    id          TEXT PRIMARY KEY,
+    project_id  INTEGER NOT NULL REFERENCES projects(id),
+    kind        TEXT NOT NULL,
+    name        TEXT,
+    fqn         TEXT,
+    file_id     INTEGER REFERENCES files(id),
+    start_line  INTEGER, start_col INTEGER,
+    end_line    INTEGER, end_col   INTEGER,
+    start_byte  INTEGER, end_byte  INTEGER,
+    attrs       TEXT
+);
+CREATE INDEX idx_nodes_kind  ON nodes(project_id, kind);
+CREATE INDEX idx_nodes_fqn   ON nodes(project_id, fqn);
+CREATE INDEX idx_nodes_file  ON nodes(file_id);
+
+CREATE TABLE edges (
+    id         INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    src_id     TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    dst_id     TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    resolution TEXT,
+    attrs      TEXT
+);
+CREATE INDEX idx_edges_src ON edges(src_id, kind);
+CREATE INDEX idx_edges_dst ON edges(dst_id, kind);
+
 CREATE TABLE findings (
     id              TEXT NOT NULL,
     project_id      INTEGER NOT NULL REFERENCES projects(id),
@@ -101,10 +133,7 @@ CREATE TABLE evidence_paths (
     scan_id    INTEGER NOT NULL,
     finding_id TEXT NOT NULL,
     step       INTEGER NOT NULL,
-    -- node_id: docs/17-database declares REFERENCES nodes(id). `nodes` is not built this
-    -- slice, and SQLite rejects a foreign key whose target table does not exist, so the
-    -- reference arrives with the table. This is the only divergence from the doc's DDL.
-    node_id    TEXT,
+    node_id    TEXT REFERENCES nodes(id),
     file_id    INTEGER REFERENCES files(id),
     line       INTEGER,
     role       TEXT,
@@ -125,6 +154,49 @@ COMMIT;
 # "table already exists" with no schema_meta entry to tell it the schema is already there.
 
 
+@dataclass(frozen=True)
+class NodeRow:
+    """One `nodes` row, ready to insert.
+
+    `id` is content-derived and comes from `vigilloo.ids.node_id` - invariant 3, and the
+    reason `insert_nodes` can treat a repeat insert as a no-op instead of a conflict.
+    Every span column is optional: a node that stands for a whole file or a route
+    registration has no meaningful column offsets, and a zero would claim one it does not
+    have.
+    """
+
+    id: str
+    kind: str
+    name: str | None = None
+    fqn: str | None = None
+    file_id: int | None = None
+    start_line: int | None = None
+    start_col: int | None = None
+    end_line: int | None = None
+    end_col: int | None = None
+    start_byte: int | None = None
+    end_byte: int | None = None
+    attrs: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class EdgeRow:
+    """One `edges` row, ready to insert.
+
+    `confidence` is not decoration (docs/04-knowledge-graph): a taint path carries the
+    minimum confidence of its edges, and that value drives severity. It defaults to 1.0
+    because a statically resolved edge is certain; anything resolved through a facade map or
+    a variable callable must say so here and in `resolution`.
+    """
+
+    src_id: str
+    dst_id: str
+    kind: str
+    confidence: float = 1.0
+    resolution: str | None = None
+    attrs: Mapping[str, object] | None = None
+
+
 def connect(workspace: Workspace) -> sqlite3.Connection:
     """Open `.vigilloo/vigilloo.db`, apply the pragmas, create the schema if absent."""
     conn = sqlite3.connect(workspace.dir / _DB_FILENAME)
@@ -141,13 +213,23 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
     )
     row = conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
-    if row is not None:
+    if row is None:
+        conn.executescript(_SCHEMA_SQL)
         return
-    # ponytail: one whole-schema create, no migration steps - there is nothing yet to migrate
-    # from. Version 2 needs a real migration runner the first time a shipped database has to
-    # gain a column or table without losing findings history (docs/17-database "Migrations":
-    # the graph may be dropped and re-derived, but findings and baselines must survive).
-    conn.executescript(_SCHEMA_SQL)
+    if row[0] != str(_SCHEMA_VERSION):
+        # ponytail: one whole-schema create and no migration steps, so a database written by
+        # another schema version is refused rather than upgraded. Ceiling: the developer loses
+        # that project's findings history, which is the one thing under .vigilloo/ that cannot
+        # be rebuilt. Acceptable only because nothing has been released yet. Upgrade trigger:
+        # the first shipped version, after which docs/17-database "Migrations" applies - a
+        # forward-only runner keyed on this cell, free to drop and re-derive the graph but not
+        # findings or baselines. Failing loudly here is deliberate: the alternative is version 2
+        # code opening a version 1 database and reporting "no such table: nodes" much later.
+        raise RuntimeError(
+            f"{_DB_FILENAME} was written by schema version {row[0]}, this build expects "
+            f"{_SCHEMA_VERSION}, and no migration runner exists yet. Delete "
+            f".vigilloo/{_DB_FILENAME} and re-scan; that project's findings history is lost."
+        )
 
 
 def record_scan(
@@ -207,6 +289,90 @@ def record_scan(
     # small findings set is kilobytes, so pruning arrives when a real project's history measures
     # large enough to justify it, not preemptively here.
     return scan_id
+
+
+def insert_nodes(conn: sqlite3.Connection, project_id: int, nodes: Iterable[NodeRow]) -> None:
+    """Write a batch of nodes with one `executemany`.
+
+    docs/23-dev-guide section Performance: N+1 queries against SQLite dominate graph
+    construction, so a graph write is one statement over the whole batch, never one statement
+    per node.
+
+    No transaction is opened here. The batch is atomic either way - the driver begins one
+    before the first insert and holds it - and leaving the commit to the caller is what lets a
+    graph write join the single transaction `record_scan` already owns, rather than committing
+    a half-written scan behind its back. Callers that write nothing else wrap the call in
+    `with conn:`.
+
+    A node whose id is already present is left alone. The id is content-derived, so a repeat
+    is the same node re-derived, not a collision, and re-scanning a file that did not change
+    must not fail. `ON CONFLICT (id)` and not `OR IGNORE`, for the reason `_insert_finding`
+    gives: `OR IGNORE` would also swallow a NOT NULL or foreign key violation, which is a real
+    defect losing a real node.
+    """
+    conn.executemany(
+        "INSERT INTO nodes "
+        "(id, project_id, kind, name, fqn, file_id, start_line, start_col, end_line, end_col, "
+        "start_byte, end_byte, attrs) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (id) DO NOTHING",
+        (
+            (
+                node.id,
+                project_id,
+                node.kind,
+                node.name,
+                node.fqn,
+                node.file_id,
+                node.start_line,
+                node.start_col,
+                node.end_line,
+                node.end_col,
+                node.start_byte,
+                node.end_byte,
+                _attrs_json(node.attrs),
+            )
+            for node in nodes
+        ),
+    )
+
+
+def insert_edges(conn: sqlite3.Connection, project_id: int, edges: Iterable[EdgeRow]) -> None:
+    """Write a batch of edges with one `executemany`. Transactions as in `insert_nodes`.
+
+    ponytail: no idempotence. `edges.id` is an autoincrement rowid, per docs/17-database,
+    because an edge has no identity of its own - it is (src, dst, kind) between two nodes that
+    do. Ceiling: inserting the same logical edge twice writes two rows, so a caller must not
+    re-derive edges for a file whose nodes are already stored. Harmless while the graph is
+    rebuilt whole per run and nothing reads it back. Upgrade trigger: incremental scanning,
+    which re-derives one file at a time; then this needs `UNIQUE (src_id, dst_id, kind)` with
+    the same DO NOTHING, and docs/17-database gains it.
+    """
+    conn.executemany(
+        "INSERT INTO edges (project_id, src_id, dst_id, kind, confidence, resolution, attrs) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            (
+                project_id,
+                edge.src_id,
+                edge.dst_id,
+                edge.kind,
+                edge.confidence,
+                edge.resolution,
+                _attrs_json(edge.attrs),
+            )
+            for edge in edges
+        ),
+    )
+
+
+def _attrs_json(attrs: Mapping[str, object] | None) -> str | None:
+    """Serialise a kind-specific attribute bag, keys sorted.
+
+    Sorted because invariant 8 is byte-identical output for the same input, and a report or
+    an export that reads this column back would otherwise inherit dictionary insertion order.
+    """
+    return None if attrs is None else json.dumps(attrs, sort_keys=True)
 
 
 def _upsert_project(conn: sqlite3.Connection, root: Path, created_at: datetime) -> int:
