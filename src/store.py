@@ -26,7 +26,8 @@ _SCHEMA_VERSION = 1
 # it would fail the second scan's insert. Built here as `PRIMARY KEY (scan_id, id)` instead; the
 # doc is corrected in the same slice's second task. `evidence_paths` gains `scan_id` for the same
 # reason, so its foreign key can reference the composite parent.
-_SCHEMA_SQL = """
+_SCHEMA_SQL = f"""
+BEGIN;
 CREATE TABLE projects (
     id            INTEGER PRIMARY KEY,
     root_path     TEXT NOT NULL UNIQUE,
@@ -110,9 +111,15 @@ CREATE TABLE evidence_paths (
     FOREIGN KEY (scan_id, finding_id) REFERENCES findings(scan_id, id) ON DELETE CASCADE,
     UNIQUE (scan_id, finding_id, step, is_primary)
 );
+INSERT INTO schema_meta (key, value) VALUES ('version', '{_SCHEMA_VERSION}');
+COMMIT;
 """
-# schema_meta itself is created separately, before this script runs, so its version row can be
-# checked before deciding whether the rest of the schema needs creating at all.
+# schema_meta's table itself is created separately, before this script runs, so its version row
+# can be checked before deciding whether the rest of the schema needs creating at all. The
+# version row it holds afterward is written by the BEGIN/COMMIT inside the script above, in the
+# same transaction as every CREATE TABLE - a process killed mid-script must roll back to nothing
+# rather than leave tables with no version row, which would wedge every later connect() against
+# "table already exists" with no schema_meta entry to tell it the schema is already there.
 
 
 def connect(workspace: Workspace) -> sqlite3.Connection:
@@ -138,10 +145,6 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     # gain a column or table without losing findings history (docs/17-database "Migrations":
     # the graph may be dropped and re-derived, but findings and baselines must survive).
     conn.executescript(_SCHEMA_SQL)
-    conn.execute(
-        "INSERT INTO schema_meta (key, value) VALUES ('version', ?)", (str(_SCHEMA_VERSION),)
-    )
-    conn.commit()
 
 
 def record_scan(
@@ -228,7 +231,8 @@ def _upsert_files(
             rel_path,
             sha256=project.digests[rel_path],
             language="php",
-            source=parsed.source,
+            size_bytes=len(parsed.source),
+            lines=len(parsed.source.splitlines()),
             parsed_at=parsed_at,
             parse_state="partial" if parsed.has_errors else "ok",
         )
@@ -239,9 +243,35 @@ def _upsert_files(
             rel_path,
             sha256=project.digests[rel_path],
             language="blade",
-            source=parsed.source,
+            # size_bytes: ponytail, left NULL. ParsedFile.source here is the rewritten PHP, not
+            # the template - the same gap project.digests exists to close - and a byte count of
+            # the wrong text is worse than none, since nothing reads this column yet to notice.
+            # lines comes from project.blade_lines instead: those are the template's own lines,
+            # captured before the rewrite, so the count is exact rather than merely plausible.
+            size_bytes=None,
+            lines=len(project.blade_lines[rel_path]),
             parsed_at=parsed_at,
             parse_state="partial" if parsed.has_errors else "ok",
+        )
+    for path in project.failed:
+        # A file that raised OSError never became a ParsedFile, so load_project recorded it as
+        # whatever it was handed - absolute, since the walk itself deals in absolute paths and
+        # only relativises on success. Hand-built Project fixtures may already be relative.
+        rel_path = path.relative_to(project.root) if path.is_absolute() else path
+        file_ids[rel_path] = _upsert_file(
+            conn,
+            project_id,
+            rel_path,
+            # sha256: ponytail, empty string. The file was never read, so there is no content to
+            # hash - hashing zero bytes would claim a digest that matches no real content of
+            # this file. NOT NULL forces some value; empty string is the least dishonest one
+            # available until incremental scanning needs a real per-file failure record.
+            sha256="",
+            language="blade" if rel_path.name.endswith(".blade.php") else "php",
+            size_bytes=None,
+            lines=None,
+            parsed_at=None,
+            parse_state="failed",
         )
     return file_ids
 
@@ -253,12 +283,22 @@ def _upsert_file(
     *,
     sha256: str,
     language: str,
-    source: bytes,
-    parsed_at: str,
+    size_bytes: int | None,
+    lines: int | None,
+    parsed_at: str | None,
     parse_state: str,
 ) -> int:
     # role: ponytail, left NULL. Classifying controller/model/middleware/blade/etc. is real
     # Laravel knowledge (docs/17-database) and does not belong in a storage slice.
+    #
+    # ponytail: the row reflects the latest scan, unconditionally. Ceiling: a file that becomes
+    # transiently unreadable overwrites a previously good row with sha256='' and NULL
+    # size_bytes/lines/parsed_at, destroying the incrementality key for that file - the next
+    # scan then has no digest to compare against and must re-analyse it. Harmless while nothing
+    # reads files.sha256 back. Upgrade trigger: the first reader of that column, which is
+    # incremental scanning (docs/plans/2026-07-27-slice-6-store-design.md leaves symbol_cache
+    # and summary_cache keyed on it). Then a failed read must preserve the prior digest rather
+    # than clear it - `DO UPDATE ... WHERE excluded.sha256 <> ''` or an explicit failure row.
     path = rel_path.as_posix()
     conn.execute(
         "INSERT INTO files "
@@ -268,16 +308,7 @@ def _upsert_file(
         "sha256 = excluded.sha256, language = excluded.language, "
         "size_bytes = excluded.size_bytes, lines = excluded.lines, "
         "parsed_at = excluded.parsed_at, parse_state = excluded.parse_state",
-        (
-            project_id,
-            path,
-            sha256,
-            language,
-            len(source),
-            source.count(b"\n") + 1,
-            parsed_at,
-            parse_state,
-        ),
+        (project_id, path, sha256, language, size_bytes, lines, parsed_at, parse_state),
     )
     row = conn.execute(
         "SELECT id FROM files WHERE project_id = ? AND path = ?", (project_id, path)
@@ -299,8 +330,15 @@ def _insert_finding(
     # no probability signal of their own; Finding gains a real one before this becomes a lie.
     # owasp/description: ponytail, left NULL. No OWASP category mapping exists yet, and Finding
     # carries only a title and a remediation - nothing today needs a longer prose field.
+    #
+    # OR IGNORE: `id` is content-derived over the rule, the location and every evidence step's
+    # file, line and snippet - which is every field a row here stores - so two findings sharing
+    # an id within one scan are a genuine duplicate and the dropped row loses no information.
+    # rules.py does not dedupe before this point. Letting it raise IntegrityError instead would
+    # roll back every other finding in the scan for the sake of one that adds nothing. The
+    # matching evidence-path inserts below use OR IGNORE for the same reason.
     conn.execute(
-        "INSERT INTO findings "
+        "INSERT OR IGNORE INTO findings "
         "(id, project_id, scan_id, rule_id, fingerprint, severity, confidence, title, "
         "remediation, file_id, start_line, start_col, end_line, end_col, cwe, first_seen_scan) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -326,7 +364,7 @@ def _insert_finding(
 
     for step_index, step in enumerate(finding.evidence_path):
         conn.execute(
-            "INSERT INTO evidence_paths "
+            "INSERT OR IGNORE INTO evidence_paths "
             "(scan_id, finding_id, step, file_id, line, role, snippet, note, is_primary) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
             (

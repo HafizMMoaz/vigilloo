@@ -1,6 +1,7 @@
+import hashlib
 from pathlib import Path
 
-from vigilloo.graph import Project
+from vigilloo.graph import Project, load_project
 from vigilloo.models import Finding, PathStep, Span
 from vigilloo.parser import parse_source
 from vigilloo.store import connect, record_scan
@@ -13,13 +14,21 @@ def _span(line: int) -> Span:
     return Span(_REL_PATH, line, 0, line, 10)
 
 
-def _project(root: Path, *, failed: list[Path] | None = None) -> Project:
-    parsed = parse_source(_REL_PATH, b"<?php\nclass OrderController {}\n")
+def _project(
+    root: Path,
+    *,
+    failed: list[Path] | None = None,
+    source: bytes = b"<?php\nclass OrderController {}\n",
+) -> Project:
+    parsed = parse_source(_REL_PATH, source)
     return Project(
         root=root,
         files={_REL_PATH: parsed},
         digests={_REL_PATH: "deadbeef"},
         failed=failed or [],
+        # Derived from the parse, exactly as load_project derives it, so a test cannot claim a
+        # file failed to parse while handing the store a file that parsed clean.
+        unparsed=[_REL_PATH] if parsed.has_errors else [],
     )
 
 
@@ -110,10 +119,12 @@ def test_first_seen_scan_survives_into_a_later_scan_of_the_same_finding(tmp_path
     assert first_seen == first_scan_id
 
 
-def test_a_file_that_failed_to_parse_marks_the_scan_partial(tmp_path: Path) -> None:
+def test_a_file_that_failed_to_read_marks_the_scan_partial(tmp_path: Path) -> None:
+    """Invariant 4: an unreadable file is a coverage gap and gets its own row saying so."""
     workspace = Workspace.open(tmp_path)
     conn = connect(workspace)
-    project = _project(workspace.root, failed=[Path("app/Broken.php")])
+    unreadable = Path("app/Broken.php")
+    project = _project(workspace.root, failed=[unreadable])
 
     scan_id = record_scan(
         conn, project, [], engine_version="0.0.1", ruleset_hash="rs1", duration_ms=1
@@ -124,6 +135,33 @@ def test_a_file_that_failed_to_parse_marks_the_scan_partial(tmp_path: Path) -> N
     ).fetchone()
     assert status == "partial"
     assert files_failed == 1
+
+    parse_state = conn.execute(
+        "SELECT parse_state FROM files WHERE path = ?", (unreadable.as_posix(),)
+    ).fetchone()
+    assert parse_state == ("failed",)
+
+
+def test_a_file_that_failed_to_parse_marks_the_scan_partial(tmp_path: Path) -> None:
+    """Invariant 4: a file that parsed with errors is read and counted, and still partial."""
+    workspace = Workspace.open(tmp_path)
+    conn = connect(workspace)
+    project = _project(
+        workspace.root, source=b"<?php\nclass OrderController { public function x( {\n"
+    )
+    assert project.unparsed == [_REL_PATH]
+
+    scan_id = record_scan(
+        conn, project, [], engine_version="0.0.1", ruleset_hash="rs1", duration_ms=1
+    )
+
+    status = conn.execute("SELECT status FROM scans WHERE id = ?", (scan_id,)).fetchone()[0]
+    assert status == "partial"
+
+    parse_state = conn.execute(
+        "SELECT parse_state FROM files WHERE path = ?", (_REL_PATH.as_posix(),)
+    ).fetchone()[0]
+    assert parse_state == "partial"
 
 
 def test_recording_a_scan_for_the_same_root_twice_reuses_the_project_row(tmp_path: Path) -> None:
@@ -138,3 +176,26 @@ def test_recording_a_scan_for_the_same_root_twice_reuses_the_project_row(tmp_pat
         "SELECT id FROM projects WHERE root_path = ?", (str(project.root),)
     ).fetchall()
     assert len(rows) == 1
+
+
+def test_the_stored_digest_is_of_the_blade_template_not_its_rewritten_php(tmp_path: Path) -> None:
+    """files.sha256 digests the file on disk, which for Blade is not ParsedFile.source."""
+    workspace = Workspace.open(tmp_path)
+    php_rel = Path("app/Plain.php")
+    php_source = b"<?php\nclass Plain {}\n"
+    (workspace.root / php_rel).parent.mkdir(parents=True)
+    (workspace.root / php_rel).write_bytes(php_source)
+    blade_rel = Path("resources/views/profile.blade.php")
+    template = b"<h1>{{ $name }}</h1>\n"
+    (workspace.root / blade_rel).parent.mkdir(parents=True)
+    (workspace.root / blade_rel).write_bytes(template)
+
+    project = load_project(workspace.root)
+    conn = connect(workspace)
+    record_scan(conn, project, [], engine_version="0.0.1", ruleset_hash="rs1", duration_ms=1)
+
+    digests = dict(conn.execute("SELECT path, sha256 FROM files"))
+    assert digests[php_rel.as_posix()] == hashlib.sha256(php_source).hexdigest()
+    assert digests[blade_rel.as_posix()] == hashlib.sha256(template).hexdigest()
+    rewritten = hashlib.sha256(project.blade[blade_rel].source).hexdigest()
+    assert digests[blade_rel.as_posix()] != rewritten
