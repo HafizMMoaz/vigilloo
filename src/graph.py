@@ -4,6 +4,7 @@ ponytail: in-memory only, rebuilt per run. SQLite persistence buys
 incrementality, which this slice does not need - see docs 17-database.
 """
 
+import hashlib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -29,6 +30,12 @@ class Project:
     blade_lines: dict[Path, list[str]] = field(default_factory=dict)
     failed: list[Path] = field(default_factory=list)
     unparsed: list[Path] = field(default_factory=list)
+    # sha256 of what was actually analysed, keyed like `files`/`blade`. Kept
+    # separate from ParsedFile.source: for Blade that field holds the
+    # rewritten PHP, not the template, so it is not a safe stand-in for the
+    # template's own digest (docs/17-database, files.sha256 is "the
+    # incrementality key" and store.py's coverage rows need the real one).
+    digests: dict[Path, str] = field(default_factory=dict)
 
     def method(self, fqn: str) -> Symbol | None:
         class_fqn, _, method_name = fqn.rpartition("::")
@@ -121,6 +128,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         # silently stops matching depending on which form CI happened to use.
         rel_path = path.relative_to(root)
         parsed = replace(parsed, path=rel_path)
+        project.digests[rel_path] = hashlib.sha256(parsed.source).hexdigest()
 
         # A syntax error degrades this file, it never aborts the scan - but
         # the gap in coverage must still be visible, so it is recorded even
@@ -151,6 +159,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             continue
 
         rel_path = path.relative_to(root)
+        project.digests[rel_path] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         parsed = parse_source(rel_path, to_php(text).encode("utf-8"))
 
         # A template that will not parse degrades this file, never the scan.

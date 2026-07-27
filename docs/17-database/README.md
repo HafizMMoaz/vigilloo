@@ -87,7 +87,7 @@ CREATE INDEX idx_edges_dst ON edges(dst_id, kind);
 
 -- ─── Findings ────────────────────────────────────────────────────────────
 CREATE TABLE findings (
-    id             TEXT PRIMARY KEY,   -- sha1(rule:path:span:path_signature)
+    id             TEXT NOT NULL,      -- sha1(rule:path:span:path_signature)
     project_id     INTEGER NOT NULL REFERENCES projects(id),
     scan_id        INTEGER NOT NULL REFERENCES scans(id),
     rule_id        TEXT NOT NULL,
@@ -106,14 +106,15 @@ CREATE TABLE findings (
     suppressed_by  TEXT,
     suppress_reason TEXT,
     first_seen_scan INTEGER REFERENCES scans(id),
-    UNIQUE (scan_id, id)
+    PRIMARY KEY (scan_id, id)          -- the scan is what makes a row; see the design note
 );
 CREATE INDEX idx_findings_fp   ON findings(project_id, fingerprint);
 CREATE INDEX idx_findings_scan ON findings(scan_id, severity);
 
 CREATE TABLE evidence_paths (
     id         INTEGER PRIMARY KEY,
-    finding_id TEXT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    scan_id    INTEGER NOT NULL,      -- part of the composite parent key, not a denormalisation
+    finding_id TEXT NOT NULL,
     step       INTEGER NOT NULL,      -- 0 = source
     node_id    TEXT REFERENCES nodes(id),
     file_id    INTEGER REFERENCES files(id),
@@ -122,7 +123,8 @@ CREATE TABLE evidence_paths (
     snippet    TEXT,
     note       TEXT,
     is_primary INTEGER DEFAULT 1,     -- 0 for alternate paths to the same sink
-    UNIQUE (finding_id, step, is_primary)
+    FOREIGN KEY (scan_id, finding_id) REFERENCES findings(scan_id, id) ON DELETE CASCADE,
+    UNIQUE (scan_id, finding_id, step, is_primary)
 );
 
 CREATE TABLE ai_verdicts (
@@ -202,7 +204,12 @@ knowing exactly what produced it.
 report; a security tool that quietly skips files it could not parse is actively misleading.
 
 **Findings are per-scan, not global.** History enables trend reporting, `report --compare`, and
-answering "when did this get introduced" via `first_seen_scan`.
+answering "when did this get introduced" via `first_seen_scan`. This is why the primary key is
+`(scan_id, id)` and not `id` alone: `id` is content-derived, so a finding that survives from one
+scan into the next carries the same `id` in both, and a bare primary key on it would make the
+second scan's insert fail. `evidence_paths` carries `scan_id` for the same reason, to reference
+that composite parent; `ai_verdicts` keys on `finding_id` alone on purpose, because a verdict is
+about a finding's identity rather than the run that happened to observe it.
 
 ## Pragmas
 

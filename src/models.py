@@ -112,9 +112,20 @@ class Finding:
 
     @property
     def id(self) -> str:
-        """Exact identity. Changes when the code moves."""
+        """Exact identity. Changes when the code moves.
+
+        Each step contributes its file, line and snippet, not just its role and
+        line. A line number alone is not unique across files: two routes to the
+        same unauthorized action declared at the same line of routes/web.php and
+        routes/admin.php differ in URI and fingerprint and would otherwise
+        collide here, and anything keyed on `id` - the store's primary key
+        included - would silently drop one of them.
+        """
         parts = [self.rule_id, str(self.span.file), str(self.span.start_line)]
-        parts += [f"{s.role}:{s.span.start_line}" for s in self.evidence_path]
+        parts += [
+            f"{s.role}:{s.span.file}:{s.span.start_line}:{s.snippet.strip()}"
+            for s in self.evidence_path
+        ]
         return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
 
     @property
