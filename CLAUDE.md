@@ -2,16 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Status: first vertical slice implemented
+## Status: first vertical slices implemented
 
-The spec in `docs/` is complete. `src/` is a working Python package: PHP parser, symbol
-extraction, Laravel route table with its middleware stack, call graph, kind-based
-interprocedural taint analysis, Eloquent model configuration, policy discovery, and SQL
-injection, XSS, mass-assignment and missing-authorization findings with evidence paths.
-`workspace/` owns the project root and its `.vigilloo/` directory; `store.py` writes every
-`vigilloo scan` into the SQLite database there, one row per scan and per finding with its
-files, coverage and evidence path. Nothing reads that history back yet.
-Everything beyond those slices is still spec only.
+The spec in `docs/` is complete. `src/` is a working Python package: `vigilloo scan` parses a
+Laravel project, builds the graph, runs the taint and structural rules, prints the findings with
+their evidence paths, and records the scan in the SQLite store under `.vigilloo/`. Everything
+beyond those slices is still spec only.
+
+**Per-capability status has one home: the v0.1 table in
+[24-roadmap](docs/24-roadmap/README.md).** Read it to find out what is built and what is not,
+update it in the same commit as the capability, and do not restate the list here.
 
 Findings come from **two producers**, not one: `taint.py` walks data from a source to a sink,
 and `structural.py` reports controls a route should have and does not. Both yield
@@ -124,9 +124,10 @@ produce them: mass assignment via `$guarded = []`, IDOR from route-model binding
 Two details that decide precision, both in [06-taint-analysis](docs/06-taint-analysis/README.md):
 
 - **Taint is kind-based, not boolean.** `e()` clears `html`, not `sql`. A boolean flag produces
-  both false positives and false negatives. Implemented for `sql`, `html` and `mass_assign`; the
-  other nine kinds in [06-taint-analysis](docs/06-taint-analysis/README.md) arrive with their
-  own sinks. `mass_assign` is why the kind set is not just about injection: `$request->only([...])`
+  both false positives and false negatives. Which kinds are wired today is in the roadmap table;
+  each new one arrives with its own sinks and sanitizers from
+  [06-taint-analysis](docs/06-taint-analysis/README.md), or it does not arrive.
+  `mass_assign` is why the kind set is not just about injection: `$request->only([...])`
   is safe to mass-assign and still dangerous to print.
 - **`whereRaw('age > ?', [$age])` is safe; `whereRaw("age > $age")` is not.** Rules must check
   which argument taint reaches. Flagging every `*Raw` call is the noise that makes developers

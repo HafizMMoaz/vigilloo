@@ -14,7 +14,7 @@ interprocedural taint for the `sql`, `html` and `mass_assign` kinds, Eloquent mo
 configuration, policy discovery, the four rules `php.sql-injection`, `php.xss`,
 `laravel.mass-assignment` and `laravel.missing-authorization` with their evidence paths, and a
 workspace whose SQLite store records every scan. Everything beyond those slices is still spec
-only.
+only; the per-capability status table is in [24-roadmap](24-roadmap/README.md).
 
 ## Current target
 

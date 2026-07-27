@@ -8,15 +8,21 @@ versions is worth less than a complete one in a single release.
 
 The whole pipeline, one language, one framework, no AI required.
 
-- PHP 8.1+ parsing via Tree-sitter; symbols, imports, PSR-4 resolution
-- Laravel 9/10/11 adapter: routes, middleware, models, policies, Blade, config, facades
-- Knowledge graph: AST, symbol, call, CFG, data flow, dependency layers in SQLite
-- Taint analysis with the full PHP/Laravel source-sink-sanitizer vocabulary
-- Deterministic rule set: injection, XSS, access control, mass assignment, CSRF, secrets,
-  misconfiguration, Composer advisories
-- `vigilloo scan | review | graph | explain | deps | secrets | baseline | doctor | init`
-- Markdown, JSON, terminal reports
-- Incremental scanning
+This table is the implementation-status record for v0.1. `done` means the capability works end
+to end; `partial` means some of it ships and the remainder is still specified only; `spec only`
+means nothing of it is implemented. Nothing else in the repository restates it - `CLAUDE.md`
+summarises and points here.
+
+| Capability | Status | What ships today |
+| --- | --- | --- |
+| PHP 8.1+ parsing via Tree-sitter; symbols, imports, PSR-4 resolution | partial | Parsing, symbol extraction and file-local imports. PSR-4 autoload resolution from `composer.json` is not implemented. |
+| Laravel 9/10/11 adapter: routes, middleware, models, policies, Blade, config, facades | partial | Route table with its per-route middleware stack, Eloquent model configuration, policy discovery, Blade views. Middleware group expansion, `Route::resource`, route groups, config extraction and facade resolution are not implemented. |
+| Knowledge graph: AST, symbol, call, CFG, data flow, dependency layers in SQLite | partial | Symbol and call layers, built in memory per run. The SQLite store under `.vigilloo/` records each scan with its files, coverage and evidence paths; nodes, edges, the CFG and the dependency layer are not stored, and nothing reads the history back yet. |
+| Taint analysis with the full PHP/Laravel source-sink-sanitizer vocabulary | partial | Kind-based interprocedural taint for `sql`, `html` and `mass_assign`. The other nine kinds in [06-taint-analysis](../06-taint-analysis/README.md) arrive with their own sinks and sanitizers. |
+| Deterministic rule set: injection, XSS, access control, mass assignment, CSRF, secrets, misconfiguration, Composer advisories | partial | Four rules, each with a complete evidence path: `php.sql-injection`, `php.xss`, `laravel.mass-assignment`, `laravel.missing-authorization`. CSRF, secrets, misconfiguration and Composer advisories are spec only. |
+| `vigilloo scan \| review \| graph \| explain \| deps \| secrets \| baseline \| doctor \| init` | partial | `vigilloo scan` only. |
+| Markdown, JSON, terminal reports | partial | Terminal report only. |
+| Incremental scanning | spec only | The store keeps the per-file digest the incrementality key needs; no scan reads it. |
 
 **Ships when:** the [22-testing](../22-testing/README.md) corpus gates pass - 100% of seeded
 findings, ≥90% precision on real applications, clean runs on 10 open-source Laravel apps.
