@@ -92,10 +92,12 @@ def scan(
     render(findings, console)
 
     # The findings are already correct and already on screen; the store is history for the next
-    # run, not this run's result, so a full disk or a read-only .vigilloo/ must not turn a good
+    # run, not this run's result, so a full disk or an unwritable database must not turn a good
     # scan into a failed command. Silence is the other wrong answer: a lost scan is a hole in
     # the history that baselines and `report --compare` read later, and invariant 4 says
     # coverage is reported, never hidden. So it warns, and the exit code stays the findings'.
+    # This covers the write, not Workspace.open above: a root where .vigilloo/ cannot even be
+    # created is a scan that never started, and it still fails loudly at the top.
     try:
         conn = store.connect(workspace)
         try:

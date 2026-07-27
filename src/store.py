@@ -101,6 +101,9 @@ CREATE TABLE evidence_paths (
     scan_id    INTEGER NOT NULL,
     finding_id TEXT NOT NULL,
     step       INTEGER NOT NULL,
+    -- node_id: docs/17-database declares REFERENCES nodes(id). `nodes` is not built this
+    -- slice, and SQLite rejects a foreign key whose target table does not exist, so the
+    -- reference arrives with the table. This is the only divergence from the doc's DDL.
     node_id    TEXT,
     file_id    INTEGER REFERENCES files(id),
     line       INTEGER,
@@ -331,17 +334,20 @@ def _insert_finding(
     # owasp/description: ponytail, left NULL. No OWASP category mapping exists yet, and Finding
     # carries only a title and a remediation - nothing today needs a longer prose field.
     #
-    # OR IGNORE: `id` is content-derived over the rule, the location and every evidence step's
-    # file, line and snippet - which is every field a row here stores - so two findings sharing
-    # an id within one scan are a genuine duplicate and the dropped row loses no information.
-    # rules.py does not dedupe before this point. Letting it raise IntegrityError instead would
-    # roll back every other finding in the scan for the sake of one that adds nothing. The
-    # matching evidence-path inserts below use OR IGNORE for the same reason.
+    # DO NOTHING on the primary key only, never a bare OR IGNORE: `id` is content-derived over
+    # the rule, the location and every evidence step's file, line and snippet, so two findings
+    # sharing an id within one scan are a genuine duplicate and the dropped row loses nothing
+    # that a reader could act on. rules.py does not dedupe before this point, and letting the
+    # collision raise IntegrityError would roll back every other finding in the scan for the
+    # sake of one that adds no information. OR IGNORE would also swallow a NOT NULL or foreign
+    # key violation, which is a real defect losing a real finding and must still be loud.
+    # The evidence-path insert below is scoped the same way.
     conn.execute(
-        "INSERT OR IGNORE INTO findings "
+        "INSERT INTO findings "
         "(id, project_id, scan_id, rule_id, fingerprint, severity, confidence, title, "
         "remediation, file_id, start_line, start_col, end_line, end_col, cwe, first_seen_scan) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (scan_id, id) DO NOTHING",
         (
             finding.id,
             project_id,
@@ -364,9 +370,10 @@ def _insert_finding(
 
     for step_index, step in enumerate(finding.evidence_path):
         conn.execute(
-            "INSERT OR IGNORE INTO evidence_paths "
+            "INSERT INTO evidence_paths "
             "(scan_id, finding_id, step, file_id, line, role, snippet, note, is_primary) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) "
+            "ON CONFLICT (scan_id, finding_id, step, is_primary) DO NOTHING",
             (
                 scan_id,
                 finding.id,
