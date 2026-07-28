@@ -105,11 +105,53 @@ codebase.
 that always scores perfectly cannot tell a working metric from a constant, and the file in it
 that does not parse is deliberate: fixing its syntax silently disables the test.
 
+### Which corpus the two gates run over
+
+`tests/test_coverage_gates.py` applies both floors, and CI runs it as a named step of its own so
+a failure reads as "coverage gate" rather than as one red test among hundreds.
+
+The gate is applied **per fixture, over the seeded fixtures only**, and `laravel-unparseable` is
+excluded by name. That fixture scores 66.7% by design, so gating it would mean either a build
+that is red forever or a parse floor low enough to clear 66.7%, which gates nothing. Its
+exclusion is asserted rather than assumed: a test fails if its broken file ever starts parsing.
+
+Per fixture rather than over pooled totals, because it is the stricter reading - a pooled ratio
+of numbers each at or above the floor is itself at or above it - and because a failure that
+names the fixture is one somebody can act on.
+
 ## Rule testing
 
 Every rule ships with positive and negative cases in the same file as its definition. A rule
 without both is rejected in review. The negative case is the important one - it is the
 difference between a rule and a nuisance.
+
+## Regression tests
+
+`tests/regression/`, one test per bug that has already been fixed once. The Layers table calls
+this a permanent layer, and permanent is the whole of the rule: a test lands here when a bug is
+found and is never deleted because the bug looks old.
+
+Four requirements, each of which a regression test fails without:
+
+- **It names the commit that fixed the bug.** A reader who wants the reasoning needs the diff,
+  and the commit message is where it is.
+- **Its docstring says concretely what the engine produced before the fix** - the wrong output,
+  not a description of the area. A test whose author could not state the old behaviour has not
+  established that it would have caught it.
+- **It pins the symptom, not the mechanism.** The unit tests a fix commit carries already pin
+  the mechanism, and they are supposed to be rewritten when the mechanism is. This layer pins
+  what a user would have seen: a finding in the report that should not be there, a scan
+  claiming full coverage over a trail it silently dropped. When a refactor moves a give-up out
+  of one function and into another, the unit test is what gets updated and this is what still
+  has to hold.
+- **It fails against the pre-fix behaviour.** A regression test that passes both before and
+  after the fix is not a regression test, and the only way to know which one you have written
+  is to check.
+
+The bugs found so far cluster: the walk lost tainted data and said nothing, so the report was
+clean and the coverage line claimed everything resolved. That is invariant 4's exact failure
+mode, and it is invisible in production, because nobody files a bug about the vulnerability
+that was never reported.
 
 ## Property-based testing
 
