@@ -25,6 +25,7 @@ dev = [
     "ruff>=0.16,<0.17",
     "pip-audit>=2.9,<2.10",
     "pre-commit>=4.4,<4.5",
+    "hypothesis>=6.145,<6.146",
     # Reads tests/fixtures/*/expected.yml only. Deliberately dev-only: invariant 6 makes the
     # shipped engine complete offline and every runtime dependency is a thing that can fail
     # to install on a user's machine, so test infrastructure does not get to add one.

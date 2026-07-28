@@ -1,10 +1,13 @@
 import hashlib
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 from vigilloo.graph import Project, load_project
 from vigilloo.models import Finding, PathStep, Span
 from vigilloo.parser import parse_source
-from vigilloo.store import connect, record_scan
+from vigilloo.store import EdgeRow, NodeRow, connect, insert_edges, insert_nodes, record_scan
 from vigilloo.workspace import Workspace
 
 _REL_PATH = Path("app/Http/Controllers/OrderController.php")
@@ -52,10 +55,47 @@ def test_connect_creates_the_schema_and_records_its_version(tmp_path: Path) -> N
     conn = connect(workspace)
 
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert {"schema_meta", "projects", "scans", "files", "findings", "evidence_paths"} <= tables
+    assert {
+        "schema_meta",
+        "projects",
+        "scans",
+        "files",
+        "nodes",
+        "edges",
+        "findings",
+        "evidence_paths",
+    } <= tables
 
     version = conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0]
-    assert version == "1"
+    assert version == "2"
+
+
+def test_the_graph_tables_carry_their_five_indexes(tmp_path: Path) -> None:
+    """docs/17-database names them; without them every traversal is a table scan."""
+    conn = connect(Workspace.open(tmp_path))
+
+    indexes = {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+    }
+    assert {
+        "idx_nodes_kind",
+        "idx_nodes_fqn",
+        "idx_nodes_file",
+        "idx_edges_src",
+        "idx_edges_dst",
+    } <= indexes
+
+
+def test_a_database_from_another_schema_version_is_refused_loudly(tmp_path: Path) -> None:
+    """A silent version mismatch surfaces much later as "no such table"."""
+    workspace = Workspace.open(tmp_path)
+    conn = connect(workspace)
+    with conn:
+        conn.execute("UPDATE schema_meta SET value = '1' WHERE key = 'version'")
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="schema version 1"):
+        connect(workspace)
 
 
 def test_reopening_an_existing_database_keeps_its_rows(tmp_path: Path) -> None:
@@ -176,6 +216,114 @@ def test_recording_a_scan_for_the_same_root_twice_reuses_the_project_row(tmp_pat
         "SELECT id FROM projects WHERE root_path = ?", (str(project.root),)
     ).fetchall()
     assert len(rows) == 1
+
+
+def _stored_project(tmp_path: Path) -> tuple[sqlite3.Connection, int, int]:
+    """A connection with one project row and one file row, for the graph tests."""
+    workspace = Workspace.open(tmp_path)
+    conn = connect(workspace)
+    record_scan(
+        conn,
+        _project(workspace.root),
+        [],
+        engine_version="0.0.1",
+        ruleset_hash="rs1",
+        duration_ms=1,
+    )
+    project_id = conn.execute("SELECT id FROM projects").fetchone()[0]
+    file_id = conn.execute("SELECT id FROM files").fetchone()[0]
+    return conn, project_id, file_id
+
+
+def test_ten_thousand_nodes_go_in_as_one_batch(tmp_path: Path) -> None:
+    """The acceptance case for docs/23-dev-guide section Performance: no N+1 insert."""
+    conn, project_id, file_id = _stored_project(tmp_path)
+    nodes = [
+        NodeRow(
+            id=f"node-{index:05d}",
+            kind="method",
+            name=f"handle{index}",
+            fqn=f"App\\Jobs\\Job{index}::handle",
+            file_id=file_id,
+        )
+        for index in range(10_000)
+    ]
+
+    with conn:
+        insert_nodes(conn, project_id, nodes)
+
+    count = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    assert count == 10_000
+
+
+def test_a_batch_that_violates_a_constraint_writes_none_of_it(tmp_path: Path) -> None:
+    """One transaction, not one per row: a rejected node takes its whole batch with it."""
+    conn, project_id, _ = _stored_project(tmp_path)
+    good = [NodeRow(id=f"node-{index}", kind="class") for index in range(10)]
+    dangling = NodeRow(id="node-orphan", kind="class", file_id=987654)
+
+    with pytest.raises(sqlite3.IntegrityError), conn:
+        insert_nodes(conn, project_id, [*good, dangling])
+
+    assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 0
+
+
+def test_reinserting_a_content_derived_id_is_a_no_op(tmp_path: Path) -> None:
+    """Invariant 3: the same node re-derived is the same node, not a conflict."""
+    conn, project_id, file_id = _stored_project(tmp_path)
+    node = NodeRow(
+        id="c0ffee",
+        kind="class",
+        name="OrderController",
+        fqn="App\\Http\\Controllers\\OrderController",
+        file_id=file_id,
+        start_line=2,
+    )
+
+    with conn:
+        insert_nodes(conn, project_id, [node])
+        insert_nodes(conn, project_id, [node])
+
+    rows = conn.execute("SELECT id, fqn, start_line FROM nodes").fetchall()
+    assert rows == [(node.id, node.fqn, 2)]
+
+
+def test_nodes_and_edges_round_trip_with_their_attributes(tmp_path: Path) -> None:
+    conn, project_id, file_id = _stored_project(tmp_path)
+    source = NodeRow(id="src", kind="method", fqn="App\\A::index", file_id=file_id)
+    target = NodeRow(id="dst", kind="method", fqn="App\\B::find", file_id=file_id)
+    edge = EdgeRow(
+        src_id=source.id,
+        dst_id=target.id,
+        kind="CALLS",
+        confidence=0.9,
+        resolution="facade",
+        # Deliberately not in key order: the store sorts, so the column is byte-identical
+        # for the same attributes however the caller happened to build them (invariant 8).
+        attrs={"arg_index": 2, "alias": "DB"},
+    )
+
+    with conn:
+        insert_nodes(conn, project_id, [source, target])
+        insert_edges(conn, project_id, [edge])
+
+    stored = conn.execute(
+        "SELECT src_id, dst_id, kind, confidence, resolution, attrs FROM edges"
+    ).fetchall()
+    assert stored == [("src", "dst", "CALLS", 0.9, "facade", '{"alias": "DB", "arg_index": 2}')]
+
+    fqns = [row[0] for row in conn.execute("SELECT fqn FROM nodes ORDER BY id")]
+    assert fqns == ["App\\B::find", "App\\A::index"]
+
+
+def test_an_edge_to_an_unknown_node_is_rejected(tmp_path: Path) -> None:
+    """The graph must not hold an edge to a node that does not exist."""
+    conn, project_id, _ = _stored_project(tmp_path)
+    source = NodeRow(id="src", kind="method")
+
+    with pytest.raises(sqlite3.IntegrityError), conn:
+        insert_nodes(conn, project_id, [source])
+        insert_edges(conn, project_id, [EdgeRow(src_id="src", dst_id="missing", kind="CALLS")])
 
 
 def test_the_stored_digest_is_of_the_blade_template_not_its_rewritten_php(tmp_path: Path) -> None:
