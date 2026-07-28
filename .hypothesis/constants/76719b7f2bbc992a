@@ -1,4 +1,0 @@
-# file: /Users/Apple/Projects/vigilloo/src/graph.py
-# hypothesis_version: 6.145.1
-
-['$this', '*.blade.php', '*.php', '.blade.php', '.git', '::', 'CALLS', 'DECLARES', 'EXTENDS', 'HANDLES', 'INSTANTIATES', 'PROTECTED_BY', '\\', 'action', 'bootstrap', 'class', 'class_declaration', 'end_col', 'end_line', 'file', 'method', 'method_declaration', 'middleware', 'name', 'node_modules', 'object', 'params', 'parent', 'property_type', 'qualified_name', 'replace', 'route', 'routes', 'scope', 'self', 'start_col', 'start_line', 'static', 'storage', 'uri', 'utf-8', 'variable_name', 'vendor', 'verbs']

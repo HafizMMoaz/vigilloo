@@ -1,4 +1,0 @@
-# file: /Users/Apple/Projects/vigilloo/.venv/bin/pytest
-# hypothesis_version: 6.145.1
-
-['-script.pyw', '.exe', '__main__']

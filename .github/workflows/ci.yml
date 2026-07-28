@@ -19,6 +19,14 @@ jobs:
       - run: uv run ruff check
       - run: uv run mypy
 
+      # The two leading indicators from docs/22-testing section "Metrics gated in CI". They
+      # already ran inside `uv run pytest` above, and they get their own step anyway: when a
+      # parser or walk change drops the resolution rate, the build has to say "coverage gate"
+      # in the step list rather than bury it among two hundred passing tests. Re-running the
+      # one module costs about a second. It gates, it never merely reports.
+      - name: Coverage gates (parse success, call resolution)
+        run: uv run pytest tests/test_coverage_gates.py -q
+
       # docs/23-dev-guide section "Security of Vigilloo itself": a pinned lockfile plus
       # pip-audit. We do not get to skip our own advice. The environment audited is the one
       # uv resolved from uv.lock, so an advisory hit here is one a developer also has.

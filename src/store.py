@@ -22,9 +22,9 @@ from pathlib import Path
 from .graph import GraphRows, NodeLocator, Project, graph_rows
 from .models import EdgeRow, Finding, NodeRow
 from .workspace import Workspace
+from .workspace.migrations import SCHEMA_VERSION, migrate
 
 _DB_FILENAME = "vigilloo.db"
-_SCHEMA_VERSION = 3
 
 # Spec correction (docs/plans/2026-07-27-slice-6-store-design.md, "Spec correction" section):
 # docs/17-database still shows `findings.id TEXT PRIMARY KEY` plus a redundant
@@ -150,7 +150,7 @@ CREATE TABLE evidence_paths (
     FOREIGN KEY (scan_id, finding_id) REFERENCES findings(scan_id, id) ON DELETE CASCADE,
     UNIQUE (scan_id, finding_id, step, is_primary)
 );
-INSERT INTO schema_meta (key, value) VALUES ('version', '{_SCHEMA_VERSION}');
+INSERT INTO schema_meta (key, value) VALUES ('version', '{SCHEMA_VERSION}');
 COMMIT;
 """
 # schema_meta's table itself is created separately, before this script runs, so its version row
@@ -159,6 +159,11 @@ COMMIT;
 # same transaction as every CREATE TABLE - a process killed mid-script must roll back to nothing
 # rather than leave tables with no version row, which would wedge every later connect() against
 # "table already exists" with no schema_meta entry to tell it the schema is already there.
+#
+# This script is the schema for a database that does not exist yet; vigilloo.workspace.migrations
+# is the same schema built up a version at a time for one that does. Both must produce the same
+# tables, and only tests/test_migrations.py enforces that - a new migration lands here too, or a
+# migrated workspace and a fresh one disagree about what version 4 means.
 
 
 @dataclass(frozen=True)
@@ -206,7 +211,11 @@ class StoredFinding:
 
 
 def connect(workspace: Workspace) -> sqlite3.Connection:
-    """Open `.vigilloo/vigilloo.db`, apply the pragmas, create the schema if absent."""
+    """Open `.vigilloo/vigilloo.db`, apply the pragmas, create or migrate the schema.
+
+    Raises `SchemaTooNewError` if the file was written by a later build than this one; the CLI
+    turns that into exit code 4 rather than letting it read the wrong columns.
+    """
     conn = sqlite3.connect(workspace.dir / _DB_FILENAME)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
@@ -222,22 +231,17 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
     row = conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
     if row is None:
+        # No version row means no schema at all: `_SCHEMA_SQL` writes the row and the tables in
+        # one transaction, so a file that has one has both. Creating the current schema whole is
+        # not the same work as running the ladder from version 1, and deliberately so - a new
+        # workspace should not have to replay every mistake the schema has ever made to reach
+        # today, and the two paths are held to the same result by tests/test_migrations.py.
         conn.executescript(_SCHEMA_SQL)
         return
-    if row[0] != str(_SCHEMA_VERSION):
-        # ponytail: one whole-schema create and no migration steps, so a database written by
-        # another schema version is refused rather than upgraded. Ceiling: the developer loses
-        # that project's findings history, which is the one thing under .vigilloo/ that cannot
-        # be rebuilt. Acceptable only because nothing has been released yet. Upgrade trigger:
-        # the first shipped version, after which docs/17-database "Migrations" applies - a
-        # forward-only runner keyed on this cell, free to drop and re-derive the graph but not
-        # findings or baselines. Failing loudly here is deliberate: the alternative is version 2
-        # code opening a version 1 database and reporting "no such table: nodes" much later.
-        raise RuntimeError(
-            f"{_DB_FILENAME} was written by schema version {row[0]}, this build expects "
-            f"{_SCHEMA_VERSION}, and no migration runner exists yet. Delete "
-            f".vigilloo/{_DB_FILENAME} and re-scan; that project's findings history is lost."
-        )
+    # Forward-only, in place, on every open. docs/17-database: the graph may be dropped and
+    # re-derived by a migration, findings and baselines may not, and a database from a newer
+    # build is refused rather than half-understood.
+    migrate(conn, str(row[0]))
 
 
 def record_scan(
@@ -450,6 +454,64 @@ def _load_findings(
             )
         )
     return findings
+
+
+def graph_for_project(
+    conn: sqlite3.Connection, project_id: int
+) -> tuple[list[NodeRow], list[EdgeRow]]:
+    """One project's stored graph, back in the row types the graph layer builds.
+
+    The read counterpart of `_replace_graph`, and what lets `vigilloo.graph_export` serialise a
+    project that was scanned in an earlier process. Exporting from the store rather than only
+    from a fresh `GraphRows` is the point: a graph export must not have to re-analyse a
+    codebase to print what the last scan already recorded.
+
+    A pair and not a `GraphRows`. That type also carries `unresolved_calls`, which nothing
+    persists, so returning one would mean putting a zero there and claiming this project's
+    graph resolved every call site it met - a coverage number invented by a reader, which is
+    the opposite of invariant 4.
+
+    Ordered in SQL as well as sorted again by the exporter. The exporter must not trust its
+    input's order, and this must not hand out an order the query planner chose, because the two
+    are different promises and only one of them is here.
+    """
+    nodes = [
+        NodeRow(
+            id=row[0],
+            kind=row[1],
+            name=row[2],
+            fqn=row[3],
+            file_id=row[4],
+            start_line=row[5],
+            start_col=row[6],
+            end_line=row[7],
+            end_col=row[8],
+            start_byte=row[9],
+            end_byte=row[10],
+            attrs=None if row[11] is None else json.loads(row[11]),
+        )
+        for row in conn.execute(
+            "SELECT id, kind, name, fqn, file_id, start_line, start_col, end_line, end_col, "
+            "start_byte, end_byte, attrs FROM nodes WHERE project_id = ? ORDER BY id",
+            (project_id,),
+        )
+    ]
+    edges = [
+        EdgeRow(
+            src_id=row[0],
+            dst_id=row[1],
+            kind=row[2],
+            confidence=row[3],
+            resolution=row[4],
+            attrs=None if row[5] is None else json.loads(row[5]),
+        )
+        for row in conn.execute(
+            "SELECT src_id, dst_id, kind, confidence, resolution, attrs FROM edges "
+            "WHERE project_id = ? ORDER BY src_id, dst_id, kind, id",
+            (project_id,),
+        )
+    ]
+    return nodes, edges
 
 
 def insert_nodes(conn: sqlite3.Connection, project_id: int, nodes: Iterable[NodeRow]) -> None:

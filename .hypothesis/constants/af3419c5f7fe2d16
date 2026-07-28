@@ -1,4 +1,0 @@
-# file: /Users/Apple/Projects/vigilloo/.claude/worktrees/agent-a76cd0ab00f3770e5/src/laravel/models.py
-# hypothesis_version: 6.145.1
-
-['Authenticatable', 'Model', 'Pivot', '\\', 'fillable', 'guarded', 'open', 'privileged_fillable']

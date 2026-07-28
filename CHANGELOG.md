@@ -141,6 +141,22 @@ Ruleset hash: `520914c8731f4c0d`.
   the query plans rather than assuming them - at fixture scale an unused index is still fast and
   still correct, so nothing else would notice it being ignored.
 
+- **Schema migrations** (TASK-013), so upgrading the tool no longer discards a project's
+  findings history. The runner in `vigilloo.workspace.migrations` is forward-only, keyed on the
+  version in `schema_meta`, and each step runs inside the transaction the runner wraps it in, so
+  a process killed halfway leaves the database at the version it started from rather than at one
+  whose tables only partly exist. Opening a database written by a *newer* build exits with code
+  4, the configuration-error code from [docs/19-cli](docs/19-cli/README.md) - the workspace is
+  intact and the tool pointed at it is the wrong version - rather than raising where it used to.
+
+  The graph is treated as [docs/17-database](docs/17-database/README.md) says it is: a
+  rebuildable cache. The v1-to-v2 step creates `nodes` and `edges` empty and lets the next scan
+  fill them, and deliberately does not reconstruct a graph from findings already stored. A v1
+  database recorded evidence paths as file-and-line positions with no node behind them, and
+  inventing nodes for them would make an old path claim a traversal it never made. `findings` and
+  `evidence_paths` are preserved, because those are the rows a baseline reads and the only ones
+  that cannot be regenerated.
+
 - **Property-based tests for the parser and taint engine** (TASK-020), the layer from
   [docs/22-testing](docs/22-testing/README.md) section "Property-based testing". Valid PHP parses
   without crashing, generated from a composite strategy over a hand-written grammar of the
@@ -167,6 +183,25 @@ Ruleset hash: `520914c8731f4c0d`.
   the ones it gave up on, because a give-up count with no denominator cannot be read. Zero
   attempts is 1.0, a decision documented at the point it is made. This replaces the bare
   "N call site(s) could not be resolved" line, which said nothing about how many there were.
+
+- **The graph exports to JSON and GraphML** (TASK-014), the two formats
+  [docs/04-knowledge-graph](docs/04-knowledge-graph/README.md) section "Export" names as the
+  lossless form and the one Gephi, yEd and Cytoscape read. Both are functions in
+  `vigilloo.graph_export` over a project's nodes and edges, and both accept either the rows a
+  scan has just built or the rows `store.graph_for_project` reads back out of SQLite, so
+  exporting a project scanned yesterday never means re-analysing it. DOT, GEXF and the
+  `--layer`/`--focus`/`--depth` filters are still specified only, as is the `vigilloo graph`
+  command that will drive them.
+
+  Two exports of the same graph are byte-identical (invariant 8), which means neither format
+  may inherit the order it was handed - the builder emits a grouped order and SQLite returns
+  the planner's. Nodes sort by kind, FQN and ID; edges over every field they have, an edge
+  having no ID of its own to break a tie with. The JSON object is the row's fields under their
+  own names with absent optional ones omitted rather than written as `null`, so a consumer
+  rebuilds a row by splatting it. GraphML declares a `<key>` for each of those fields ahead of
+  the `<graph>` that uses them, and the kind-specific `attrs` bag travels as one JSON string:
+  GraphML has no list type, and a key set derived from whichever attribute names a project
+  happens to produce would change under the reader between two scans of the same code.
 
 ### Changed
 

@@ -86,16 +86,9 @@ def test_the_graph_tables_carry_their_five_indexes(tmp_path: Path) -> None:
     } <= indexes
 
 
-def test_a_database_from_another_schema_version_is_refused_loudly(tmp_path: Path) -> None:
-    """A silent version mismatch surfaces much later as "no such table"."""
-    workspace = Workspace.open(tmp_path)
-    conn = connect(workspace)
-    with conn:
-        conn.execute("UPDATE schema_meta SET value = '1' WHERE key = 'version'")
-    conn.close()
-
-    with pytest.raises(RuntimeError, match="schema version 1"):
-        connect(workspace)
+# An older or newer schema version is tests/test_migrations.py's subject, not this file's: an
+# older one is migrated rather than refused, and the refusal that remains is the CLI's exit
+# code 4 as much as it is the store's exception.
 
 
 def test_reopening_an_existing_database_keeps_its_rows(tmp_path: Path) -> None:
