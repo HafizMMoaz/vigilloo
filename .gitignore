@@ -14,3 +14,7 @@ dist/
 TEMP/
 .superpowers/
 .claude/settings.local.json
+
+# Hypothesis writes a per-run cache of example databases and harvested constants here.
+# Machine-local and regenerated on demand: committing it makes every property-test run a diff.
+.hypothesis/

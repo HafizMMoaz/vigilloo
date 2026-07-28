@@ -1,4 +1,0 @@
-# file: /Users/Apple/Projects/vigilloo/.claude/worktrees/agent-a76cd0ab00f3770e5/src/laravel/vocabulary.py
-# hypothesis_version: 6.145.1
-
-['all', 'bearerToken', 'cookie', 'create', 'e', 'except', 'fill', 'firstOrCreate', 'firstOrNew', 'floatval', 'forceCreate', 'forceFill', 'fromRaw', 'fullUrl', 'get', 'groupByRaw', 'havingRaw', 'header', 'htmlentities', 'htmlspecialchars', 'input', 'intval', 'ip', 'json', 'make', 'only', 'orWhereRaw', 'orderByRaw', 'php.sql-injection', 'php.xss', 'post', 'query', 'safe', 'segment', 'selectRaw', 'string', 'update', 'updateOrCreate', 'url', 'userAgent', 'validated', 'whereRaw']
