@@ -29,9 +29,13 @@ from pathlib import Path
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from tree_sitter import Node
 
+from vigilloo.laravel.vocabulary import SANITIZERS, sanitizer_clears
+from vigilloo.models import ALL_KINDS, TaintKind
 from vigilloo.parser import ParsedFile, node_span, node_text, parse_php, parse_source, walk
 from vigilloo.symbols import extract_symbols
+from vigilloo.taint import expr_kinds
 
 # ---------------------------------------------------------------------------
 # A grammar of PHP, small enough to stay valid and wide enough to be worth generating.
@@ -222,3 +226,138 @@ def test_parse_php_never_raises_for_arbitrary_bytes(data: bytes, _scratch_file: 
     assert parsed.source == data
     # node_text decodes with errors="replace", so it must survive bytes that are not UTF-8.
     node_text(parsed.tree.root_node, parsed.source)
+
+
+# ---------------------------------------------------------------------------
+# Properties 2 and 4, both over expr_kinds directly.
+#
+# Directly, rather than end to end through a scan, because both are statements about the
+# propagation function itself and a scan can only observe them through whatever the rules
+# happened to report. A monotonicity violation inside expr_kinds that no current rule has a
+# sink for would be invisible end to end, and would still be the bug.
+# ---------------------------------------------------------------------------
+
+_REQUEST_VARS = frozenset({"request"})
+
+_KIND_SETS = st.sets(st.sampled_from(sorted(ALL_KINDS))).map(frozenset)
+
+
+def _rhs(expr: str) -> tuple[Node, bytes]:
+    """The syntax node of `expr`, by parsing it as the right-hand side of an assignment.
+
+    An expression is not a parse root in PHP, and `$out = ...;` is the shortest wrapper that
+    makes one reachable while keeping the node identical to what the walk would meet inside a
+    method body.
+    """
+    source = f"<?php\n$out = {expr};\n".encode()
+    parsed = parse_source(_GENERATED_PATH, source)
+    assignment = next(
+        node for node in walk(parsed.tree.root_node) if node.type == "assignment_expression"
+    )
+    right = assignment.child_by_field_name("right")
+    assert right is not None
+    return right, parsed.source
+
+
+@st.composite
+def _nested_environments(draw: st.DrawFn) -> tuple[dict[str, frozenset], dict[str, frozenset]]:
+    """A pair of taint environments where the first is pointwise contained in the second.
+
+    Built by drawing the weaker one and adding to it, rather than by drawing two and
+    discarding pairs that do not nest. Filtering would throw away most draws and push
+    Hypothesis toward the trivial end of the space, which is where a monotonicity bug is
+    least likely to be sitting.
+    """
+    weaker = {name: draw(_KIND_SETS) for name in _VAR_NAMES}
+    stronger = {name: weaker[name] | draw(_KIND_SETS) for name in _VAR_NAMES}
+    return weaker, stronger
+
+
+@settings(max_examples=300, deadline=None)
+@given(expr=_EXPRESSIONS, environments=_nested_environments())
+def test_taint_propagation_is_monotonic(
+    expr: str, environments: tuple[dict[str, frozenset], dict[str, frozenset]]
+) -> None:
+    """More taint in never means less taint out.
+
+    The property that makes under-reporting impossible to reach by accident. `expr_kinds`
+    documents its default case as a union over children precisely so an unrecognised
+    construct preserves taint, and monotonicity is that intention stated over every
+    construct at once rather than over the one branch that says so.
+
+    Without it the failure is silent and one-directional: a construct that loses taint
+    produces a clean report, and a clean report is indistinguishable from safe code. Nobody
+    files a bug for the finding that never appeared, which is why this is a property and not
+    a case someone has to think to write.
+    """
+    weaker, stronger = environments
+    node, source = _rhs(expr)
+
+    less = expr_kinds(node, source, dict(weaker), _REQUEST_VARS)
+    more = expr_kinds(node, source, dict(stronger), _REQUEST_VARS)
+
+    assert less <= more, f"{expr}: {sorted(less)} is not contained in {sorted(more)}"
+
+
+@settings(max_examples=300, deadline=None)
+@given(sanitizer=st.sampled_from(_SANITIZERS), inner=_EXPRESSIONS, environment=_KIND_SETS)
+def test_a_sanitizer_clears_the_kinds_it_declares_and_no_others(
+    sanitizer: str, inner: str, environment: frozenset
+) -> None:
+    """Wrapping an expression in a sanitizer subtracts exactly that sanitizer's kinds.
+
+    docs/22-testing phrases this property as "sanitizing clears exactly one kind". That is
+    shorthand and the table is the truth: `intval` clears both `sql` and `html`, because an
+    integer is safe in either position. The invariant underneath the phrasing is what is
+    asserted here - a sanitizer clears the kinds it declares, and never a kind it does not.
+
+    Both halves matter and they fail in opposite directions. Clearing too much is a false
+    negative: `e($name)` makes a value safe to print and leaves it just as dangerous in a
+    query, and a boolean taint flag - which is what this codebase replaced - gets that wrong
+    every time. Clearing too little is noise, and noise is what makes developers stop reading
+    security reports.
+
+    What this cannot see is the table itself. Both sides of the assertion read
+    `sanitizer_clears`, so widening an entry to every kind - reverting to boolean taint by the
+    back door - moves the expectation with the behaviour and this still passes. Verified by
+    mutation, not assumed. It catches `expr_kinds` failing to apply the table, which is a
+    different bug; the table's own contents are pinned by the test below, and the two are only
+    a pair.
+    """
+    local = {name: environment for name in _VAR_NAMES}
+
+    inner_node, inner_source = _rhs(inner)
+    before = expr_kinds(inner_node, inner_source, dict(local), _REQUEST_VARS)
+
+    outer_node, outer_source = _rhs(f"{sanitizer}({inner})")
+    after = expr_kinds(outer_node, outer_source, dict(local), _REQUEST_VARS)
+
+    assert after == before - sanitizer_clears(sanitizer)
+
+
+def test_the_sanitizer_table_and_the_generator_have_not_drifted() -> None:
+    """The property above is only as wide as its list of sanitizer names.
+
+    A sanitizer added to the vocabulary and not to `_SANITIZERS` is one the property silently
+    stops covering, and nothing else would say so - the test would keep passing over the
+    older names.
+    """
+    assert set(_SANITIZERS) == set(SANITIZERS)
+
+
+def test_the_sanitizer_table_says_what_the_kind_based_design_depends_on() -> None:
+    """The entries the whole design rests on, asserted as values rather than as a property.
+
+    The property above reads `sanitizer_clears` on both sides of its assertion, so it is blind
+    to the table being wrong in a self-consistent way: widening `e` to every kind reverts taint
+    to a boolean and that property still passes. This is the half that notices.
+
+    `e` clearing `html` and not `sql` is the example CLAUDE.md uses to explain why taint is
+    kind-based at all. `intval` clears two kinds and not one, which is why the spec's phrasing
+    of "exactly one kind" is shorthand. And `trim` clears nothing, however much it looks like
+    a sanitizer to whoever wrote the code being scanned.
+    """
+    assert sanitizer_clears("e") == frozenset({TaintKind.HTML})
+    assert sanitizer_clears("intval") == frozenset({TaintKind.SQL, TaintKind.HTML})
+    assert TaintKind.MASS_ASSIGN not in sanitizer_clears("intval")
+    assert sanitizer_clears("trim") == frozenset()

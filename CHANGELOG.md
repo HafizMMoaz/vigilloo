@@ -141,6 +141,23 @@ Ruleset hash: `520914c8731f4c0d`.
   the query plans rather than assuming them - at fixture scale an unused index is still fast and
   still correct, so nothing else would notice it being ignored.
 
+- **Property-based tests for the parser and taint engine** (TASK-020), the layer from
+  [docs/22-testing](docs/22-testing/README.md) section "Property-based testing". Valid PHP parses
+  without crashing, generated from a composite strategy over a hand-written grammar of the
+  constructs the taint walk looks at rather than from `st.text()`, which would pass by producing
+  garbage the parser correctly rejects. `parse_php` never raising for malformed input is pinned
+  over arbitrary bytes, not arbitrary text: the input is a file on disk and may be a truncated
+  upload or a binary blob named `.php`. Taint propagation is monotonic, so more taint in never
+  means less taint out - the property that makes silent under-reporting unreachable by accident.
+  A sanitizer subtracts the kinds it declares and no others.
+
+  The node-id stability property stays in `tests/test_ids.py` rather than moving here, next to
+  the negative-space tests that give it meaning. Every property was verified by mutation. That
+  is how the sanitizer property was found to be blind to its own table - both sides read
+  `sanitizer_clears`, so widening an entry to every kind reverts taint to a boolean and the
+  property still passes - and it is paired with an example-based test that pins the entries the
+  design rests on.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not
