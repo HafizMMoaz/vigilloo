@@ -452,6 +452,64 @@ def _load_findings(
     return findings
 
 
+def graph_for_project(
+    conn: sqlite3.Connection, project_id: int
+) -> tuple[list[NodeRow], list[EdgeRow]]:
+    """One project's stored graph, back in the row types the graph layer builds.
+
+    The read counterpart of `_replace_graph`, and what lets `vigilloo.graph_export` serialise a
+    project that was scanned in an earlier process. Exporting from the store rather than only
+    from a fresh `GraphRows` is the point: a graph export must not have to re-analyse a
+    codebase to print what the last scan already recorded.
+
+    A pair and not a `GraphRows`. That type also carries `unresolved_calls`, which nothing
+    persists, so returning one would mean putting a zero there and claiming this project's
+    graph resolved every call site it met - a coverage number invented by a reader, which is
+    the opposite of invariant 4.
+
+    Ordered in SQL as well as sorted again by the exporter. The exporter must not trust its
+    input's order, and this must not hand out an order the query planner chose, because the two
+    are different promises and only one of them is here.
+    """
+    nodes = [
+        NodeRow(
+            id=row[0],
+            kind=row[1],
+            name=row[2],
+            fqn=row[3],
+            file_id=row[4],
+            start_line=row[5],
+            start_col=row[6],
+            end_line=row[7],
+            end_col=row[8],
+            start_byte=row[9],
+            end_byte=row[10],
+            attrs=None if row[11] is None else json.loads(row[11]),
+        )
+        for row in conn.execute(
+            "SELECT id, kind, name, fqn, file_id, start_line, start_col, end_line, end_col, "
+            "start_byte, end_byte, attrs FROM nodes WHERE project_id = ? ORDER BY id",
+            (project_id,),
+        )
+    ]
+    edges = [
+        EdgeRow(
+            src_id=row[0],
+            dst_id=row[1],
+            kind=row[2],
+            confidence=row[3],
+            resolution=row[4],
+            attrs=None if row[5] is None else json.loads(row[5]),
+        )
+        for row in conn.execute(
+            "SELECT src_id, dst_id, kind, confidence, resolution, attrs FROM edges "
+            "WHERE project_id = ? ORDER BY src_id, dst_id, kind, id",
+            (project_id,),
+        )
+    ]
+    return nodes, edges
+
+
 def insert_nodes(conn: sqlite3.Connection, project_id: int, nodes: Iterable[NodeRow]) -> None:
     """Write a batch of nodes with one `executemany`.
 
