@@ -88,7 +88,21 @@ Ruleset hash: `520914c8731f4c0d`.
   batch in one statement rather than one per row. Nothing writes graph rows into them yet; that
   is the slice that turns the in-memory `Project` into nodes and edges.
 
+  The same slice added `vigilloo.ids.node_id`, the content-derived node identity invariant 3
+  requires. It knows nothing about PHP, Laravel or the store: it takes a project, a kind, an
+  FQN and a discriminator and returns 16 hex characters, so the graph layer and every adapter
+  above it derive the same ID for the same node without any of them owning the rule.
+
 ### Changed
+
+- **The node ID scheme no longer contains the span**, correcting
+  [docs/04-knowledge-graph](docs/04-knowledge-graph/README.md) section "Node model". That
+  document specified `sha1(project_id : kind : fqn : span)` while requiring in the same section
+  that IDs be stable across whitespace and comment changes. Both cannot hold: inserting one
+  comment moves the span of every node below it, so a reformat with no code change would move
+  every ID and un-suppress every finding in the file. A `discriminator` derived from ordinal
+  position within the parent replaces it. The span is still on the node, it just is not
+  identity.
 
 - **The store schema is version 2, and a database at any other version is now refused** with an
   error naming the file to delete. There is no migration runner yet, so opening a version 1

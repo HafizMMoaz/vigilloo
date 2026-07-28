@@ -23,7 +23,7 @@ between them - that is the whole point of unifying them.
 
 ```text
 Node
-  id            stable, deterministic: sha1(project_id : kind : fqn : span)
+  id            stable, deterministic: sha1(project_id : kind : fqn : discriminator)
   kind          route | class | method | variable | package | …
   name, fqn
   file_id, start_byte, end_byte, start_line, start_col, end_line, end_col
@@ -41,6 +41,16 @@ Edge
 **Node IDs must be deterministic and content-derived.** It is what makes findings stable across
 runs (so they can be baselined and suppressed), incremental invalidation possible, and reports
 diffable. Any scheme using autoincrement IDs or iteration order breaks all three.
+
+**The span is deliberately not in the ID.** An earlier version of this document specified
+`sha1(project_id : kind : fqn : span)`, which contradicts the stability requirement above:
+inserting one comment moves the span of every node below it, so a reformat with no code change
+would change IDs and un-suppress findings across the file. `discriminator` replaces it, and is
+what distinguishes nodes the symbol table does not name uniquely - the third `$name` in a
+method, a closure, a basic block. Callers derive it from an ordinal position within the parent,
+never from a line number, a byte offset or iteration order, all of which reintroduce the same
+instability. It is empty for anything with a unique FQN. The span still lives on the node as
+`start_byte`/`end_byte` and friends, where moving it is correct; it just cannot be identity.
 
 `confidence` on an edge is not decoration. A `CALLS` edge resolved through a facade map is
 near-certain; one resolved through `call_user_func($handler)` is a guess. Taint paths carry the
