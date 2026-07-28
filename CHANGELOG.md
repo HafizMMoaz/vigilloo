@@ -151,6 +151,25 @@ Ruleset hash: `520914c8731f4c0d`.
   attempts is 1.0, a decision documented at the point it is made. This replaces the bare
   "N call site(s) could not be resolved" line, which said nothing about how many there were.
 
+- **The graph exports to JSON and GraphML** (TASK-014), the two formats
+  [docs/04-knowledge-graph](docs/04-knowledge-graph/README.md) section "Export" names as the
+  lossless form and the one Gephi, yEd and Cytoscape read. Both are functions in
+  `vigilloo.graph_export` over a project's nodes and edges, and both accept either the rows a
+  scan has just built or the rows `store.graph_for_project` reads back out of SQLite, so
+  exporting a project scanned yesterday never means re-analysing it. DOT, GEXF and the
+  `--layer`/`--focus`/`--depth` filters are still specified only, as is the `vigilloo graph`
+  command that will drive them.
+
+  Two exports of the same graph are byte-identical (invariant 8), which means neither format
+  may inherit the order it was handed - the builder emits a grouped order and SQLite returns
+  the planner's. Nodes sort by kind, FQN and ID; edges over every field they have, an edge
+  having no ID of its own to break a tie with. The JSON object is the row's fields under their
+  own names with absent optional ones omitted rather than written as `null`, so a consumer
+  rebuilds a row by splatting it. GraphML declares a `<key>` for each of those fields ahead of
+  the `<graph>` that uses them, and the kind-specific `attrs` bag travels as one JSON string:
+  GraphML has no list type, and a key set derived from whichever attribute names a project
+  happens to produce would change under the reader between two scans of the same code.
+
 ### Changed
 
 - **The node ID scheme no longer contains the span**, correcting
