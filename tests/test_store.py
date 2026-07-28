@@ -289,9 +289,7 @@ def test_reinserting_a_content_derived_id_is_a_no_op(tmp_path: Path) -> None:
         insert_nodes(conn, project_id, [node])
         insert_nodes(conn, project_id, [node])
 
-    rows = conn.execute(
-        "SELECT id, fqn, start_line FROM nodes WHERE id = ?", (node.id,)
-    ).fetchall()
+    rows = conn.execute("SELECT id, fqn, start_line FROM nodes WHERE id = ?", (node.id,)).fetchall()
     assert rows == [(node.id, node.fqn, 2)]
 
 

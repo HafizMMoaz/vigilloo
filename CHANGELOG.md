@@ -111,6 +111,22 @@ Ruleset hash: `520914c8731f4c0d`.
   keeps the parent's name in its node attributes, which is how `extends Model` survives having no
   `EXTENDS` edge to carry it.
 
+- **Findings read back with their evidence paths** (TASK-011). `findings_for_scan` returns each
+  stored finding with its complete path, in source order, in two queries rather than one per
+  finding. The stored step is a `StoredStep` and not a `PathStep`: docs/17-database keeps a
+  step's line and not its columns, and handing back a `Span` would mean inventing three numbers
+  a caller could not distinguish from the real one. What matters survives regardless - every
+  input to `Finding.id` and `Finding.fingerprint` is stored, so both hashes recompute exactly
+  from a stored row, which is what makes a baseline written against one scan still match in the
+  next.
+
+  Each step now also carries the id of the innermost graph node covering it, so an evidence path
+  is a walk over the graph rather than a list of line numbers (invariant 2). A step inside a
+  controller action resolves to that method; one on a model's `$guarded` line resolves to the
+  class; a Blade step, which no method covers, resolves to its file node rather than to a guess.
+  Reading a finding whose path rows are missing raises instead of returning it, because a
+  pathless finding is something the engine is not allowed to produce.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not

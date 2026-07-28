@@ -11,10 +11,11 @@ security engine in the layering CLAUDE.md describes.
 import json
 import sqlite3
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .graph import GraphRows, Project, graph_rows
+from .graph import GraphRows, NodeLocator, Project, graph_rows
 from .models import EdgeRow, Finding, NodeRow
 from .workspace import Workspace
 
@@ -153,6 +154,50 @@ COMMIT;
 # "table already exists" with no schema_meta entry to tell it the schema is already there.
 
 
+@dataclass(frozen=True)
+class StoredStep:
+    """One step of a stored evidence path.
+
+    Deliberately not a `PathStep`. A `PathStep` carries a full `Span`, and docs/17-database
+    stores a step's `line` and nothing narrower - a step is a point on a path, and its column
+    offsets are presentation. Handing back a `PathStep` would mean inventing three numbers,
+    and a caller could not tell the invented ones from the real one.
+    """
+
+    step: int
+    role: str
+    file: Path | None
+    line: int | None
+    snippet: str
+    note: str
+    node_id: str | None
+
+
+@dataclass(frozen=True)
+class StoredFinding:
+    """A finding as the database holds it, with its complete evidence path.
+
+    Everything `Finding.id` and `Finding.fingerprint` are derived from is here - the rule, the
+    file, the start line, and each step's role, file, line and snippet - so a reader can
+    recompute both and check them against the stored values. That is the round trip that
+    matters: not that the object is byte-identical, but that its identity survived, because
+    identity is what baselines and suppressions are keyed on.
+    """
+
+    id: str
+    fingerprint: str
+    scan_id: int
+    rule_id: str
+    severity: str
+    title: str
+    remediation: str
+    cwe: tuple[str, ...]
+    file: Path | None
+    start_line: int | None
+    first_seen_scan: int | None
+    path: tuple[StoredStep, ...]
+
+
 def connect(workspace: Workspace) -> sqlite3.Connection:
     """Open `.vigilloo/vigilloo.db`, apply the pragmas, create the schema if absent."""
     conn = sqlite3.connect(workspace.dir / _DB_FILENAME)
@@ -242,10 +287,12 @@ def record_scan(
         # evidence_paths.node_id references nodes(id), so a finding whose steps point at graph
         # nodes cannot be inserted until those nodes exist. Ordering it this way also means a
         # scan that dies partway leaves no graph rather than a graph with no scan to explain it.
-        _replace_graph(conn, project_id, graph_rows(project, project_id, file_ids))
+        rows = graph_rows(project, project_id, file_ids)
+        _replace_graph(conn, project_id, rows)
 
+        locator = NodeLocator(rows)
         for finding in findings:
-            _insert_finding(conn, project_id, scan_id, finding, file_ids)
+            _insert_finding(conn, project_id, scan_id, finding, file_ids, locator)
 
     # ponytail: no retention pruning. docs/17-database keeps the last 10 scans; ten scans of a
     # small findings set is kilobytes, so pruning arrives when a real project's history measures
@@ -272,6 +319,75 @@ def _replace_graph(conn: sqlite3.Connection, project_id: int, rows: GraphRows) -
     conn.execute("DELETE FROM edges WHERE project_id = ?", (project_id,))
     insert_nodes(conn, project_id, rows.nodes)
     insert_edges(conn, project_id, rows.edges)
+
+
+def findings_for_scan(conn: sqlite3.Connection, scan_id: int) -> list[StoredFinding]:
+    """Every finding one scan recorded, each with its complete evidence path.
+
+    Two queries, not one per finding: docs/23-dev-guide section Performance names N+1 against
+    SQLite as what dominates, and a scan with 500 findings would otherwise be 501 round trips
+    to rebuild what one indexed scan of `evidence_paths` already has in order.
+
+    Ordered by source position rather than by severity. Ranking findings is the reporter's
+    decision and it changes; where a finding is does not, and a stable order is what makes two
+    reads of the same scan comparable (invariant 8).
+    """
+    steps: dict[str, list[StoredStep]] = {}
+    for row in conn.execute(
+        "SELECT e.finding_id, e.step, e.role, f.path, e.line, e.snippet, e.note, e.node_id "
+        "FROM evidence_paths e LEFT JOIN files f ON f.id = e.file_id "
+        "WHERE e.scan_id = ? AND e.is_primary = 1 "
+        "ORDER BY e.finding_id, e.step",
+        (scan_id,),
+    ):
+        steps.setdefault(row[0], []).append(
+            StoredStep(
+                step=row[1],
+                role=row[2],
+                file=None if row[3] is None else Path(row[3]),
+                line=row[4],
+                snippet=row[5] or "",
+                note=row[6] or "",
+                node_id=row[7],
+            )
+        )
+
+    findings: list[StoredFinding] = []
+    for row in conn.execute(
+        "SELECT fi.id, fi.fingerprint, fi.scan_id, fi.rule_id, fi.severity, fi.title, "
+        "fi.remediation, fi.cwe, f.path, fi.start_line, fi.first_seen_scan "
+        "FROM findings fi LEFT JOIN files f ON f.id = fi.file_id "
+        "WHERE fi.scan_id = ? "
+        "ORDER BY f.path, fi.start_line, fi.id",
+        (scan_id,),
+    ):
+        path = steps.get(row[0], [])
+        if not path:
+            # Invariant 2: no path, no finding. Returning one anyway would hand a caller
+            # something the engine is not allowed to produce, and the caller would have no way
+            # to tell it from a finding whose path was genuinely empty - which cannot happen,
+            # because Finding.__post_init__ refuses to construct one.
+            raise ValueError(
+                f"finding {row[0]} in scan {scan_id} has no stored evidence path; "
+                f"{_DB_FILENAME} is corrupt"
+            )
+        findings.append(
+            StoredFinding(
+                id=row[0],
+                fingerprint=row[1],
+                scan_id=row[2],
+                rule_id=row[3],
+                severity=row[4],
+                title=row[5],
+                remediation=row[6] or "",
+                cwe=tuple(json.loads(row[7])) if row[7] else (),
+                file=None if row[8] is None else Path(row[8]),
+                start_line=row[9],
+                first_seen_scan=row[10],
+                path=tuple(path),
+            )
+        )
+    return findings
 
 
 def insert_nodes(conn: sqlite3.Connection, project_id: int, nodes: Iterable[NodeRow]) -> None:
@@ -475,6 +591,7 @@ def _insert_finding(
     scan_id: int,
     finding: Finding,
     file_ids: dict[Path, int],
+    locator: NodeLocator,
 ) -> None:
     fingerprint = finding.fingerprint
     first_seen_scan = _first_seen_scan(conn, project_id, fingerprint, scan_id)
@@ -518,16 +635,23 @@ def _insert_finding(
         ),
     )
 
+    # node_id is what makes a stored step a position in the graph rather than a line number:
+    # invariant 2 wants a path whose every step is a real node, and a reader holding one can
+    # ask what else reaches it. It stays nullable because a step can land somewhere no node
+    # covers - a Blade template resolves only to its file node - and inventing one there would
+    # be worse than admitting the gap.
     for step_index, step in enumerate(finding.evidence_path):
         conn.execute(
             "INSERT INTO evidence_paths "
-            "(scan_id, finding_id, step, file_id, line, role, snippet, note, is_primary) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) "
+            "(scan_id, finding_id, step, node_id, file_id, line, role, snippet, note, "
+            "is_primary) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) "
             "ON CONFLICT (scan_id, finding_id, step, is_primary) DO NOTHING",
             (
                 scan_id,
                 finding.id,
                 step_index,
+                locator.at(step.span.file, step.span.start_line),
                 file_ids.get(step.span.file),
                 step.span.start_line,
                 step.role,

@@ -277,9 +277,7 @@ class _RowBuilder:
             self._declares(self._id(_KIND_FILE, info.span.file.as_posix()), class_id)
 
             if info.parent is not None and info.parent in self.project.classes:
-                self.edges.append(
-                    EdgeRow(class_id, self._id(_KIND_CLASS, info.parent), "EXTENDS")
-                )
+                self.edges.append(EdgeRow(class_id, self._id(_KIND_CLASS, info.parent), "EXTENDS"))
 
             for name in sorted(info.methods):
                 symbol = info.methods[name]
@@ -351,9 +349,7 @@ class _RowBuilder:
                     # auth/authorization rules that read the label. Upgrade trigger: the
                     # middleware alias map from app/Http/Kernel.php, which is where the
                     # string-to-class resolution lives (docs/08-framework-adapters).
-                    self.nodes.append(
-                        NodeRow(id=mw_id, kind=_KIND_MIDDLEWARE, name=name, fqn=name)
-                    )
+                    self.nodes.append(NodeRow(id=mw_id, kind=_KIND_MIDDLEWARE, name=name, fqn=name))
                 self.edges.append(EdgeRow(route_id, mw_id, "PROTECTED_BY"))
 
     def add_calls(self) -> None:
@@ -479,6 +475,54 @@ class _RowBuilder:
 
     def _declares(self, parent_id: str, child_id: str) -> None:
         self.edges.append(EdgeRow(parent_id, child_id, "DECLARES"))
+
+
+class NodeLocator:
+    """Maps a source position to the innermost graph node covering it.
+
+    This is what makes a finding's evidence path a walk over the graph rather than a list of
+    line numbers (invariant 2). Each step already knows its file and line; this turns that
+    into the id of the method, class or route it happened inside, so a reader can ask what
+    else touches that node instead of only what the report chose to print.
+
+    Innermost wins, so a step inside a method resolves to the method and not to the class
+    around it - and a step on a class body line that is in no method, like the `$guarded = []`
+    a mass-assignment finding points at, correctly resolves to the class. Anything covered by
+    nothing falls back to the file node, which is still a real position and never a guess.
+    """
+
+    def __init__(self, rows: GraphRows) -> None:
+        self._files: dict[Path, str] = {}
+        self._spans: dict[Path, list[tuple[int, int, str]]] = {}
+
+        # One pass to learn what each file_id is called, then one pass to place the rest. The
+        # obvious alternative - searching the node list for each node's file - is quadratic,
+        # and docs/17-database section "Scale" expects ~10M nodes at 1M LOC.
+        paths: dict[int, Path] = {}
+        for node in rows.nodes:
+            if node.kind == _KIND_FILE and node.file_id is not None:
+                path = Path(node.fqn or "")
+                paths[node.file_id] = path
+                self._files[path] = node.id
+
+        for node in rows.nodes:
+            if node.kind == _KIND_FILE or node.file_id is None:
+                continue
+            if node.start_line is None or node.end_line is None:
+                continue
+            path = paths.get(node.file_id, Path(""))
+            self._spans.setdefault(path, []).append((node.start_line, node.end_line, node.id))
+
+    def at(self, file: Path, line: int) -> str | None:
+        best: tuple[int, str] | None = None
+        for start, end, candidate_id in self._spans.get(file, ()):
+            if start <= line <= end:
+                # The id breaks a tie, so two nodes of equal width over the same line always
+                # resolve the same way. Iteration order would not be a promise; the id is.
+                candidate = (end - start, candidate_id)
+                if best is None or candidate < best:
+                    best = candidate
+        return best[1] if best else self._files.get(file)
 
 
 def _route_fqn(route: Route) -> str:
