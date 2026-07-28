@@ -93,13 +93,6 @@ def eloquent_write(method: str) -> tuple[int, bool] | None:
 # The *Raw builders accept bindings in argument 1, which are safe, so only
 # argument 0 is dangerous.
 #
-# ponytail: DB::raw/statement/unprepared/select are the genuinely dangerous
-# static-facade forms, but they are scoped_call_expression nodes and the
-# taint walk only iterates member_call_expression, so they are unreachable
-# today. Listing them here would advertise coverage the engine doesn't have
-# (and "select" also collides with the safe builder ->select(['col'])), so
-# they are left out rather than left as false advertising. They come back
-# together with scoped_call_expression / static-call handling.
 SINKS: dict[str, tuple[int, TaintKind, str]] = {
     "orderByRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "whereRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
@@ -108,6 +101,54 @@ SINKS: dict[str, tuple[int, TaintKind, str]] = {
     "groupByRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "selectRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "fromRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
+}
+
+# The DB facade, by every name a project can legitimately call it.
+#
+# Matching the resolved FQN rather than the written text is what makes the
+# `select` entry below safe to add at all. `use App\Reporting\DB;` is a
+# perfectly ordinary import of somebody's own class, and a scanner keying on
+# the two letters "DB" would report every call to it.
+#
+# Two names, because both reach Laravel's facade. The FQN is the imported
+# form. The bare `DB` is what `\DB::raw(...)` resolves to, and what a file
+# with no namespace resolves to - Laravel registers a global class alias, so
+# that form is not a mistake, it is the older of the two idioms and it is
+# still in every upgrade-in-progress codebase.
+DB_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\DB",
+        "DB",
+    }
+)
+
+# (receiver class, method) -> sink, for calls whose danger depends on what
+# they were called on. Keyed separately from SINKS rather than merged into it,
+# because the collision is the entire difficulty here:
+#
+#   DB::select("select * from users where id = $id")   injection
+#   $query->select(['id', 'name'])                     a column list
+#
+# One name, two meanings, and only the receiver tells them apart. A name-keyed
+# table cannot express that, and adding "select" to it would fire on the
+# single most common line in any query builder in any Laravel codebase.
+#
+# Every entry is argument 0. `DB::select($sql, $bindings)` and friends take
+# their bindings in argument 1, exactly like the *Raw builders, so a
+# parameterised call is safe and a call whose *query* is built from user data
+# is not, whether or not bindings are also passed.
+STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = {
+    (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
+    for facade in DB_FACADE_FQNS
+    for method in (
+        "raw",
+        "statement",
+        "unprepared",
+        "select",
+        "insert",
+        "update",
+        "delete",
+    )
 }
 
 # Function name -> the kinds calling it genuinely clears, per the sanitizer
@@ -136,6 +177,20 @@ def source_kinds(method: str) -> frozenset[TaintKind]:
 
 def sink(method: str) -> tuple[int, TaintKind, str] | None:
     return SINKS.get(method)
+
+
+def static_sink(receiver_fqn: str | None, method: str) -> tuple[int, TaintKind, str] | None:
+    """The sink a `Receiver::method(...)` call reaches, if any.
+
+    `receiver_fqn` is the resolved class, not the text at the call site, and None when the
+    scope could not be resolved. None is not a near miss to be guessed at: an unresolved
+    receiver named `DB` is as likely to be someone's own reporting helper as it is to be the
+    facade, and firing on it would put a fabricated SQL injection in front of a developer
+    who then has grounds to distrust the whole report.
+    """
+    if receiver_fqn is None:
+        return None
+    return STATIC_SINKS.get((receiver_fqn, method))
 
 
 def sanitizer_clears(name: str) -> frozenset[TaintKind]:

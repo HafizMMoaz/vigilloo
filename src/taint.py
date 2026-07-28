@@ -26,6 +26,7 @@ from .laravel.vocabulary import (
     sanitizer_clears,
     sink,
     source_kinds,
+    static_sink,
 )
 from .models import PathStep, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, walk
@@ -298,6 +299,158 @@ def _call_parts(call: Node, source: bytes) -> tuple[str, str, list[Node]]:
     return obj, name, args
 
 
+def _scoped_parts(call: Node, source: bytes) -> tuple[str, str, list[Node]] | None:
+    """Return (scope text, method name, argument nodes) for `Foo::bar(...)`.
+
+    The scoped counterpart of `_call_parts`. Returns None rather than empty strings when the
+    grammar did not give a scope or a name, because a scoped call missing either is a parse
+    artefact and treating it as a call to `""` would look up a sink under the empty name.
+    """
+    scope_node = call.child_by_field_name("scope")
+    name_node = call.child_by_field_name("name")
+    if scope_node is None or name_node is None:
+        return None
+    args_node = call.child_by_field_name("arguments")
+    args: list[Node] = []
+    if args_node is not None:
+        args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+    return node_text(scope_node, source), node_text(name_node, source), args
+
+
+def _scoped_receiver(project: Project, written: str, class_fqn: str, file: Path) -> str | None:
+    """The class a scoped call's left-hand side names.
+
+    `self` and `static` are the enclosing class and `parent` is its base, none of which
+    `resolve_class_name` can know - it resolves names against a namespace and an import table,
+    and these three are resolved against the class the call is written inside. Without this a
+    `self::helper($tainted)` resolves to a class literally named `self`, finds no method, and is
+    counted as an unresolved call on code that is perfectly resolvable.
+
+    `static::` is treated as `self::`, which is right for the call graph and wrong for PHP: late
+    static binding means it names the *runtime* class, so a subclass overriding the method is
+    where the call actually lands. Following the lexical class finds the base implementation,
+    which is the conservative direction - it may miss an override's sink, and it cannot invent a
+    path through a class the code never reaches.
+    """
+    if written in ("self", "static"):
+        return class_fqn
+    if written == "parent":
+        info = project.classes.get(class_fqn)
+        return info.parent if info else None
+    return project.resolve_class_name(file, written)
+
+
+def _sink_steps(
+    call: Node,
+    args: list[Node],
+    found: tuple[int, TaintKind, str],
+    parsed: ParsedFile,
+    local: dict[str, frozenset[TaintKind]],
+    request_vars: frozenset[str],
+) -> list[PathStep]:
+    """The evidence steps for a call that reached a sink, or [] if the taint does not reach it.
+
+    Shared by the member-call and scoped-call branches of the walk. Argument precision is the
+    whole point and it is easy to lose by duplicating: `whereRaw('age > ?', [$age])` is safe and
+    `whereRaw("age > $age")` is not, so the rule is about *which* argument carries the kind, and
+    two copies of that check are two chances for one of them to drift into flagging the call.
+    """
+    index, kind, rule_id = found
+    if index >= len(args):
+        return []
+    if kind not in expr_kinds(args[index], parsed.source, local, request_vars):
+        return []
+    return _inline_source_steps(args[index], parsed, request_vars) + [
+        PathStep(
+            role="sink",
+            span=node_span(call, parsed.path),
+            snippet=node_text(call, parsed.source).strip(),
+            note="unparameterised SQL fragment",
+            rule_id=rule_id,
+        )
+    ]
+
+
+def _follow_static(
+    project: Project,
+    call: Node,
+    receiver_fqn: str | None,
+    name: str,
+    args: list[Node],
+    parsed: ParsedFile,
+    local: dict[str, frozenset[TaintKind]],
+    request_vars: frozenset[str],
+    prefix: list[PathStep],
+    depth: int,
+    max_depth: int,
+    stats: WalkStats | None,
+) -> list[list[PathStep]]:
+    """Walk into `Receiver::method(...)` when it is a method of a class in this project.
+
+    A static call is the easiest interprocedural edge there is - the class is written at the
+    call site, so unlike `$service->handle()` there is no receiver to infer - and until now the
+    walk followed none of them. Tainted data passed to a project's own helper simply stopped,
+    silently, which is the failure mode invariant 4 exists to make visible.
+
+    Gives up only when something was actually being carried, matching the member-call branch,
+    and only when the receiver is a class this project contains. Those two conditions are
+    different and the second is the subtle one.
+
+    A call whose target lives outside the project - `Carbon::parse($x)`, `Cache::get($key)`,
+    and `Post::find($id)` where `Post` is ours but `find` is Eloquent's - is not a resolution
+    failure. `load_project` excludes `vendor/` by design, so the engine has never seen that
+    code and no amount of better name resolution will reach it: it is the boundary of what
+    v0.1 analyses, not a measure of how well it analysed. Counting each one would subtract from
+    the resolution rate in proportion to how much framework a project uses, making an idiomatic
+    Laravel application score worse than a bare one and reporting the engine's own design as a
+    defect on every scan, permanently. docs/22-testing wants that rate to move when false
+    negatives are about to appear, and a number that never reaches 100% on any real project
+    cannot do that.
+
+    `Project.ancestry` is what tells the two apart, and the distinction is finer than "is the
+    receiver ours". `App\\Models\\Post` is a project class and `Post::find` still resolves into
+    the framework, because the chain leaves the project at `extends Model`. A method missing
+    from a chain that stays *inside* the project is the real gap: the code is here and the walk
+    failed to reach it, which today means an inherited or trait-provided method, and TASK-025 is
+    what closes it. That one is counted.
+    """
+    passed = {
+        i: kinds
+        for i, arg in enumerate(args)
+        if (kinds := expr_kinds(arg, parsed.source, local, request_vars))
+    }
+
+    if receiver_fqn is None:
+        return []
+
+    callee_fqn = f"{receiver_fqn}::{name}"
+    callee = project.method(callee_fqn)
+    if callee is None:
+        _, complete = project.ancestry(receiver_fqn)
+        if passed and complete:
+            _giveup(stats)
+        return []
+    if not passed:
+        return []
+
+    _followed(stats)
+    callee_tainted = {
+        callee.params[i]: kinds for i, kinds in passed.items() if i < len(callee.params)
+    }
+    if not callee_tainted:
+        return []
+
+    step = PathStep(
+        role="propagator",
+        span=node_span(call, parsed.path),
+        snippet=node_text(call, parsed.source).strip(),
+        note=f"argument {min(passed)} into {callee_fqn}",
+    )
+    return _walk_method(
+        project, callee_fqn, callee_tainted, prefix + [step], depth + 1, max_depth, stats
+    )
+
+
 def _walk_template(
     project: Project,
     template: Path,
@@ -436,32 +589,53 @@ def _walk_method(
 
         # 2a. Static calls. `User::create($request->all())` names its class at
         #     the call site, so it needs no receiver inference - which is why
-        #     it is the form the mass-assignment rule leans on. Static calls
-        #     are not followed as propagators yet; that arrives with the
-        #     facade and container resolution the slice 1 table defers.
+        #     it is the form the mass-assignment rule leans on. The same
+        #     property is what makes `DB::raw($sql)` reachable: the receiver is
+        #     written down, so a sink can require one without inferring it.
         for call in find_all(stmt, "scoped_call_expression"):
-            scope_node = call.child_by_field_name("scope")
-            name_node = call.child_by_field_name("name")
-            args_node = call.child_by_field_name("arguments")
-            if scope_node is None or name_node is None:
+            parts = _scoped_parts(call, source)
+            if parts is None:
                 continue
-            args = (
-                [a for a in args_node.children if a.type not in ("(", ")", ",")]
-                if args_node is not None
-                else []
-            )
+            written, name, args = parts
+            receiver_fqn = _scoped_receiver(project, written, class_fqn, parsed.path)
+
             steps = _mass_assign_steps(
-                project,
-                call,
-                node_text(name_node, source),
-                args,
-                project.resolve_class_name(parsed.path, node_text(scope_node, source)),
-                parsed,
-                local,
-                request_vars,
+                project, call, name, args, receiver_fqn, parsed, local, request_vars
             )
-            if steps:
-                paths.append(prefix + steps)
+            if steps is not None:
+                # Empty means "resolved and safe" - stop here rather than let the
+                # propagator handling below record a lost trail, exactly as 2b does.
+                if steps:
+                    paths.append(prefix + steps)
+                continue
+
+            # A receiver-scoped sink first, then the name-keyed table. Order matters only
+            # for readability today, since no name appears in both, but the scoped table is
+            # the more specific statement and a more specific rule losing to a general one
+            # is the kind of thing that is invisible until the general one is widened.
+            scoped_sink = static_sink(receiver_fqn, name) or sink(name)
+            if scoped_sink is not None:
+                sink_steps = _sink_steps(call, args, scoped_sink, parsed, local, request_vars)
+                if sink_steps:
+                    paths.append(prefix + sink_steps)
+                continue
+
+            paths.extend(
+                _follow_static(
+                    project,
+                    call,
+                    receiver_fqn,
+                    name,
+                    args,
+                    parsed,
+                    local,
+                    request_vars,
+                    prefix,
+                    depth,
+                    max_depth,
+                    stats,
+                )
+            )
 
         # 2b. Calls: either a sink, or a step deeper into another method.
         for call in find_all(stmt, "member_call_expression"):
@@ -486,23 +660,9 @@ def _walk_method(
 
             sink_found = sink(name)
             if sink_found is not None:
-                index, kind, rule_id = sink_found
-                if index < len(args) and kind in expr_kinds(
-                    args[index], source, local, request_vars
-                ):
-                    paths.append(
-                        prefix
-                        + _inline_source_steps(args[index], parsed, request_vars)
-                        + [
-                            PathStep(
-                                role="sink",
-                                span=node_span(call, parsed.path),
-                                snippet=node_text(call, source).strip(),
-                                note="unparameterised SQL fragment",
-                                rule_id=rule_id,
-                            )
-                        ]
-                    )
+                sink_steps = _sink_steps(call, args, sink_found, parsed, local, request_vars)
+                if sink_steps:
+                    paths.append(prefix + sink_steps)
                 continue
 
             # Which arguments carry tainted data, and which kinds. Computed

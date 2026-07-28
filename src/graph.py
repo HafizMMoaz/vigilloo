@@ -45,6 +45,38 @@ class Project:
         info = self.classes.get(class_fqn)
         return info.methods.get(method_name) if info else None
 
+    def ancestry(self, class_fqn: str) -> tuple[list[str], bool]:
+        """The known ancestor chain of a class, and whether it is complete.
+
+        Returns the classes from `class_fqn` upward that this project contains, and a flag
+        that is True only when the chain ended at a class declaring no parent. False means it
+        ran off the edge of the project - `extends Model` - so there are ancestors above the
+        last entry that were never parsed.
+
+        That flag is the difference between two things that look identical at a call site and
+        mean opposite things. `Post::find` is not on `App\\Models\\Post`, and the chain leaving
+        the project says why: `find` is Eloquent's, in `vendor/`, which `load_project` excludes
+        by design and no better name resolution will ever reach. A method missing from a chain
+        that stays inside the project is the other case - the code is here and the walk failed
+        to reach it - and only that one is a coverage gap worth reporting.
+
+        The `seen` set is not defensive padding: `class A extends B` and `class B extends A`
+        both parse, and the symbol table records exactly what it read, so this must terminate
+        on input the parser accepts.
+        """
+        chain: list[str] = []
+        seen: set[str] = set()
+        current: str | None = class_fqn
+        while current is not None and current not in seen:
+            info = self.classes.get(current)
+            if info is None:
+                return chain, False
+            seen.add(current)
+            chain.append(current)
+            current = info.parent
+        # A cycle is not a complete chain: the ancestors above it are unknowable, not absent.
+        return chain, current is None
+
     def method_node(self, fqn: str) -> tuple[Node, ParsedFile] | None:
         """The syntax node of a method's declaration, and the file it lives in.
 
@@ -553,27 +585,17 @@ def _resolved_class(project: Project, parsed: ParsedFile, creation: Node) -> str
 
 
 def _declaring_class(project: Project, class_fqn: str, method: str) -> str | None:
-    """Walk the inheritance chain for the class that actually declares `method`.
+    """The class in the inheritance chain that actually declares `method`, if any.
 
     An edge must point at a node that exists, and an inherited method has no node under the
-    subclass - it has one under whichever ancestor declares it. Returns None the moment the
-    chain leaves known classes, since a method inherited from `Illuminate\\...\\Model` is real
-    but has no node here, and pointing the edge at the subclass instead would invent one.
-
-    The `seen` set is not defensive padding: `class A extends B` and `class B extends A` both
-    parse, and the symbol table records exactly what it read, so this loop must terminate on
-    input the parser accepts.
+    subclass - it has one under whichever ancestor declares it. None when no known ancestor
+    declares it, since a method inherited from `Illuminate\\...\\Model` is real but has no node
+    here, and pointing the edge at the subclass instead would invent one.
     """
-    seen: set[str] = set()
-    current: str | None = class_fqn
-    while current is not None and current not in seen:
-        seen.add(current)
-        info = project.classes.get(current)
-        if info is None:
-            return None
-        if method in info.methods:
-            return current
-        current = info.parent
+    chain, _ = project.ancestry(class_fqn)
+    for ancestor in chain:
+        if method in project.classes[ancestor].methods:
+            return ancestor
     return None
 
 

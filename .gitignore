@@ -18,3 +18,7 @@ TEMP/
 # Hypothesis writes a per-run cache of example databases and harvested constants here.
 # Machine-local and regenerated on demand: committing it makes every property-test run a diff.
 .hypothesis/
+
+# Claude Code session state, including the throwaway worktrees dispatched agents run in.
+# Machine-local and never part of the project.
+.claude/
