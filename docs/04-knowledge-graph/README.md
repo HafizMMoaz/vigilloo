@@ -103,6 +103,24 @@ dependency, and nothing in core may assume Cypher.
 Whole-graph export at scale is unusable as a picture, so `--focus` + `--depth` (ego network
 around a node) is the primary interactive mode. Report diagrams show the taint path only.
 
+**What is built today: the JSON and GraphML serialisers only, in `vigilloo.graph_export`, as
+two functions over a project's nodes and edges.** DOT, GEXF, `--layer`, `--focus`, `--depth`
+and the `vigilloo graph` command itself are still specified only - the CLI surface is its own
+task, and the whole-graph filters above are what makes it worth designing once rather than
+growing an option at a time. Both serialisers accept either the rows a scan has just built or
+the rows read back out of SQLite by `store.graph_for_project`, so exporting a project scanned
+earlier never means re-analysing it.
+
+Both formats are byte-identical across two exports of the same graph (invariant 8), which
+means neither may inherit the order it was handed: nodes sort by kind, then fqn, then id, and
+edges by kind, endpoints, confidence, resolution and attributes - an edge has no id to break
+the tie with. JSON objects are the node and edge fields under their own names, with absent
+optional fields omitted rather than written as `null`, so a consumer reconstructs a row by
+splatting the object. GraphML declares a `<key>` for each of those fields ahead of the
+`<graph>`; the kind-specific `attrs` bag travels as one JSON-typed string, because GraphML has
+no list type and a key set derived from whichever attribute names a project happens to produce
+would change under the user between two scans of the same codebase.
+
 ## Invalidation
 
 A file's content hash changes → its AST/symbol nodes are dropped and rebuilt → every edge
