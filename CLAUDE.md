@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Status: first vertical slices implemented
 
 The spec in `docs/` is complete. `src/` is a working Python package: `vigilloo scan` parses a
-Laravel project, builds the graph, runs the taint and structural rules, prints the findings with
-their evidence paths, and records the scan in the SQLite store under `.vigilloo/`. Everything
-beyond those slices is still spec only.
+Laravel project, builds the graph, runs the taint and structural rules, prints how much of the
+project it understood and then the findings with their evidence paths, and records the scan in
+the SQLite store under `.vigilloo/`. Everything beyond those slices is still spec only.
 
 **Per-capability status has one home: the v0.1 table in
 [24-roadmap](docs/24-roadmap/README.md).** Read it to find out what is built and what is not,

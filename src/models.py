@@ -146,7 +146,19 @@ class Finding:
 
 @dataclass
 class WalkStats:
-    """A running count of call sites the analysis had to give up on.
+    """A running count of the name resolutions the analysis attempted.
+
+    `unresolved` counts the ones it had to give up on, `resolved` the ones it
+    followed. Both are needed: a rate without its denominator can only be
+    estimated, and invariant 4 says coverage is measured and reported.
+
+    An attempt is counted where the walk had to turn a name in the source into
+    something it could follow - a route registration into a route, a route into
+    a controller action, a method call into a callee, a view() call into a
+    template. Attempts are only counted where the answer would have changed what
+    the analysis saw, so a benign unresolvable receiver carrying no taint is
+    neither a success nor a failure: counting those would report gaps on correct
+    code and train people to ignore the number.
 
     Not frozen: every other model here is an immutable record of something
     that happened, this is a counter incremented in place while the walk
@@ -155,4 +167,69 @@ class WalkStats:
     them to avoid an import cycle.
     """
 
+    resolved: int = 0
     unresolved: int = 0
+
+
+def _rate(succeeded: int, attempted: int) -> float:
+    """The share of attempts that succeeded, as a fraction of 1.0.
+
+    Zero attempts is 1.0, decided rather than stumbled into. The rate answers
+    "of what this scan tried to read, how much did it understand", and nothing
+    was missed when nothing was attempted; 0.0 would report a project with no
+    PHP files as total blindness, and a CI gate (docs/22-testing, section
+    "Metrics gated in CI") would then fail on an empty diff. The counts are
+    reported next to every rate precisely so a vacuous 100% cannot be mistaken
+    for a scanned codebase.
+    """
+    if attempted == 0:
+        return 1.0
+    return succeeded / attempted
+
+
+@dataclass(frozen=True)
+class Coverage:
+    """What one scan managed to look at, in counts and the two rates over them.
+
+    Invariant 4: coverage is reported, never hidden. A clean result over a
+    codebase 40% of which failed to parse is a lie, and the only defence against
+    telling it is measuring the fraction and printing it whether or not it is
+    flattering.
+
+    Counts are what was observed; the rates are derived, never stored, so the
+    two can never disagree.
+    """
+
+    files_discovered: int
+    files_unreadable: int
+    files_with_errors: int
+    calls_resolved: int
+    calls_unresolved: int
+
+    @property
+    def files_parsed(self) -> int:
+        """Files read and parsed with no syntax error anywhere in them."""
+        return self.files_discovered - self.files_unreadable - self.files_with_errors
+
+    @property
+    def parse_success_rate(self) -> float:
+        """Cleanly parsed files over every file discovered under the root.
+
+        A file that could not be read counts against the rate exactly like one
+        that would not parse: both are source the scan did not analyse, and the
+        reason is of no comfort to the reader of the report.
+        """
+        return _rate(self.files_parsed, self.files_discovered)
+
+    @property
+    def calls_attempted(self) -> int:
+        return self.calls_resolved + self.calls_unresolved
+
+    @property
+    def call_resolution_rate(self) -> float:
+        """Followed resolutions over attempted ones.
+
+        docs/22-testing calls this the leading indicator: unresolved calls are
+        where false negatives hide, so it moves before missed findings do.
+        """
+        return _rate(self.calls_resolved, self.calls_attempted)

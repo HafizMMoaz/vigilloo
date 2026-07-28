@@ -68,6 +68,43 @@ that were real, with a known correct answer.
 Resolution rate is the leading indicator: unresolved calls are where false negatives hide, so
 tracking it catches regressions before they show up as missed findings.
 
+### How the two rates are computed
+
+Both are ratios of counts the scan already recorded while running, never a sample and never an
+estimate. `vigilloo.models.Coverage` holds the counts; the rates are properties derived from
+them, so the number and the counts printed beside it cannot disagree.
+
+**Parse success rate** = files read and parsed with no syntax error ÷ every `.php` and
+`.blade.php` file discovered under the project root, excluding `vendor/`, `node_modules/`,
+`storage/`, `bootstrap/` and `.git/`. A file that could not be read counts against the rate
+exactly like one that would not parse: both are source the scan did not analyse, and the
+distinction is of no comfort to the reader of the report. A file with a syntax error is still
+analysed as far as its syntax allows, and still counts as a failure here.
+
+**Call-graph resolution rate** = resolutions followed ÷ resolutions attempted, where an attempt
+is any point at which the analysis had to turn a name in the source into something it could
+follow: a `Route::verb` registration into a route, a route into a controller action, a method
+call into a callee, a `view()` call into a template. It is therefore a superset of call sites
+today, and grows toward being dominated by them as the walk learns to follow more constructs.
+Attempts are counted only where the answer would have changed what the analysis saw - an
+unresolvable receiver carrying no tainted data is neither a success nor a failure - because a
+counter that reports gaps on correct code trains people to ignore it.
+
+The 0.5 confidence threshold in the table above is forward-looking: resolution is currently
+all-or-nothing, so every attempt is scored 1 or 0 and the threshold has nothing to apply to.
+It becomes meaningful with the confidence-scored strategies in
+[07-call-graph](../07-call-graph/README.md), and the denominator does not change when it does.
+
+**Zero attempts is 1.0**, for both rates. A project with no PHP files, or one whose walk found
+nothing to resolve, hid nothing; 0.0 would report an empty diff as total blindness and fail this
+gate on it, and an error would turn an empty directory into a crashed scan. The counts are
+reported next to every rate exactly so that a vacuous 100% cannot be mistaken for a scanned
+codebase.
+
+`tests/fixtures/laravel-unparseable/` exists to keep one measurement below 100%. A fixture set
+that always scores perfectly cannot tell a working metric from a constant, and the file in it
+that does not parse is deliberate: fixing its syntax silently disables the test.
+
 ## Rule testing
 
 Every rule ships with positive and negative cases in the same file as its definition. A rule

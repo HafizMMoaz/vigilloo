@@ -21,12 +21,19 @@ interfaces or the CLI surface updates its document in the same commit. The targe
 
 ## Status
 
-v0.1, in progress. The first vertical slice is implemented: PHP parsing, symbol extraction,
-Laravel route table, call graph, kind-based interprocedural taint analysis, and SQL injection
-findings with complete evidence paths.
+v0.1, in progress. `vigilloo scan` parses a Laravel project, builds the graph, runs the taint
+and structural rules, prints every finding with its complete evidence path and its coverage,
+and records the scan in the SQLite store under `.vigilloo/`. Four rules ship today:
+`php.sql-injection`, `php.xss`, `laravel.mass-assignment` and `laravel.missing-authorization`.
+
+**Per-capability status lives in the v0.1 table in
+[docs/24-roadmap](docs/24-roadmap/README.md)**, which is the one place it is recorded. Released
+changes are in [CHANGELOG.md](CHANGELOG.md).
 
 ```
 $ vigilloo scan tests/fixtures/laravel-minimal
+
+Coverage: 16/16 files parsed (100.0%), 52/52 call sites resolved (100.0%)
 
 CRITICAL - SQL Injection
   app/Repositories/OrderRepository.php:12 · CWE-89 · php.sql-injection
@@ -35,7 +42,12 @@ CRITICAL - SQL Injection
   2. OrderController.php:17  source  $sort = $request->input('sort')
   3. OrderController.php:19  flows   argument 0 into OrderRepository::search
   4. OrderRepository.php:12  sink    DB::table('orders')->orderByRaw("created_at {$sort}")
+
+10 findings (1 critical, 9 high)
 ```
+
+Coverage is printed on every scan, including when it is 100%. A clean result over a codebase
+that half failed to parse is a lie, so the denominator is never hidden.
 
 Scope for v0.1 is PHP 8.1+ / Laravel 9-11 only, with no AI dependency - the full pipeline runs
 offline with no API key. See [docs/24-roadmap](docs/24-roadmap/README.md).
