@@ -22,6 +22,22 @@ class Workspace:
     dir: Path
 
     @classmethod
+    def at(cls, root: Path) -> "Workspace":
+        """A workspace over `root` that touches nothing on disk.
+
+        The containment guard below is needed by read-only stages long before anything
+        wants to write: `load_project` reads `composer.json` and its autoload map, and a
+        scan that only reads must not leave a `.vigilloo/` directory behind in every tree
+        it is pointed at. `open` is this plus the directory, so there is still one place
+        that decides what a root resolves to.
+        """
+        # ponytail: no config yet. vigilloo.yml resolution (CLI > env > project > user >
+        # defaults, docs/19-cli section Configuration) lands in src/workspace/config.py
+        # and becomes another frozen field here.
+        resolved = root.resolve()
+        return cls(root=resolved, dir=resolved / DIR_NAME)
+
+    @classmethod
     def open(cls, root: Path) -> "Workspace":
         """Resolve `root` and create its `.vigilloo/` directory if it is absent.
 
@@ -29,13 +45,9 @@ class Workspace:
         the database is a rebuildable cache, but the findings history and the baseline
         inside it are not.
         """
-        # ponytail: no config yet. vigilloo.yml resolution (CLI > env > project > user >
-        # defaults, docs/19-cli section Configuration) lands in src/workspace/config.py
-        # and becomes another frozen field here.
-        resolved = root.resolve()
-        directory = resolved / DIR_NAME
-        directory.mkdir(exist_ok=True)
-        return cls(root=resolved, dir=directory)
+        workspace = cls.at(root)
+        workspace.dir.mkdir(exist_ok=True)
+        return workspace
 
     def resolve(self, path: Path | str) -> Path:
         """Resolve a project-relative path, refusing anything outside the root.

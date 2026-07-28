@@ -14,10 +14,12 @@ from tree_sitter import Node
 
 from .ids import node_id
 from .laravel.blade import to_php
+from .laravel.detect import Autoload, read_autoload
 from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
 from .models import Coverage, EdgeRow, NodeRow, Route, Span, Symbol, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, parse_php, parse_source
 from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
+from .workspace import Workspace
 
 _EXCLUDED_DIRS = {"vendor", "node_modules", "storage", "bootstrap", ".git"}
 
@@ -39,6 +41,11 @@ class Project:
     # template's own digest (docs/17-database, files.sha256 is "the
     # incrementality key" and store.py's coverage rows need the real one).
     digests: dict[Path, str] = field(default_factory=dict)
+    # What composer.json says this project autoloads, and which of its mappings were
+    # refused. Held on the Project rather than passed around because two consumers need
+    # it at different times: name resolution while files are being read, and the CLI's
+    # coverage caveats after they all have been.
+    autoload: Autoload = field(default_factory=Autoload)
 
     def method(self, fqn: str) -> Symbol | None:
         class_fqn, _, method_name = fqn.rpartition("::")
@@ -80,7 +87,7 @@ class Project:
         syms = self.symbols.get(file)
         if syms is None:
             return None
-        return resolve_type_name(written, syms.namespace, syms.imports)
+        return resolve_type_name(written, syms.namespace, syms.imports, self.autoload.prefixes)
 
     def blade_line(self, path: Path, line: int) -> str:
         """The original Blade text of a 1-indexed line, for evidence snippets.
@@ -115,7 +122,13 @@ def _blade_files(root: Path) -> list[Path]:
 
 
 def load_project(root: Path, stats: WalkStats | None = None) -> Project:
-    project = Project(root=root)
+    # Read before any file is parsed: the autoload map is what tells the symbol layer
+    # which written names are already fully qualified, so it has to exist before the
+    # first symbol table is built. `Workspace.at` rather than `.open` because loading a
+    # project reads and must not create `.vigilloo/` in a tree nobody asked to scan.
+    autoload = read_autoload(Workspace.at(root))
+    autoload_roots = autoload.prefixes
+    project = Project(root=root, autoload=autoload)
 
     for path in _php_files(root):
         try:
@@ -140,7 +153,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             project.unparsed.append(rel_path)
 
         project.files[rel_path] = parsed
-        syms = extract_symbols(parsed)
+        syms = extract_symbols(parsed, autoload_roots)
         project.symbols[rel_path] = syms
         project.classes.update(syms.classes)
 
