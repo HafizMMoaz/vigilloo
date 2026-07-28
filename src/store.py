@@ -11,12 +11,11 @@ security engine in the layering CLAUDE.md describes.
 import json
 import sqlite3
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .graph import Project
-from .models import Finding
+from .graph import GraphRows, Project, graph_rows
+from .models import EdgeRow, Finding, NodeRow
 from .workspace import Workspace
 
 _DB_FILENAME = "vigilloo.db"
@@ -154,49 +153,6 @@ COMMIT;
 # "table already exists" with no schema_meta entry to tell it the schema is already there.
 
 
-@dataclass(frozen=True)
-class NodeRow:
-    """One `nodes` row, ready to insert.
-
-    `id` is content-derived and comes from `vigilloo.ids.node_id` - invariant 3, and the
-    reason `insert_nodes` can treat a repeat insert as a no-op instead of a conflict.
-    Every span column is optional: a node that stands for a whole file or a route
-    registration has no meaningful column offsets, and a zero would claim one it does not
-    have.
-    """
-
-    id: str
-    kind: str
-    name: str | None = None
-    fqn: str | None = None
-    file_id: int | None = None
-    start_line: int | None = None
-    start_col: int | None = None
-    end_line: int | None = None
-    end_col: int | None = None
-    start_byte: int | None = None
-    end_byte: int | None = None
-    attrs: Mapping[str, object] | None = None
-
-
-@dataclass(frozen=True)
-class EdgeRow:
-    """One `edges` row, ready to insert.
-
-    `confidence` is not decoration (docs/04-knowledge-graph): a taint path carries the
-    minimum confidence of its edges, and that value drives severity. It defaults to 1.0
-    because a statically resolved edge is certain; anything resolved through a facade map or
-    a variable callable must say so here and in `resolution`.
-    """
-
-    src_id: str
-    dst_id: str
-    kind: str
-    confidence: float = 1.0
-    resolution: str | None = None
-    attrs: Mapping[str, object] | None = None
-
-
 def connect(workspace: Workspace) -> sqlite3.Connection:
     """Open `.vigilloo/vigilloo.db`, apply the pragmas, create the schema if absent."""
     conn = sqlite3.connect(workspace.dir / _DB_FILENAME)
@@ -282,6 +238,12 @@ def record_scan(
 
         file_ids = _upsert_files(conn, project_id, project, finished_at.isoformat())
 
+        # The graph is written before the findings, and both inside the scan's transaction:
+        # evidence_paths.node_id references nodes(id), so a finding whose steps point at graph
+        # nodes cannot be inserted until those nodes exist. Ordering it this way also means a
+        # scan that dies partway leaves no graph rather than a graph with no scan to explain it.
+        _replace_graph(conn, project_id, graph_rows(project, project_id, file_ids))
+
         for finding in findings:
             _insert_finding(conn, project_id, scan_id, finding, file_ids)
 
@@ -289,6 +251,27 @@ def record_scan(
     # small findings set is kilobytes, so pruning arrives when a real project's history measures
     # large enough to justify it, not preemptively here.
     return scan_id
+
+
+def _replace_graph(conn: sqlite3.Connection, project_id: int, rows: GraphRows) -> None:
+    """Make the stored graph this project's graph, as this scan just derived it.
+
+    Edges are dropped and rewritten because an edge has no identity of its own (see
+    `insert_edges`): re-deriving the same call site would otherwise add a second row every
+    scan, and a `CALLS` edge counted twice is a traversal that reports the same path twice.
+    Nodes are not dropped, only re-inserted, and their content-derived ids make that a no-op
+    for everything unchanged.
+
+    ponytail: a node for a class or file that has since been deleted is never removed, so the
+    node table only ever grows. Ceiling: a stale node has no edges - those were just dropped -
+    so it cannot appear in a traversal or a finding, and the cost is disk plus a `kind` count
+    that overstates a long-lived project. Upgrade trigger: docs/04-knowledge-graph section
+    "Invalidation", which needs per-file node deletion keyed on the content hash anyway; the
+    same pass that drops a changed file's nodes drops a removed file's.
+    """
+    conn.execute("DELETE FROM edges WHERE project_id = ?", (project_id,))
+    insert_nodes(conn, project_id, rows.nodes)
+    insert_edges(conn, project_id, rows.edges)
 
 
 def insert_nodes(conn: sqlite3.Connection, project_id: int, nodes: Iterable[NodeRow]) -> None:
@@ -343,10 +326,11 @@ def insert_edges(conn: sqlite3.Connection, project_id: int, edges: Iterable[Edge
     ponytail: no idempotence. `edges.id` is an autoincrement rowid, per docs/17-database,
     because an edge has no identity of its own - it is (src, dst, kind) between two nodes that
     do. Ceiling: inserting the same logical edge twice writes two rows, so a caller must not
-    re-derive edges for a file whose nodes are already stored. Harmless while the graph is
-    rebuilt whole per run and nothing reads it back. Upgrade trigger: incremental scanning,
-    which re-derives one file at a time; then this needs `UNIQUE (src_id, dst_id, kind)` with
-    the same DO NOTHING, and docs/17-database gains it.
+    re-derive edges that are already stored. `_replace_graph` is what keeps that true today, by
+    dropping the project's edges before every rewrite - which only works because the graph is
+    still derived whole per scan. Upgrade trigger: incremental scanning, which re-derives one
+    file at a time and cannot drop the whole project's edges to do it; then this needs
+    `UNIQUE (src_id, dst_id, kind)` with the same DO NOTHING, and docs/17-database gains it.
     """
     conn.executemany(
         "INSERT INTO edges (project_id, src_id, dst_id, kind, confidence, resolution, attrs) "

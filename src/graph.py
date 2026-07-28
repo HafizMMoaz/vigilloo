@@ -1,7 +1,9 @@
-"""In-memory project graph: files, symbols, classes and routes.
+"""The project graph: files, symbols, classes and routes, in memory and as stored rows.
 
-ponytail: in-memory only, rebuilt per run. SQLite persistence buys
-incrementality, which this slice does not need - see docs 17-database.
+`load_project` builds the in-memory form the analyses walk. `graph_rows` turns that same
+form into the `nodes` and `edges` of docs/04-knowledge-graph, which the store writes. Both
+live here because they are one model in two shapes, and a second module deriving node
+identity from the same Project would be a second place for the two to drift apart.
 """
 
 import hashlib
@@ -10,10 +12,11 @@ from pathlib import Path
 
 from tree_sitter import Node
 
+from .ids import node_id
 from .laravel.blade import to_php
-from .laravel.routes import extract_routes
-from .models import Coverage, Route, Symbol, WalkStats
-from .parser import ParsedFile, find_all, node_span, parse_php, parse_source
+from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
+from .models import Coverage, EdgeRow, NodeRow, Route, Span, Symbol, WalkStats
+from .parser import ParsedFile, find_all, node_span, node_text, parse_php, parse_source
 from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
 
 _EXCLUDED_DIRS = {"vendor", "node_modules", "storage", "bootstrap", ".git"}
@@ -171,6 +174,363 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
 
     project.routes.sort(key=lambda r: (str(r.span.file), r.span.start_line))
     return project
+
+
+@dataclass(frozen=True)
+class GraphRows:
+    """One project's graph, flattened into storable rows.
+
+    `unresolved_calls` counts call sites this builder could not turn into an edge. It is
+    deliberately *not* folded into `Coverage`: the taint walk already counts the calls it
+    followed, over a different denominator, and adding a second producer to the same rate
+    would move the number that docs/22-testing gates in CI without any analysis having
+    changed. It is reported here so a caller can see the gap and a test can assert on it.
+    """
+
+    nodes: list[NodeRow]
+    edges: list[EdgeRow]
+    unresolved_calls: int = 0
+
+
+# Node kinds are lowercase and edge kinds uppercase, following the tables in
+# docs/04-knowledge-graph. Only the layers this slice can honestly populate appear: the AST,
+# control-flow and data-flow layers named there have no rows here, because inventing an
+# approximate `FLOWS_TO` would be worse than an absent one.
+_KIND_FILE = "file"
+_KIND_CLASS = "class"
+_KIND_METHOD = "method"
+_KIND_ROUTE = "route"
+_KIND_MIDDLEWARE = "middleware"
+
+_CALL_NODES = ("member_call_expression", "scoped_call_expression")
+
+
+def graph_rows(project: Project, project_id: int, file_ids: dict[Path, int]) -> GraphRows:
+    """Flatten a Project into the nodes and edges of docs/04-knowledge-graph.
+
+    `project_id` namespaces node identity and `file_ids` maps each relative path to its
+    `files` row, so both come from the store rather than being derived here - the store owns
+    those two numbers and this function must agree with it rather than guess.
+
+    Everything is emitted in sorted order. Invariant 8 makes byte-identical output the
+    contract, and an export or a report reading these rows back would otherwise inherit
+    dictionary insertion order, which is the parse order of a directory walk.
+    """
+    builder = _RowBuilder(project, project_id, file_ids)
+    builder.add_files()
+    builder.add_classes_and_methods()
+    builder.add_routes()
+    builder.add_calls()
+    return GraphRows(builder.nodes, builder.edges, builder.unresolved_calls)
+
+
+class _RowBuilder:
+    """Accumulates rows for one project. A class only to avoid threading six lists around."""
+
+    def __init__(self, project: Project, project_id: int, file_ids: dict[Path, int]) -> None:
+        self.project = project
+        self.project_id = project_id
+        self.file_ids = file_ids
+        self.nodes: list[NodeRow] = []
+        self.edges: list[EdgeRow] = []
+        self.unresolved_calls = 0
+
+    def _id(self, kind: str, fqn: str) -> str:
+        return node_id(self.project_id, kind, fqn)
+
+    def add_files(self) -> None:
+        """One node per file the scan discovered, unreadable ones included.
+
+        A file that could not be read is still a file in the project, and dropping it here
+        would make the graph quietly disagree with the `files` table and with the coverage
+        report beside it (invariant 4).
+        """
+        for rel_path in sorted(self.file_ids):
+            self.nodes.append(
+                NodeRow(
+                    id=self._id(_KIND_FILE, rel_path.as_posix()),
+                    kind=_KIND_FILE,
+                    name=rel_path.name,
+                    fqn=rel_path.as_posix(),
+                    file_id=self.file_ids[rel_path],
+                )
+            )
+
+    def add_classes_and_methods(self) -> None:
+        for fqn in sorted(self.project.classes):
+            info = self.project.classes[fqn]
+            class_id = self._id(_KIND_CLASS, fqn)
+            self.nodes.append(
+                NodeRow(
+                    id=class_id,
+                    kind=_KIND_CLASS,
+                    name=fqn.rsplit("\\", 1)[-1],
+                    fqn=fqn,
+                    file_id=self.file_ids.get(info.span.file),
+                    **_span_columns(info.span),
+                    # The parent name is kept even when it resolves to no node of ours,
+                    # because `extends Model` is precisely how the Laravel rules recognise an
+                    # Eloquent model, and that fact would otherwise vanish with the edge.
+                    attrs=None if info.parent is None else {"parent": info.parent},
+                )
+            )
+            self._declares(self._id(_KIND_FILE, info.span.file.as_posix()), class_id)
+
+            if info.parent is not None and info.parent in self.project.classes:
+                self.edges.append(
+                    EdgeRow(class_id, self._id(_KIND_CLASS, info.parent), "EXTENDS")
+                )
+
+            for name in sorted(info.methods):
+                symbol = info.methods[name]
+                method_id = self._id(_KIND_METHOD, symbol.fqn)
+                self.nodes.append(
+                    NodeRow(
+                        id=method_id,
+                        kind=_KIND_METHOD,
+                        name=name,
+                        fqn=symbol.fqn,
+                        file_id=self.file_ids.get(symbol.span.file),
+                        **_span_columns(symbol.span),
+                        attrs={"params": list(symbol.params)},
+                    )
+                )
+                self._declares(class_id, method_id)
+
+    def add_routes(self) -> None:
+        """Route nodes, plus the two framework edges a structural rule traverses.
+
+        `HANDLES` to the controller action and `PROTECTED_BY` to each middleware are the
+        edges docs/04-knowledge-graph names for the query "which routes reach a sink without
+        authentication", which is where the Laravel value concentrates.
+        """
+        middleware_seen: set[str] = set()
+        for route in self.project.routes:
+            fqn = _route_fqn(route)
+            route_id = self._id(_KIND_ROUTE, fqn)
+            named = [n for n in route.middleware if n != UNRESOLVED_MIDDLEWARE]
+            self.nodes.append(
+                NodeRow(
+                    id=route_id,
+                    kind=_KIND_ROUTE,
+                    name=route.uri,
+                    fqn=fqn,
+                    file_id=self.file_ids.get(route.span.file),
+                    **_span_columns(route.span),
+                    attrs={
+                        "uri": route.uri,
+                        "verbs": list(route.verbs),
+                        "action": route.action_fqn,
+                        # `->middleware($extra)`: the route table knows something guards this
+                        # route and not what. It is counted here rather than given a node,
+                        # because `UNRESOLVED_MIDDLEWARE` is a sentinel and not a name - one
+                        # node for it would make every unreadable middleware in the project
+                        # the same node, and a traversal would then read two unrelated routes
+                        # as sharing a guard. A count says "N guards I could not read", which
+                        # is the truth, and leaves the route reading as unprotected, which is
+                        # the direction structural.py already errs in.
+                        "unresolved_middleware": len(route.middleware) - len(named),
+                    },
+                )
+            )
+
+            if self.project.method(route.action_fqn) is not None:
+                self.edges.append(
+                    EdgeRow(route_id, self._id(_KIND_METHOD, route.action_fqn), "HANDLES")
+                )
+
+            for name in named:
+                mw_id = self._id(_KIND_MIDDLEWARE, name)
+                if name not in middleware_seen:
+                    middleware_seen.add(name)
+                    # ponytail: a middleware node is the string the route table names, not the
+                    # class that implements it. `auth` and `App\Http\Middleware\Authenticate`
+                    # are one thing and this graph holds two, so no edge reaches the
+                    # middleware's own code. Ceiling: a rule cannot ask what a middleware
+                    # *does*, only what a route is labelled with - enough for the
+                    # auth/authorization rules that read the label. Upgrade trigger: the
+                    # middleware alias map from app/Http/Kernel.php, which is where the
+                    # string-to-class resolution lives (docs/08-framework-adapters).
+                    self.nodes.append(
+                        NodeRow(id=mw_id, kind=_KIND_MIDDLEWARE, name=name, fqn=name)
+                    )
+                self.edges.append(EdgeRow(route_id, mw_id, "PROTECTED_BY"))
+
+    def add_calls(self) -> None:
+        """`CALLS` and `INSTANTIATES` edges, for the call sites that resolve statically.
+
+        One pass per file rather than one lookup per method: `Project.method_node` rescans a
+        whole file to find one declaration, and doing that per method is quadratic in the
+        file's method count for no gain when the walk is already standing on the tree.
+
+        ponytail: plain `function_call_expression` is skipped entirely, so `e($x)` and a call
+        to a project-level function look identical here - neither produces an edge. There are
+        no function nodes in this graph yet, only methods, so every such call would resolve to
+        nothing. Counting them as unresolved would be worse than skipping them: the overwhelming
+        majority are PHP builtins and Laravel helpers with no node to point at, and a gap
+        number that is mostly `count()` is one nobody reads. Upgrade trigger: function nodes,
+        which arrive with docs/07-call-graph in Milestone F alongside the facade map.
+        """
+        for rel_path, parsed in sorted(self.project.files.items()):
+            syms = self.project.symbols.get(rel_path)
+            if syms is None:
+                continue
+            for cls in find_all(parsed.tree.root_node, "class_declaration"):
+                name_node = cls.child_by_field_name("name")
+                if name_node is None:
+                    continue
+                short = node_text(name_node, parsed.source)
+                class_fqn = f"{syms.namespace}\\{short}" if syms.namespace else short
+                for method in find_all(cls, "method_declaration"):
+                    m_name = method.child_by_field_name("name")
+                    if m_name is None:
+                        continue
+                    caller = f"{class_fqn}::{node_text(m_name, parsed.source)}"
+                    self._calls_from(method, parsed, class_fqn, caller)
+
+    def _calls_from(
+        self, method: Node, parsed: ParsedFile, class_fqn: str, caller_fqn: str
+    ) -> None:
+        src_id = self._id(_KIND_METHOD, caller_fqn)
+        for node in find_all(method, "object_creation_expression"):
+            target = _resolved_class(self.project, parsed, node)
+            if target is None:
+                self.unresolved_calls += 1
+                continue
+            self.edges.append(
+                EdgeRow(src_id, self._id(_KIND_CLASS, target), "INSTANTIATES", resolution="static")
+            )
+        for kind in _CALL_NODES:
+            for node in find_all(method, kind):
+                resolved = self._call_target(node, parsed, class_fqn)
+                if resolved is None:
+                    self.unresolved_calls += 1
+                    continue
+                target_fqn, resolution = resolved
+                self.edges.append(
+                    EdgeRow(
+                        src_id,
+                        self._id(_KIND_METHOD, target_fqn),
+                        "CALLS",
+                        resolution=resolution,
+                    )
+                )
+
+    def _call_target(
+        self, call: Node, parsed: ParsedFile, class_fqn: str
+    ) -> tuple[str, str] | None:
+        """The method a call reaches and how it was resolved, or None if it did not resolve.
+
+        Every case here reads a name the source states outright - `$this`, `self`, `parent`, a
+        class name, or a typed property. Nothing is inferred from a return type or a variable's
+        history, so an edge that exists is one the code really has. Missing edges are the
+        accepted cost and `unresolved_calls` is where they are counted.
+        """
+        name_node = call.child_by_field_name("name")
+        if name_node is None:
+            return None
+        method_name = node_text(name_node, parsed.source)
+
+        receiver: str | None
+        if call.type == "scoped_call_expression":
+            scope = call.child_by_field_name("scope")
+            if scope is None:
+                return None
+            written = node_text(scope, parsed.source)
+            if written in ("self", "static"):
+                receiver, how = class_fqn, "self"
+            elif written == "parent":
+                info = self.project.classes.get(class_fqn)
+                receiver, how = (info.parent if info else None), "parent"
+            elif scope.type in ("name", "qualified_name"):
+                receiver = self.project.resolve_class_name(parsed.path, written)
+                how = "static"
+            else:
+                return None
+        else:
+            obj = call.child_by_field_name("object")
+            if obj is None:
+                return None
+            if obj.type == "variable_name" and node_text(obj, parsed.source) == "$this":
+                receiver, how = class_fqn, "self"
+            elif obj.type == "member_access_expression":
+                # `$this->service->handle()`: the property's declared type names the class,
+                # so this is still a stated fact rather than an inference. Any other receiver
+                # would need to know what an expression evaluates to, which this layer does not.
+                inner = obj.child_by_field_name("object")
+                prop = obj.child_by_field_name("name")
+                if inner is None or prop is None:
+                    return None
+                if node_text(inner, parsed.source) != "$this":
+                    return None
+                receiver = self.project.resolve_property_type(
+                    class_fqn, node_text(prop, parsed.source)
+                )
+                how = "property_type"
+            else:
+                return None
+
+        if receiver is None:
+            return None
+        declaring = _declaring_class(self.project, receiver, method_name)
+        if declaring is None:
+            return None
+        return f"{declaring}::{method_name}", how
+
+    def _declares(self, parent_id: str, child_id: str) -> None:
+        self.edges.append(EdgeRow(parent_id, child_id, "DECLARES"))
+
+
+def _route_fqn(route: Route) -> str:
+    """`GET,POST /orders/{id}` - a route's identity is its verbs and its URI together.
+
+    Two registrations of the same URI under different verbs are two routes with two
+    middleware stacks, and collapsing them onto one node would let a rule read the wrong
+    stack for a request.
+    """
+    return f"{','.join(route.verbs)} {route.uri}"
+
+
+def _span_columns(span: Span) -> dict[str, int]:
+    return {
+        "start_line": span.start_line,
+        "start_col": span.start_col,
+        "end_line": span.end_line,
+        "end_col": span.end_col,
+    }
+
+
+def _resolved_class(project: Project, parsed: ParsedFile, creation: Node) -> str | None:
+    for child in creation.children:
+        if child.type in ("name", "qualified_name"):
+            resolved = project.resolve_class_name(parsed.path, node_text(child, parsed.source))
+            return resolved if resolved in project.classes else None
+    return None
+
+
+def _declaring_class(project: Project, class_fqn: str, method: str) -> str | None:
+    """Walk the inheritance chain for the class that actually declares `method`.
+
+    An edge must point at a node that exists, and an inherited method has no node under the
+    subclass - it has one under whichever ancestor declares it. Returns None the moment the
+    chain leaves known classes, since a method inherited from `Illuminate\\...\\Model` is real
+    but has no node here, and pointing the edge at the subclass instead would invent one.
+
+    The `seen` set is not defensive padding: `class A extends B` and `class B extends A` both
+    parse, and the symbol table records exactly what it read, so this loop must terminate on
+    input the parser accepts.
+    """
+    seen: set[str] = set()
+    current: str | None = class_fqn
+    while current is not None and current not in seen:
+        seen.add(current)
+        info = project.classes.get(current)
+        if info is None:
+            return None
+        if method in info.methods:
+            return current
+        current = info.parent
+    return None
 
 
 def coverage(project: Project, stats: WalkStats) -> Coverage:

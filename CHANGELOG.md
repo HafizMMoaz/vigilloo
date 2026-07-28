@@ -93,6 +93,24 @@ Ruleset hash: `520914c8731f4c0d`.
   FQN and a discriminator and returns 16 hex characters, so the graph layer and every adapter
   above it derive the same ID for the same node without any of them owning the rule.
 
+- **Slice 9 - every scan writes its graph** (branch `slice-9-store-read-write`, TASK-010). The
+  in-memory `Project` is now flattened into the `nodes` and `edges` of
+  [docs/04-knowledge-graph](docs/04-knowledge-graph/README.md) and written inside the scan's own
+  transaction: one node per file, class, method, route and named middleware, and `DECLARES`,
+  `EXTENDS`, `HANDLES`, `PROTECTED_BY`, `CALLS` and `INSTANTIATES` between them. Node IDs are the
+  content-derived ones from `vigilloo.ids.node_id`, so re-scanning an unchanged project rewrites
+  the same rows; edges have no identity of their own and are replaced wholesale per scan rather
+  than accumulating a duplicate every run.
+
+  Call edges resolve only receivers the source states outright - `$this`, `self`, `parent`, a
+  class name, and a property whose declared type names a class, which is the constructor-injected
+  Laravel controller shape. A call reaching a facade, a variable receiver or a plain function
+  produces no edge and is counted instead, since a wrong edge is a false evidence path and a
+  missing one is only a missed finding. An inherited method's edge lands on the ancestor that
+  declares it, because that is the node that exists. A class whose parent is outside the project
+  keeps the parent's name in its node attributes, which is how `extends Model` survives having no
+  `EXTENDS` edge to carry it.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not
