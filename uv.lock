@@ -797,6 +797,7 @@ dev = [
     { name = "pip-audit" },
     { name = "pre-commit" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -815,6 +816,7 @@ dev = [
     { name = "pip-audit", specifier = ">=2.9,<2.10" },
     { name = "pre-commit", specifier = ">=4.4,<4.5" },
     { name = "pytest", specifier = ">=9.1,<9.2" },
+    { name = "pyyaml", specifier = ">=6.0,<6.1" },
     { name = "ruff", specifier = ">=0.16,<0.17" },
 ]
 
