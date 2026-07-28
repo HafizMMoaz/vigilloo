@@ -39,6 +39,9 @@ CREATE TABLE scans (
     duration_ms    INTEGER,
     manifest       TEXT              -- JSON: plugin versions, disabled rules, errors
 );
+-- "the latest scan of this project" is the entry point for `report` and `explain`, and
+-- without this it is a scan of every scan ever recorded for every project in the file.
+CREATE INDEX idx_scans_project ON scans(project_id, id);
 
 -- ─── Files ───────────────────────────────────────────────────────────────
 CREATE TABLE files (

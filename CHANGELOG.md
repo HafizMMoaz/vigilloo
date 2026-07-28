@@ -127,6 +127,20 @@ Ruleset hash: `520914c8731f4c0d`.
   Reading a finding whose path rows are missing raises instead of returning it, because a
   pathless finding is something the engine is not allowed to produce.
 
+- **Reading a previous scan without re-scanning it** (TASK-012). `project_id_for` ->
+  `latest_scan` -> `findings_for_scan` is the path `vigilloo report` and `vigilloo explain` will
+  take, and `findings_by_fingerprint` returns every scan's view of one finding, oldest first, for
+  "when did this get introduced". Latest is keyed on the scan's own id and not on `started_at`:
+  a start time is a finish time minus a measured duration, so a long scan can carry an earlier
+  start than a short one that ran after it.
+
+  This needed an index [docs/17-database](docs/17-database/README.md) did not define. The
+  document specifies the indexes the graph and finding readers need but none on `scans`, so
+  "the latest scan of this project" read every scan row of every project in the file. It gains
+  `idx_scans_project ON scans(project_id, id)`, and the schema version moves to 3. A test asserts
+  the query plans rather than assuming them - at fixture scale an unused index is still fast and
+  still correct, so nothing else would notice it being ignored.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not

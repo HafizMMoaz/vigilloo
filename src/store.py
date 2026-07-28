@@ -1,11 +1,15 @@
 """The SQLite store: `.vigilloo/vigilloo.db`, the graph tables, and one row per scan
 and per finding.
 
-Write-only (docs/plans/2026-07-27-slice-6-store-design.md): nothing reads history back yet,
-so the entry points are opening the database, recording a completed scan, and the batch
-node/edge inserts a graph write needs. Knows nothing about rules or taint - `engine_version`
-and `ruleset_hash` arrive as parameters, never computed here, so the store stays below the
-security engine in the layering CLAUDE.md describes.
+Writing is `record_scan`, which puts one scan, its files, its graph and its findings down in a
+single transaction. Reading is `project_id_for` -> `latest_scan` -> `findings_for_scan`, the
+path `vigilloo report` and `vigilloo explain` take, plus `findings_by_fingerprint` for the
+history of one finding across scans.
+
+Knows nothing about rules or taint - `engine_version` and `ruleset_hash` arrive as parameters
+and are never computed here, so the store stays below the security engine in the layering
+CLAUDE.md describes. It does know about the graph, because it is the graph's storage: it takes
+a `Project` and asks `vigilloo.graph` to flatten it, rather than learning how to do that here.
 """
 
 import json
@@ -20,7 +24,7 @@ from .models import EdgeRow, Finding, NodeRow
 from .workspace import Workspace
 
 _DB_FILENAME = "vigilloo.db"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 # Spec correction (docs/plans/2026-07-27-slice-6-store-design.md, "Spec correction" section):
 # docs/17-database still shows `findings.id TEXT PRIMARY KEY` plus a redundant
@@ -59,6 +63,9 @@ CREATE TABLE scans (
     duration_ms    INTEGER,
     manifest       TEXT
 );
+-- "the latest scan of this project" is what `report` and `explain` start from, and without
+-- this it reads every scan row of every project in the file to answer it.
+CREATE INDEX idx_scans_project ON scans(project_id, id);
 
 CREATE TABLE files (
     id          INTEGER PRIMARY KEY,
@@ -321,34 +328,89 @@ def _replace_graph(conn: sqlite3.Connection, project_id: int, rows: GraphRows) -
     insert_edges(conn, project_id, rows.edges)
 
 
-def findings_for_scan(conn: sqlite3.Connection, scan_id: int) -> list[StoredFinding]:
-    """Every finding one scan recorded, each with its complete evidence path.
+def project_id_for(conn: sqlite3.Connection, root: Path) -> int | None:
+    """The stored project for a root path, or None if it has never been scanned.
 
-    Two queries, not one per finding: docs/23-dev-guide section Performance names N+1 against
-    SQLite as what dominates, and a scan with 500 findings would otherwise be 501 round trips
-    to rebuild what one indexed scan of `evidence_paths` already has in order.
-
-    Ordered by source position rather than by severity. Ranking findings is the reporter's
-    decision and it changes; where a finding is does not, and a stable order is what makes two
-    reads of the same scan comparable (invariant 8).
+    Every other reader here takes a `project_id`, and a caller holding a directory has no
+    other way to get one. None rather than a raise: "this project has no history" is the
+    ordinary state of a first run, not an error.
     """
-    steps: dict[str, list[StoredStep]] = {}
+    row = conn.execute("SELECT id FROM projects WHERE root_path = ?", (str(root),)).fetchone()
+    return int(row[0]) if row else None
+
+
+def latest_scan(conn: sqlite3.Connection, project_id: int) -> int | None:
+    """The most recent scan of a project, or None if it has none.
+
+    Keyed on `id` rather than on `started_at`. `id` is assigned by the insert, so it orders
+    scans by when they were actually recorded; `started_at` is derived by subtracting the
+    measured duration from the finish time, so a long scan can carry an earlier start than a
+    short one that ran after it and "latest" would then mean the wrong row.
+    """
+    row = conn.execute(
+        "SELECT id FROM scans WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,)
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def findings_for_scan(conn: sqlite3.Connection, scan_id: int) -> list[StoredFinding]:
+    """Every finding one scan recorded, each with its complete evidence path."""
+    return _load_findings(conn, "fi.scan_id = ?", (scan_id,))
+
+
+def findings_by_fingerprint(
+    conn: sqlite3.Connection, project_id: int, fingerprint: str
+) -> list[StoredFinding]:
+    """Every scan's view of one finding, oldest scan first.
+
+    Fingerprint and not `id`, because this answers "is this the same problem I saw before"
+    across code that has moved. `id` changes the moment a line shifts; the fingerprint is what
+    a baseline and a `// vigilloo-ignore` are written against, and matching on the wrong one
+    is exactly the bug that resurrects a suppressed backlog after a reformat.
+    """
+    return _load_findings(
+        conn, "fi.project_id = ? AND fi.fingerprint = ?", (project_id, fingerprint)
+    )
+
+
+def _load_findings(
+    conn: sqlite3.Connection, where: str, params: tuple[object, ...]
+) -> list[StoredFinding]:
+    """Findings matching `where`, each with its path, in two queries rather than one per row.
+
+    docs/23-dev-guide section Performance names N+1 against SQLite as what dominates, and a
+    scan with 500 findings would otherwise be 501 round trips to rebuild what one pass over
+    `evidence_paths` already returns in order. The steps query reuses the same predicate
+    through a subquery, so a caller cannot ask for findings and paths that disagree.
+
+    Ordered by scan and then by source position, never by severity. Ranking findings is the
+    reporter's decision and it changes; where a finding is does not, and a stable order is
+    what makes two reads of the same rows comparable (invariant 8).
+
+    `where` is interpolated into the SQL and its values are not. It is private to this module
+    and every call site passes a literal - it is a fragment of a query, not data - while
+    everything that varies goes through `params` as a bound parameter. A scanner that built
+    its own queries by concatenating values would be an unusually poor advertisement.
+    """
+    steps: dict[tuple[int, str], list[StoredStep]] = {}
     for row in conn.execute(
-        "SELECT e.finding_id, e.step, e.role, f.path, e.line, e.snippet, e.note, e.node_id "
+        "SELECT e.scan_id, e.finding_id, e.step, e.role, f.path, e.line, e.snippet, e.note, "
+        "e.node_id "
         "FROM evidence_paths e LEFT JOIN files f ON f.id = e.file_id "
-        "WHERE e.scan_id = ? AND e.is_primary = 1 "
-        "ORDER BY e.finding_id, e.step",
-        (scan_id,),
+        "WHERE e.is_primary = 1 AND (e.scan_id, e.finding_id) IN "
+        f"(SELECT fi.scan_id, fi.id FROM findings fi WHERE {where}) "
+        "ORDER BY e.scan_id, e.finding_id, e.step",
+        params,
     ):
-        steps.setdefault(row[0], []).append(
+        steps.setdefault((row[0], row[1]), []).append(
             StoredStep(
-                step=row[1],
-                role=row[2],
-                file=None if row[3] is None else Path(row[3]),
-                line=row[4],
-                snippet=row[5] or "",
-                note=row[6] or "",
-                node_id=row[7],
+                step=row[2],
+                role=row[3],
+                file=None if row[4] is None else Path(row[4]),
+                line=row[5],
+                snippet=row[6] or "",
+                note=row[7] or "",
+                node_id=row[8],
             )
         )
 
@@ -357,18 +419,18 @@ def findings_for_scan(conn: sqlite3.Connection, scan_id: int) -> list[StoredFind
         "SELECT fi.id, fi.fingerprint, fi.scan_id, fi.rule_id, fi.severity, fi.title, "
         "fi.remediation, fi.cwe, f.path, fi.start_line, fi.first_seen_scan "
         "FROM findings fi LEFT JOIN files f ON f.id = fi.file_id "
-        "WHERE fi.scan_id = ? "
-        "ORDER BY f.path, fi.start_line, fi.id",
-        (scan_id,),
+        f"WHERE {where} "
+        "ORDER BY fi.scan_id, f.path, fi.start_line, fi.id",
+        params,
     ):
-        path = steps.get(row[0], [])
+        path = steps.get((row[2], row[0]), [])
         if not path:
             # Invariant 2: no path, no finding. Returning one anyway would hand a caller
             # something the engine is not allowed to produce, and the caller would have no way
             # to tell it from a finding whose path was genuinely empty - which cannot happen,
             # because Finding.__post_init__ refuses to construct one.
             raise ValueError(
-                f"finding {row[0]} in scan {scan_id} has no stored evidence path; "
+                f"finding {row[0]} in scan {row[2]} has no stored evidence path; "
                 f"{_DB_FILENAME} is corrupt"
             )
         findings.append(
