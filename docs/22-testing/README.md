@@ -105,6 +105,20 @@ codebase.
 that always scores perfectly cannot tell a working metric from a constant, and the file in it
 that does not parse is deliberate: fixing its syntax silently disables the test.
 
+### Which corpus the two gates run over
+
+`tests/test_coverage_gates.py` applies both floors, and CI runs it as a named step of its own so
+a failure reads as "coverage gate" rather than as one red test among hundreds.
+
+The gate is applied **per fixture, over the seeded fixtures only**, and `laravel-unparseable` is
+excluded by name. That fixture scores 66.7% by design, so gating it would mean either a build
+that is red forever or a parse floor low enough to clear 66.7%, which gates nothing. Its
+exclusion is asserted rather than assumed: a test fails if its broken file ever starts parsing.
+
+Per fixture rather than over pooled totals, because it is the stricter reading - a pooled ratio
+of numbers each at or above the floor is itself at or above it - and because a failure that
+names the fixture is one somebody can act on.
+
 ## Rule testing
 
 Every rule ships with positive and negative cases in the same file as its definition. A rule
