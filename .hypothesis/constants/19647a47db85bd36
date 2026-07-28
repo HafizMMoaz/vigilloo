@@ -1,0 +1,4 @@
+# file: /Users/Apple/Projects/vigilloo/.claude/worktrees/agent-a0826f949811f06de/.venv/bin/pytest
+# hypothesis_version: 6.145.1
+
+['-script.pyw', '.exe', '__main__']

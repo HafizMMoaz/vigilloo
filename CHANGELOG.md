@@ -81,6 +81,18 @@ Ruleset hash: `520914c8731f4c0d`.
   findings. Nothing reads this history back yet; the readers (`report --compare`, baselines) are
   their own slices.
 
+- **Slice 8 - the graph tables** (branch `slice-8-graph-ids`, design
+  [`docs/plans/2026-07-28-slice-8-graph-ids-design.md`](docs/plans/2026-07-28-slice-8-graph-ids-design.md)).
+  The store gained `nodes` and `edges` with the five indexes from
+  [docs/17-database](docs/17-database/README.md), and batch insert helpers that write a whole
+  batch in one statement rather than one per row. Nothing writes graph rows into them yet; that
+  is the slice that turns the in-memory `Project` into nodes and edges.
+
+  The same slice added `vigilloo.ids.node_id`, the content-derived node identity invariant 3
+  requires. It knows nothing about PHP, Laravel or the store: it takes a project, a kind, an
+  FQN and a discriminator and returns 16 hex characters, so the graph layer and every adapter
+  above it derive the same ID for the same node without any of them owning the rule.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not
@@ -92,6 +104,21 @@ Ruleset hash: `520914c8731f4c0d`.
   "N call site(s) could not be resolved" line, which said nothing about how many there were.
 
 ### Changed
+
+- **The node ID scheme no longer contains the span**, correcting
+  [docs/04-knowledge-graph](docs/04-knowledge-graph/README.md) section "Node model". That
+  document specified `sha1(project_id : kind : fqn : span)` while requiring in the same section
+  that IDs be stable across whitespace and comment changes. Both cannot hold: inserting one
+  comment moves the span of every node below it, so a reformat with no code change would move
+  every ID and un-suppress every finding in the file. A `discriminator` derived from ordinal
+  position within the parent replaces it. The span is still on the node, it just is not
+  identity.
+
+- **The store schema is version 2, and a database at any other version is now refused** with an
+  error naming the file to delete. There is no migration runner yet, so opening a version 1
+  `.vigilloo/vigilloo.db` would otherwise fail much later with "no such table: nodes". Delete
+  the file and re-scan; nothing has been released, so no findings history exists that a
+  migration would have had to preserve.
 
 - The specification and the engine were consolidated into a single repository, and `src/` was
   made the `vigilloo` package itself rather than a directory containing it. CI builds the wheel

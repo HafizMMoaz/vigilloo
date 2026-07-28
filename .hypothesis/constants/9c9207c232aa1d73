@@ -1,0 +1,4 @@
+# file: /Users/Apple/Projects/vigilloo/.claude/worktrees/agent-a76cd0ab00f3770e5/src/taint.py
+# hypothesis_version: 6.145.1
+
+['$', '$this->', '(', ')', ',', '::', 'HTTP entry point', 'Request', '\\', 'arguments', 'cast_expression', 'double', 'echo_statement', 'entry', 'expression_statement', 'float', 'function', 'int', 'integer', 'left', 'model', 'name', 'object', 'propagator', 'qualified_name', 'request', 'return_statement', 'right', 'scope', 'sink', 'source', 'type', 'value', 'variable_name']

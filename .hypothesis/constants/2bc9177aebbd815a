@@ -1,0 +1,4 @@
+# file: /Users/Apple/Projects/vigilloo/.claude/worktrees/agent-a76cd0ab00f3770e5/src/rules.py
+# hypothesis_version: 6.145.1
+
+['CWE-639', 'CWE-79', 'CWE-89', 'CWE-915', 'Cross-Site Scripting', 'Mass Assignment', 'SQL Injection', 'critical', 'high']

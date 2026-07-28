@@ -1,0 +1,293 @@
+# Every finding this fixture must produce, and every case that must stay silent.
+#
+# Format: docs/22-testing section "The benchmark corpus". Loader and checker: tests/harness.py.
+# The list is exhaustive in both directions - a finding that is not declared here fails the
+# build just as a declared finding that stops appearing does.
+#
+# `path:` is the complete evidence path, role by role. `symbol:` and `note:` are substrings of
+# the step's snippet and note. Where a step names a file and a line, it is because that is the
+# line the developer has to edit, which is generally not the line the finding is reported on.
+
+findings:
+  # ---- laravel.missing-authorization -------------------------------------------------
+  # Authenticated, model-bound, and nothing authorizes it. InvoicePolicy exists and is
+  # never consulted, which is what the policy step is for.
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 22
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 26
+        symbol: 'GET|HEAD /invoices/{invoice}'
+        note: 'authenticated by: auth'
+      - role: binding
+        symbol: 'Invoice $invoice'
+        note: 'resolved from the URL by route-model binding'
+      - role: policy
+        file: app/Policies/InvoicePolicy.php
+        symbol: 'App\Policies\InvoicePolicy'
+        note: 'exists and this action never consults it'
+      - role: gap
+        symbol: 'public function show(Invoice $invoice)'
+        note: 'no authorize(), no can: middleware, no Gate check'
+
+  # No ReceiptPolicy exists anywhere, so there is no policy step. A step that said
+  # "nothing here" would be worse than no step.
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 28
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 27
+        note: 'authenticated by: auth'
+      - role: binding
+        symbol: 'Receipt $receipt'
+      - role: gap
+        note: 'no policy is defined for App\Models\Receipt'
+
+  # Validation is not authorization: StubInvoiceRequest::authorize() returns a bare true,
+  # which is the make:request stub and must not clear the rule.
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 65
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 35
+        note: 'authenticated by: auth'
+      - role: binding
+        symbol: 'Invoice $invoice'
+      - role: policy
+        symbol: 'App\Policies\InvoicePolicy'
+      - role: gap
+        symbol: 'viaStubRequest(StubInvoiceRequest $request, Invoice $invoice)'
+
+  # Route::middleware(['auth'])->group(...). Without group middleware being read, a
+  # typical routes/api.php produces nothing at all.
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 80
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 50
+        symbol: '/invoices/{invoice}/grouped'
+        note: 'authenticated by: auth'
+      - role: binding
+        symbol: 'Invoice $invoice'
+      - role: policy
+        symbol: 'App\Policies\InvoicePolicy'
+      - role: gap
+        symbol: 'public function inGroup(Invoice $invoice)'
+
+  # ---- laravel.mass-assignment -------------------------------------------------------
+  # $guarded = [] on the model. The model step carries the line to edit, in another file.
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 15
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 14
+        symbol: 'POST /users'
+      - role: source
+        symbol: '$request->all()'
+        note: 'attacker-controlled request data'
+      - role: model
+        file: app/Models/User.php
+        line: 10
+        symbol: 'App\Models\User'
+        note: '$guarded = [] - mass assignment protection disabled'
+      - role: sink
+        symbol: 'User::create($request->all())'
+
+  # $fillable allowlists a privileged column, so an allowlist is not automatically safe.
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 25
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 16
+      - role: source
+        symbol: '$request->all()'
+      - role: model
+        file: app/Models/Profile.php
+        line: 10
+        symbol: 'App\Models\Profile'
+        note: '$fillable allows the privileged column is_admin'
+      - role: sink
+        symbol: 'Profile::create($request->all())'
+
+  # forceFill() bypasses both $fillable and $guarded, which is its purpose. Two source
+  # steps: the receiver is looked up with request data before the write happens.
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 47
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 20
+      - role: source
+        line: 45
+        symbol: "Post::find($request->input('id'))"
+      - role: source
+        line: 47
+        symbol: '$request->all()'
+      - role: model
+        file: app/Models/Post.php
+        line: 8
+        note: 'forceFill() bypasses both $fillable and $guarded'
+      - role: sink
+        symbol: '$post->forceFill($request->all())'
+
+  # $user->update(...) where $user comes from the action signature, not from a static call.
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 52
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 21
+        symbol: 'PUT /users/{user}'
+      - role: source
+        symbol: '$request->all()'
+      - role: model
+        file: app/Models/User.php
+        line: 10
+        symbol: 'App\Models\User'
+      - role: sink
+        symbol: '$user->update($request->all())'
+
+  # ---- php.sql-injection -------------------------------------------------------------
+  # Interprocedural: the source is in the controller, the sink is in the repository.
+  - rule: php.sql-injection
+    file: app/Repositories/OrderRepository.php
+    line: 12
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 10
+        symbol: 'POST /orders/search'
+      - role: source
+        file: app/Http/Controllers/OrderController.php
+        line: 17
+        symbol: "$sort = $request->input('sort')"
+      - role: propagator
+        symbol: '$this->orders->search($sort)'
+        note: 'argument 0 into App\Repositories\OrderRepository::search'
+      - role: sink
+        symbol: 'orderByRaw'
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.xss -----------------------------------------------------------------------
+  # The sink is in the template, reached through view() data.
+  - rule: php.xss
+    file: resources/views/orders/show.blade.php
+    line: 2
+    severity: high
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 12
+        symbol: 'GET|HEAD /orders/display'
+      - role: source
+        file: app/Http/Controllers/OrderController.php
+        line: 29
+      - role: propagator
+        symbol: "view('orders.show', compact('sort'))"
+        note: 'view data into resources/views/orders/show.blade.php'
+      - role: sink
+        symbol: '{!! $sort !!}'
+        note: 'raw echo, no HTML escaping'
+
+must_not_find:
+  # ---- mass assignment: the model configuration is read, not the word "create" --------
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 20
+    reason: 'Post::create() with $fillable = [title, body] - a narrow allowlist'
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 30
+    reason: '$request->only([...]) is an allowlist the developer wrote'
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 35
+    reason: '$request->validated() has passed a form request'
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 40
+    reason: 'updateOrCreate() argument 0 is the lookup; only argument 1 is written'
+  - rule: laravel.mass-assignment
+    file: app/Http/Controllers/UserController.php
+    line: 57
+    reason: 'route-model-bound receiver, but Post has a narrow $fillable'
+
+  # ---- missing authorization: every way an action can already be authorized ----------
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 33
+    reason: '$this->authorize(view, $invoice)'
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 40
+    reason: "can:view,invoice middleware on the route"
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 45
+    reason: 'Gate::denies() then abort(403)'
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 54
+    reason: '$request->user()->cannot() then abort(403)'
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 70
+    reason: 'CheckedInvoiceRequest::authorize() actually checks the user'
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 75
+    reason: 'the route is not authenticated, so there is no identity to authorize'
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 85
+    reason: '->middleware($extra) is unreadable, which means "cannot tell", never "unguarded"'
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/InvoiceController.php
+    line: 90
+    reason: 'Token is not an Eloquent model, so there is no route-model binding'
+  - rule: laravel.missing-authorization
+    file: app/Http/Controllers/ReceiptController.php
+    reason: 'authorizeResource() in the constructor authorizes every action of the controller'
+
+  # A form request that does authorize properly must never itself be reported. Stated as a
+  # whole-file rule rather than a line, so a rule that starts walking into form requests is
+  # caught wherever in the file it lands.
+  - file: app/Http/Requests/CheckedInvoiceRequest.php
+    reason: 'the negative half of the stub-versus-real authorize() pair'
+
+  # ---- taint: the safe half of each pair ---------------------------------------------
+  - rule: php.sql-injection
+    file: app/Repositories/OrderRepository.php
+    line: 17
+    reason: "orderBy('created_at', 'desc') is parameterised and takes no request data"
+  - rule: php.xss
+    file: resources/views/orders/show.blade.php
+    line: 3
+    reason: '{{ $sort }} is escaped by Blade'
+  - rule: php.xss
+    file: resources/views/orders/show.blade.php
+    line: 4
+    reason: '{!! e($sort) !!} - e() clears the html kind'
