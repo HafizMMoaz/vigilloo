@@ -21,7 +21,7 @@ summarises and points here.
 | Taint analysis with the full PHP/Laravel source-sink-sanitizer vocabulary | partial | Kind-based interprocedural taint for `sql`, `html` and `mass_assign`. The other nine kinds in [06-taint-analysis](../06-taint-analysis/README.md) arrive with their own sinks and sanitizers. |
 | Deterministic rule set: injection, XSS, access control, mass assignment, CSRF, secrets, misconfiguration, Composer advisories | partial | Four rules, each with a complete evidence path: `php.sql-injection`, `php.xss`, `laravel.mass-assignment`, `laravel.missing-authorization`. CSRF, secrets, misconfiguration and Composer advisories are spec only. |
 | `vigilloo scan \| review \| graph \| explain \| deps \| secrets \| baseline \| doctor \| init` | partial | `vigilloo scan` only. |
-| Markdown, JSON, terminal reports | partial | Terminal report only. |
+| Markdown, JSON, terminal reports | partial | Terminal report only, and it opens with the scan's own coverage: the parse success and call resolution rates, with the counts they came from. Markdown and JSON are spec only. |
 | Incremental scanning | spec only | The store keeps the per-file digest the incrementality key needs; no scan reads it. |
 
 **Ships when:** the [22-testing](../22-testing/README.md) corpus gates pass - 100% of seeded

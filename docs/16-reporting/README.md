@@ -20,7 +20,8 @@ CI pipeline, and the auditor.
 Every format carries the same content, ordered so the reader gets the answer before the detail:
 
 1. **Summary** - counts by severity, scan duration, commit, engine and ruleset version
-2. **Coverage** - files parsed / partial / failed, unresolved call edges, analysis gaps
+2. **Coverage** - files parsed / partial / failed, unresolved call edges, analysis gaps, and the
+   parse success and call resolution rates over them ([22-testing](../22-testing/README.md))
 3. **Findings** - grouped by severity, then by file
 4. **Dependencies** - vulnerable packages, ranked by reachability
 5. **Attack surface** - route inventory with auth status

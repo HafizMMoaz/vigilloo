@@ -8,9 +8,9 @@ import typer
 from rich.console import Console
 
 from . import __version__, store
-from .graph import load_project
+from .graph import coverage, load_project
 from .models import WalkStats
-from .report import render
+from .report import render, render_coverage
 from .rules import RULESET_HASH, scan_project
 from .workspace import Workspace
 
@@ -86,9 +86,11 @@ def scan(
 
     findings = scan_project(project, stats)
 
-    if stats.unresolved:
-        console.print(f"[yellow]{stats.unresolved} call site(s) could not be resolved.[/yellow]")
-
+    # Coverage is measured only once the analysis has run, because the walk is
+    # what discovers the call sites, but it is printed ahead of the findings:
+    # docs/16-reporting puts it second in every format, before them, so a clean
+    # result can never be read without the size of the blind spot beside it.
+    render_coverage(coverage(project, stats), console)
     render(findings, console)
 
     # The findings are already correct and already on screen; the store is history for the next

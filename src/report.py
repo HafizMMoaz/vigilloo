@@ -6,7 +6,7 @@ every other scanner already prints.
 
 from rich.console import Console
 
-from .models import Finding
+from .models import Coverage, Finding
 
 _SEVERITY_STYLE = {
     "critical": "bold red",
@@ -26,6 +26,32 @@ _ROLE_LABEL = {
     "policy": "policy",
     "gap": "gap",
 }
+
+
+def render_coverage(coverage: Coverage, console: Console) -> None:
+    """Print how much of the project the scan understood.
+
+    Printed on every scan, complete or not, and printed before the findings.
+    docs/16-reporting puts coverage second in every format, ahead of the
+    findings, for the reason invariant 4 gives: a report claiming a clean result
+    has to show what it actually managed to look at. Printing it only when it is
+    imperfect would teach readers that silence means 100%, and silence is
+    exactly what a 40%-blind scan produces too.
+
+    Both rates are formatted to one decimal place. That is a deterministic
+    rendering of the ratio (invariant 8) rather than the platform's float repr,
+    and the counts either side of it are the exact values the rate came from.
+    """
+    perfect = coverage.parse_success_rate == 1.0 and coverage.call_resolution_rate == 1.0
+    style = "dim" if perfect else "yellow"
+    console.print()
+    console.print(
+        f"[{style}]Coverage: "
+        f"{coverage.files_parsed}/{coverage.files_discovered} files parsed "
+        f"({coverage.parse_success_rate:.1%}), "
+        f"{coverage.calls_resolved}/{coverage.calls_attempted} call sites resolved "
+        f"({coverage.call_resolution_rate:.1%})[/{style}]"
+    )
 
 
 def render(findings: list[Finding], console: Console) -> None:

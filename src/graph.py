@@ -12,7 +12,7 @@ from tree_sitter import Node
 
 from .laravel.blade import to_php
 from .laravel.routes import extract_routes
-from .models import Route, Symbol, WalkStats
+from .models import Coverage, Route, Symbol, WalkStats
 from .parser import ParsedFile, find_all, node_span, parse_php, parse_source
 from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
 
@@ -171,3 +171,28 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
 
     project.routes.sort(key=lambda r: (str(r.span.file), r.span.start_line))
     return project
+
+
+def coverage(project: Project, stats: WalkStats) -> Coverage:
+    """Measure what this scan could see, from what the scan already recorded.
+
+    Both halves are counted where they happen and only totalled here: the
+    parse half from the project's own file lists, the resolution half from the
+    walk's counter. A second pass over the tree to count files again could
+    disagree with the lists the analysis actually used, and a coverage number
+    that does not describe the analysis it is printed beside is worse than none.
+
+    Every discovered file is in exactly one of three states - parsed, parsed
+    with syntax errors, or unreadable - so the three counts sum to the total.
+    `failed` holds files that could not be read at all and are therefore absent
+    from `files` and `blade`; `unparsed` holds files that were read, kept and
+    analysed as far as their syntax allowed, so they are present in both.
+    """
+    read = len(project.files) + len(project.blade)
+    return Coverage(
+        files_discovered=read + len(project.failed),
+        files_unreadable=len(project.failed),
+        files_with_errors=len(project.unparsed),
+        calls_resolved=stats.resolved,
+        calls_unresolved=stats.unresolved,
+    )

@@ -43,6 +43,18 @@ def _giveup(stats: WalkStats | None) -> None:
         stats.unresolved += 1
 
 
+def _followed(stats: WalkStats | None) -> None:
+    """Record one more call site the walk did follow.
+
+    Every _giveup below has one of these as its opposite branch, because the
+    give-ups alone are a numerator with no denominator: "eleven unresolved" is
+    a catastrophe in a project with twelve call sites and a rounding error in
+    one with four thousand.
+    """
+    if stats is not None:
+        stats.resolved += 1
+
+
 def _var_name(node: Node, source: bytes) -> str:
     return node_text(node, source).lstrip("$")
 
@@ -311,7 +323,10 @@ def _walk_template(
     # here because the caller already confirmed this template was handed
     # tainted data, so a loop directive in its text is a real, silent gap.
     # Counted once per template, not once per directive or echo, so the
-    # counter still means "one lost trail" and not "how many loops".
+    # counter still means "one lost trail" and not "how many loops". It is the
+    # one give-up with no _followed counterpart: resolving the template already
+    # counted as a success at the view() call, and this is the walk failing to
+    # follow the data one step further inside it.
     #
     # ponytail: loop variables are not aliased to the collection's kinds.
     # Upgrade path is a small alias pass in _walk_template once a fixture
@@ -523,6 +538,7 @@ def _walk_method(
             if not passed:
                 continue
 
+            _followed(stats)
             callee_tainted = {
                 callee.params[i]: kinds for i, kinds in passed.items() if i < len(callee.params)
             }
@@ -577,6 +593,7 @@ def _walk_method(
                 _giveup(stats)
                 continue
 
+            _followed(stats)
             step = PathStep(
                 role="propagator",
                 span=node_span(stmt, parsed.path),
@@ -598,6 +615,7 @@ def find_taint_paths(
         if not route.action_fqn:
             _giveup(stats)
             continue
+        _followed(stats)
         entry = PathStep(
             role="entry",
             span=route.span,

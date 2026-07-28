@@ -149,6 +149,13 @@ def extract_routes(
                 stats.unresolved += 1
             continue
 
+        # The opposite branch of the two give-ups above: a Route::verb call
+        # whose shape the adapter did understand. Without it the unresolved
+        # count has no denominator and the rate in the report would have to be
+        # estimated (docs/22-testing, section "Metrics gated in CI").
+        if stats is not None:
+            stats.resolved += 1
+
         routes.append(
             Route(
                 uri=_string_literal(args[0], source),

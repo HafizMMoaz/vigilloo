@@ -81,6 +81,16 @@ Ruleset hash: `520914c8731f4c0d`.
   findings. Nothing reads this history back yet; the readers (`report --compare`, baselines) are
   their own slices.
 
+- **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
+  from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
+  and call-graph resolution - each with the counts it was computed from, printed whether or not
+  they are flattering and ahead of the findings, per invariant 4 and
+  [docs/16-reporting](docs/16-reporting/README.md). Both are ratios of what the scan recorded
+  while running, never estimates: the walk now counts the name resolutions it followed as well as
+  the ones it gave up on, because a give-up count with no denominator cannot be read. Zero
+  attempts is 1.0, a decision documented at the point it is made. This replaces the bare
+  "N call site(s) could not be resolved" line, which said nothing about how many there were.
+
 ### Changed
 
 - The specification and the engine were consolidated into a single repository, and `src/` was
