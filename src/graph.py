@@ -15,8 +15,16 @@ from tree_sitter import Node
 from .ids import node_id
 from .laravel.blade import to_php
 from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
-from .models import Coverage, EdgeRow, NodeRow, Route, Span, Symbol, WalkStats
-from .parser import ParsedFile, find_all, node_span, node_text, parse_php, parse_source
+from .models import Coverage, EdgeRow, NodeRow, ParseFailure, Route, Span, Symbol, WalkStats
+from .parser import (
+    ParsedFile,
+    error_constructs,
+    find_all,
+    node_span,
+    node_text,
+    parse_php,
+    parse_source,
+)
 from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
 
 _EXCLUDED_DIRS = {"vendor", "node_modules", "storage", "bootstrap", ".git"}
@@ -33,6 +41,12 @@ class Project:
     blade_lines: dict[Path, list[str]] = field(default_factory=dict)
     failed: list[Path] = field(default_factory=list)
     unparsed: list[Path] = field(default_factory=list)
+    # The same parse failures as `unparsed`, one entry per broken construct
+    # rather than one per file. Kept beside that list and not folded into it:
+    # `unparsed` is the unit the parse rate divides by, so one file must stay
+    # one element there however many of its methods broke. A file appears in
+    # both, or in neither.
+    parse_failures: list[ParseFailure] = field(default_factory=list)
     # sha256 of what was actually analysed, keyed like `files`/`blade`. Kept
     # separate from ParsedFile.source: for Blade that field holds the
     # rewritten PHP, not the template, so it is not a safe stand-in for the
@@ -135,9 +149,13 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
 
         # A syntax error degrades this file, it never aborts the scan - but
         # the gap in coverage must still be visible, so it is recorded even
-        # though whatever symbols could be extracted are kept and used.
+        # though whatever symbols could be extracted are kept and used. The
+        # constructs are collected here, where the path is already relative to
+        # the root, so the failures carry the same file spelling as every span
+        # and no second normalisation can drift from the one above.
         if parsed.has_errors:
             project.unparsed.append(rel_path)
+            project.parse_failures.extend(error_constructs(parsed))
 
         project.files[rel_path] = parsed
         syms = extract_symbols(parsed)
@@ -166,8 +184,13 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         parsed = parse_source(rel_path, to_php(text).encode("utf-8"))
 
         # A template that will not parse degrades this file, never the scan.
+        # The constructs come from the rewritten PHP rather than the template,
+        # so a Blade failure usually lands on the file rather than on a name -
+        # a template has no methods to name unless the author wrote one in a
+        # @php block, and that one is genuinely theirs.
         if parsed.has_errors:
             project.unparsed.append(rel_path)
+            project.parse_failures.extend(error_constructs(parsed))
 
         project.blade[rel_path] = parsed
         project.blade_lines[rel_path] = text.splitlines()
@@ -591,6 +614,10 @@ def coverage(project: Project, stats: WalkStats) -> Coverage:
     `failed` holds files that could not be read at all and are therefore absent
     from `files` and `blade`; `unparsed` holds files that were read, kept and
     analysed as far as their syntax allowed, so they are present in both.
+
+    The failure detail is carried through sorted and deduplicated, and it is
+    only detail: every count above still comes from a file list, so naming the
+    broken methods cannot move either rate by so much as one file.
     """
     read = len(project.files) + len(project.blade)
     return Coverage(
@@ -599,4 +626,5 @@ def coverage(project: Project, stats: WalkStats) -> Coverage:
         files_with_errors=len(project.unparsed),
         calls_resolved=stats.resolved,
         calls_unresolved=stats.unresolved,
+        parse_failures=tuple(sorted(set(project.parse_failures))),
     )

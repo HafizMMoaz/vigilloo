@@ -27,6 +27,14 @@ _ROLE_LABEL = {
     "gap": "gap",
 }
 
+# How many broken constructs the coverage block names before it starts counting
+# instead. A project with four hundred parse failures has a systemic problem -
+# the wrong PHP version, a vendored directory that should have been excluded -
+# and printing four hundred lines above the findings buries the findings without
+# telling the reader anything the first few and a total did not. Matches the cap
+# cli.py already uses for the unparsed-file list.
+_FAILURES_SHOWN = 5
+
 
 def render_coverage(coverage: Coverage, console: Console) -> None:
     """Print how much of the project the scan understood.
@@ -41,6 +49,14 @@ def render_coverage(coverage: Coverage, console: Console) -> None:
     Both rates are formatted to one decimal place. That is a deterministic
     rendering of the ratio (invariant 8) rather than the platform's float repr,
     and the counts either side of it are the exact values the rate came from.
+
+    A second line names the constructs that failed to parse, when any are
+    recorded. Per-construct detail is only worth collecting if somebody sees it:
+    "2/3 files parsed" tells a reader a gap exists, "method
+    ReportController::index" tells them where to look. It is capped rather than
+    complete, because a coverage block that can be hundreds of lines long is one
+    a reader learns to scroll past, and the number not shown is stated so the
+    cap cannot read as the total.
     """
     perfect = coverage.parse_success_rate == 1.0 and coverage.call_resolution_rate == 1.0
     style = "dim" if perfect else "yellow"
@@ -52,6 +68,12 @@ def render_coverage(coverage: Coverage, console: Console) -> None:
         f"{coverage.calls_resolved}/{coverage.calls_attempted} call sites resolved "
         f"({coverage.call_resolution_rate:.1%})[/{style}]"
     )
+
+    if coverage.parse_failures:
+        shown = "; ".join(f.label for f in coverage.parse_failures[:_FAILURES_SHOWN])
+        hidden = len(coverage.parse_failures) - _FAILURES_SHOWN
+        more = f" and {hidden} more" if hidden > 0 else ""
+        console.print(f"[{style}]Parse errors in: {shown}{more}[/{style}]")
 
 
 def render(findings: list[Finding], console: Console) -> None:

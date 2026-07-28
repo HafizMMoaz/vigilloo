@@ -22,6 +22,12 @@ Every format carries the same content, ordered so the reader gets the answer bef
 1. **Summary** - counts by severity, scan duration, commit, engine and ruleset version
 2. **Coverage** - files parsed / partial / failed, unresolved call edges, analysis gaps, and the
    parse success and call resolution rates over them ([22-testing](../22-testing/README.md))
+   - Each file that failed to parse is named down to the **smallest enclosing construct** -
+     `method OrderController::search`, not just the file - so the gap points at a cause a reader
+     can open. Where the error belongs to no named construct the file is reported and no name is
+     invented. The list is capped, with the number not shown stated after it, so a broadly broken
+     codebase cannot bury the findings under its own coverage block. The rates themselves are
+     unaffected: they divide by files, and one file with four broken methods is one file.
 3. **Findings** - grouped by severity, then by file
 4. **Dependencies** - vulnerable packages, ranked by reachability
 5. **Attack surface** - route inventory with auth status
