@@ -13,6 +13,7 @@ from .models import WalkStats
 from .report import render, render_coverage
 from .rules import RULESET_HASH, scan_project
 from .workspace import Workspace
+from .workspace.migrations import SchemaTooNewError
 
 app = typer.Typer(
     name="vigilloo",
@@ -113,6 +114,16 @@ def scan(
             )
         finally:
             conn.close()
+    except SchemaTooNewError as exc:
+        # Not a warning, unlike everything below it. A full disk is this run's bad luck and the
+        # next run may well succeed; a workspace written by a newer build will refuse this one
+        # every time, and every scan from here on would silently record nothing. docs/19-cli
+        # gives 4 to a configuration error, which is what this is: the workspace is intact and
+        # the tool pointed at it is the wrong version. The exit code overrides the findings'
+        # own, because "you are running the wrong build" outranks how many findings that build
+        # managed to produce.
+        typer.secho(f"Error: {exc}", err=True, fg="red")
+        raise typer.Exit(4) from exc
     except (sqlite3.Error, OSError) as exc:
         console.print(f"[yellow]Scan history not recorded: {exc}[/yellow]")
 
