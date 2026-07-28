@@ -1,5 +1,14 @@
+"""The `vigilloo scan` command itself.
+
+Which findings the fixture produces is declared in
+`tests/fixtures/laravel-minimal/expected.yml` and asserted by `tests/test_corpus.py`. What
+is left here is the command's own behaviour: exit codes, usage errors, and whether the
+report renders everything a finding carries.
+"""
+
 from pathlib import Path
 
+from harness import scan_fixture
 from typer.testing import CliRunner
 
 from vigilloo.cli import app
@@ -7,26 +16,27 @@ from vigilloo.cli import app
 runner = CliRunner()
 
 
-def test_scan_reports_the_finding_with_its_full_path(fixture_project: Path) -> None:
+def test_scan_renders_every_step_of_every_finding(fixture_project: Path) -> None:
+    """The evidence path is the product, so all of it has to reach the terminal.
+
+    Derived from the scan rather than hard-coded: this is a claim about report.py, and
+    pinning it to particular fixture findings would make it a second, weaker copy of
+    expected.yml that goes stale the first time the fixture grows a case.
+    """
     result = runner.invoke(app, ["scan", str(fixture_project)])
     out = result.stdout
+    findings = scan_fixture(fixture_project)
+    assert findings
 
-    assert "SQL Injection" in out
-    assert "CWE-89" in out
-    assert "OrderRepository.php" in out
-    assert "/orders/search" in out
-    assert "orderByRaw" in out
-    assert "php.sql-injection" in out
+    for finding in findings:
+        assert finding.title in out
+        assert finding.rule_id in out
+        for cwe in finding.cwe:
+            assert cwe in out
+        for step in finding.evidence_path:
+            assert f"{step.span.file.name}:{step.span.start_line}" in out
 
-
-def test_scan_reports_the_xss_finding(fixture_project: Path) -> None:
-    result = runner.invoke(app, ["scan", str(fixture_project)])
-    out = result.stdout
-
-    assert "Cross-Site Scripting" in out
-    assert "CWE-79" in out
-    assert "show.blade.php" in out
-    assert "10 findings" in out
+    assert f"{len(findings)} findings" in out
 
 
 def test_scan_exit_code_is_one_when_findings_exist(fixture_project: Path) -> None:
