@@ -22,9 +22,9 @@ from pathlib import Path
 from .graph import GraphRows, NodeLocator, Project, graph_rows
 from .models import EdgeRow, Finding, NodeRow
 from .workspace import Workspace
+from .workspace.migrations import SCHEMA_VERSION, migrate
 
 _DB_FILENAME = "vigilloo.db"
-_SCHEMA_VERSION = 3
 
 # Spec correction (docs/plans/2026-07-27-slice-6-store-design.md, "Spec correction" section):
 # docs/17-database still shows `findings.id TEXT PRIMARY KEY` plus a redundant
@@ -150,7 +150,7 @@ CREATE TABLE evidence_paths (
     FOREIGN KEY (scan_id, finding_id) REFERENCES findings(scan_id, id) ON DELETE CASCADE,
     UNIQUE (scan_id, finding_id, step, is_primary)
 );
-INSERT INTO schema_meta (key, value) VALUES ('version', '{_SCHEMA_VERSION}');
+INSERT INTO schema_meta (key, value) VALUES ('version', '{SCHEMA_VERSION}');
 COMMIT;
 """
 # schema_meta's table itself is created separately, before this script runs, so its version row
@@ -159,6 +159,11 @@ COMMIT;
 # same transaction as every CREATE TABLE - a process killed mid-script must roll back to nothing
 # rather than leave tables with no version row, which would wedge every later connect() against
 # "table already exists" with no schema_meta entry to tell it the schema is already there.
+#
+# This script is the schema for a database that does not exist yet; vigilloo.workspace.migrations
+# is the same schema built up a version at a time for one that does. Both must produce the same
+# tables, and only tests/test_migrations.py enforces that - a new migration lands here too, or a
+# migrated workspace and a fresh one disagree about what version 4 means.
 
 
 @dataclass(frozen=True)
@@ -206,7 +211,11 @@ class StoredFinding:
 
 
 def connect(workspace: Workspace) -> sqlite3.Connection:
-    """Open `.vigilloo/vigilloo.db`, apply the pragmas, create the schema if absent."""
+    """Open `.vigilloo/vigilloo.db`, apply the pragmas, create or migrate the schema.
+
+    Raises `SchemaTooNewError` if the file was written by a later build than this one; the CLI
+    turns that into exit code 4 rather than letting it read the wrong columns.
+    """
     conn = sqlite3.connect(workspace.dir / _DB_FILENAME)
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
@@ -222,22 +231,17 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
     row = conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()
     if row is None:
+        # No version row means no schema at all: `_SCHEMA_SQL` writes the row and the tables in
+        # one transaction, so a file that has one has both. Creating the current schema whole is
+        # not the same work as running the ladder from version 1, and deliberately so - a new
+        # workspace should not have to replay every mistake the schema has ever made to reach
+        # today, and the two paths are held to the same result by tests/test_migrations.py.
         conn.executescript(_SCHEMA_SQL)
         return
-    if row[0] != str(_SCHEMA_VERSION):
-        # ponytail: one whole-schema create and no migration steps, so a database written by
-        # another schema version is refused rather than upgraded. Ceiling: the developer loses
-        # that project's findings history, which is the one thing under .vigilloo/ that cannot
-        # be rebuilt. Acceptable only because nothing has been released yet. Upgrade trigger:
-        # the first shipped version, after which docs/17-database "Migrations" applies - a
-        # forward-only runner keyed on this cell, free to drop and re-derive the graph but not
-        # findings or baselines. Failing loudly here is deliberate: the alternative is version 2
-        # code opening a version 1 database and reporting "no such table: nodes" much later.
-        raise RuntimeError(
-            f"{_DB_FILENAME} was written by schema version {row[0]}, this build expects "
-            f"{_SCHEMA_VERSION}, and no migration runner exists yet. Delete "
-            f".vigilloo/{_DB_FILENAME} and re-scan; that project's findings history is lost."
-        )
+    # Forward-only, in place, on every open. docs/17-database: the graph may be dropped and
+    # re-derived by a migration, findings and baselines may not, and a database from a newer
+    # build is refused rather than half-understood.
+    migrate(conn, str(row[0]))
 
 
 def record_scan(

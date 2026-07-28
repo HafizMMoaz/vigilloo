@@ -141,6 +141,22 @@ Ruleset hash: `520914c8731f4c0d`.
   the query plans rather than assuming them - at fixture scale an unused index is still fast and
   still correct, so nothing else would notice it being ignored.
 
+- **Schema migrations** (TASK-013), so upgrading the tool no longer discards a project's
+  findings history. The runner in `vigilloo.workspace.migrations` is forward-only, keyed on the
+  version in `schema_meta`, and each step runs inside the transaction the runner wraps it in, so
+  a process killed halfway leaves the database at the version it started from rather than at one
+  whose tables only partly exist. Opening a database written by a *newer* build exits with code
+  4, the configuration-error code from [docs/19-cli](docs/19-cli/README.md) - the workspace is
+  intact and the tool pointed at it is the wrong version - rather than raising where it used to.
+
+  The graph is treated as [docs/17-database](docs/17-database/README.md) says it is: a
+  rebuildable cache. The v1-to-v2 step creates `nodes` and `edges` empty and lets the next scan
+  fill them, and deliberately does not reconstruct a graph from findings already stored. A v1
+  database recorded evidence paths as file-and-line positions with no node behind them, and
+  inventing nodes for them would make an old path claim a traversal it never made. `findings` and
+  `evidence_paths` are preserved, because those are the rows a baseline reads and the only ones
+  that cannot be regenerated.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not
