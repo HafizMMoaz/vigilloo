@@ -5,6 +5,7 @@ finding-shaped record.
 """
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -67,6 +68,53 @@ class Route:
     action_fqn: str
     middleware: tuple[str, ...]
     span: Span
+
+
+@dataclass(frozen=True)
+class NodeRow:
+    """One graph node, ready to store.
+
+    `id` is content-derived and comes from `vigilloo.ids.node_id` - invariant 3, and the
+    reason `store.insert_nodes` can treat a repeat insert as a no-op instead of a conflict.
+    Every span column is optional: a node that stands for a whole file or a route
+    registration has no meaningful column offsets, and a zero would claim one it does not
+    have.
+
+    Lives here rather than in the store because the graph layer builds these and the store
+    layer writes them, and the store already imports the graph. Nothing on it is a storage
+    detail - it is the node model from docs/04-knowledge-graph in Python.
+    """
+
+    id: str
+    kind: str
+    name: str | None = None
+    fqn: str | None = None
+    file_id: int | None = None
+    start_line: int | None = None
+    start_col: int | None = None
+    end_line: int | None = None
+    end_col: int | None = None
+    start_byte: int | None = None
+    end_byte: int | None = None
+    attrs: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class EdgeRow:
+    """One graph edge, ready to store.
+
+    `confidence` is not decoration (docs/04-knowledge-graph): a taint path carries the
+    minimum confidence of its edges, and that value drives severity. It defaults to 1.0
+    because a statically resolved edge is certain; anything resolved through a facade map or
+    a variable callable must say so here and in `resolution`.
+    """
+
+    src_id: str
+    dst_id: str
+    kind: str
+    confidence: float = 1.0
+    resolution: str | None = None
+    attrs: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)

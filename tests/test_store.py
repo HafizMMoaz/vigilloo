@@ -67,7 +67,7 @@ def test_connect_creates_the_schema_and_records_its_version(tmp_path: Path) -> N
     } <= tables
 
     version = conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0]
-    assert version == "2"
+    assert version == "3"
 
 
 def test_the_graph_tables_carry_their_five_indexes(tmp_path: Path) -> None:
@@ -219,7 +219,12 @@ def test_recording_a_scan_for_the_same_root_twice_reuses_the_project_row(tmp_pat
 
 
 def _stored_project(tmp_path: Path) -> tuple[sqlite3.Connection, int, int]:
-    """A connection with one project row and one file row, for the graph tests."""
+    """A connection with one project row and one file row, for the graph tests.
+
+    The scan it records also writes that project's own graph, so the tests below scope every
+    assertion to the ids they insert rather than counting whole tables. They exercise the
+    batch-insert primitives; what `record_scan` derives on its own is `test_graph_rows.py`.
+    """
     workspace = Workspace.open(tmp_path)
     conn = connect(workspace)
     record_scan(
@@ -252,7 +257,7 @@ def test_ten_thousand_nodes_go_in_as_one_batch(tmp_path: Path) -> None:
     with conn:
         insert_nodes(conn, project_id, nodes)
 
-    count = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM nodes WHERE id LIKE 'node-%'").fetchone()[0]
     assert count == 10_000
 
 
@@ -265,7 +270,7 @@ def test_a_batch_that_violates_a_constraint_writes_none_of_it(tmp_path: Path) ->
     with pytest.raises(sqlite3.IntegrityError), conn:
         insert_nodes(conn, project_id, [*good, dangling])
 
-    assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM nodes WHERE id LIKE 'node-%'").fetchone()[0] == 0
 
 
 def test_reinserting_a_content_derived_id_is_a_no_op(tmp_path: Path) -> None:
@@ -284,7 +289,7 @@ def test_reinserting_a_content_derived_id_is_a_no_op(tmp_path: Path) -> None:
         insert_nodes(conn, project_id, [node])
         insert_nodes(conn, project_id, [node])
 
-    rows = conn.execute("SELECT id, fqn, start_line FROM nodes").fetchall()
+    rows = conn.execute("SELECT id, fqn, start_line FROM nodes WHERE id = ?", (node.id,)).fetchall()
     assert rows == [(node.id, node.fqn, 2)]
 
 
@@ -308,11 +313,15 @@ def test_nodes_and_edges_round_trip_with_their_attributes(tmp_path: Path) -> Non
         insert_edges(conn, project_id, [edge])
 
     stored = conn.execute(
-        "SELECT src_id, dst_id, kind, confidence, resolution, attrs FROM edges"
+        "SELECT src_id, dst_id, kind, confidence, resolution, attrs FROM edges WHERE src_id = ?",
+        (source.id,),
     ).fetchall()
     assert stored == [("src", "dst", "CALLS", 0.9, "facade", '{"alias": "DB", "arg_index": 2}')]
 
-    fqns = [row[0] for row in conn.execute("SELECT fqn FROM nodes ORDER BY id")]
+    fqns = [
+        row[0]
+        for row in conn.execute("SELECT fqn FROM nodes WHERE id IN ('src', 'dst') ORDER BY id")
+    ]
     assert fqns == ["App\\B::find", "App\\A::index"]
 
 

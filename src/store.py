@@ -1,11 +1,15 @@
 """The SQLite store: `.vigilloo/vigilloo.db`, the graph tables, and one row per scan
 and per finding.
 
-Write-only (docs/plans/2026-07-27-slice-6-store-design.md): nothing reads history back yet,
-so the entry points are opening the database, recording a completed scan, and the batch
-node/edge inserts a graph write needs. Knows nothing about rules or taint - `engine_version`
-and `ruleset_hash` arrive as parameters, never computed here, so the store stays below the
-security engine in the layering CLAUDE.md describes.
+Writing is `record_scan`, which puts one scan, its files, its graph and its findings down in a
+single transaction. Reading is `project_id_for` -> `latest_scan` -> `findings_for_scan`, the
+path `vigilloo report` and `vigilloo explain` take, plus `findings_by_fingerprint` for the
+history of one finding across scans.
+
+Knows nothing about rules or taint - `engine_version` and `ruleset_hash` arrive as parameters
+and are never computed here, so the store stays below the security engine in the layering
+CLAUDE.md describes. It does know about the graph, because it is the graph's storage: it takes
+a `Project` and asks `vigilloo.graph` to flatten it, rather than learning how to do that here.
 """
 
 import json
@@ -15,12 +19,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .graph import Project
-from .models import Finding
+from .graph import GraphRows, NodeLocator, Project, graph_rows
+from .models import EdgeRow, Finding, NodeRow
 from .workspace import Workspace
 
 _DB_FILENAME = "vigilloo.db"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 # Spec correction (docs/plans/2026-07-27-slice-6-store-design.md, "Spec correction" section):
 # docs/17-database still shows `findings.id TEXT PRIMARY KEY` plus a redundant
@@ -59,6 +63,9 @@ CREATE TABLE scans (
     duration_ms    INTEGER,
     manifest       TEXT
 );
+-- "the latest scan of this project" is what `report` and `explain` start from, and without
+-- this it reads every scan row of every project in the file to answer it.
+CREATE INDEX idx_scans_project ON scans(project_id, id);
 
 CREATE TABLE files (
     id          INTEGER PRIMARY KEY,
@@ -155,46 +162,47 @@ COMMIT;
 
 
 @dataclass(frozen=True)
-class NodeRow:
-    """One `nodes` row, ready to insert.
+class StoredStep:
+    """One step of a stored evidence path.
 
-    `id` is content-derived and comes from `vigilloo.ids.node_id` - invariant 3, and the
-    reason `insert_nodes` can treat a repeat insert as a no-op instead of a conflict.
-    Every span column is optional: a node that stands for a whole file or a route
-    registration has no meaningful column offsets, and a zero would claim one it does not
-    have.
+    Deliberately not a `PathStep`. A `PathStep` carries a full `Span`, and docs/17-database
+    stores a step's `line` and nothing narrower - a step is a point on a path, and its column
+    offsets are presentation. Handing back a `PathStep` would mean inventing three numbers,
+    and a caller could not tell the invented ones from the real one.
     """
 
-    id: str
-    kind: str
-    name: str | None = None
-    fqn: str | None = None
-    file_id: int | None = None
-    start_line: int | None = None
-    start_col: int | None = None
-    end_line: int | None = None
-    end_col: int | None = None
-    start_byte: int | None = None
-    end_byte: int | None = None
-    attrs: Mapping[str, object] | None = None
+    step: int
+    role: str
+    file: Path | None
+    line: int | None
+    snippet: str
+    note: str
+    node_id: str | None
 
 
 @dataclass(frozen=True)
-class EdgeRow:
-    """One `edges` row, ready to insert.
+class StoredFinding:
+    """A finding as the database holds it, with its complete evidence path.
 
-    `confidence` is not decoration (docs/04-knowledge-graph): a taint path carries the
-    minimum confidence of its edges, and that value drives severity. It defaults to 1.0
-    because a statically resolved edge is certain; anything resolved through a facade map or
-    a variable callable must say so here and in `resolution`.
+    Everything `Finding.id` and `Finding.fingerprint` are derived from is here - the rule, the
+    file, the start line, and each step's role, file, line and snippet - so a reader can
+    recompute both and check them against the stored values. That is the round trip that
+    matters: not that the object is byte-identical, but that its identity survived, because
+    identity is what baselines and suppressions are keyed on.
     """
 
-    src_id: str
-    dst_id: str
-    kind: str
-    confidence: float = 1.0
-    resolution: str | None = None
-    attrs: Mapping[str, object] | None = None
+    id: str
+    fingerprint: str
+    scan_id: int
+    rule_id: str
+    severity: str
+    title: str
+    remediation: str
+    cwe: tuple[str, ...]
+    file: Path | None
+    start_line: int | None
+    first_seen_scan: int | None
+    path: tuple[StoredStep, ...]
 
 
 def connect(workspace: Workspace) -> sqlite3.Connection:
@@ -282,13 +290,166 @@ def record_scan(
 
         file_ids = _upsert_files(conn, project_id, project, finished_at.isoformat())
 
+        # The graph is written before the findings, and both inside the scan's transaction:
+        # evidence_paths.node_id references nodes(id), so a finding whose steps point at graph
+        # nodes cannot be inserted until those nodes exist. Ordering it this way also means a
+        # scan that dies partway leaves no graph rather than a graph with no scan to explain it.
+        rows = graph_rows(project, project_id, file_ids)
+        _replace_graph(conn, project_id, rows)
+
+        locator = NodeLocator(rows)
         for finding in findings:
-            _insert_finding(conn, project_id, scan_id, finding, file_ids)
+            _insert_finding(conn, project_id, scan_id, finding, file_ids, locator)
 
     # ponytail: no retention pruning. docs/17-database keeps the last 10 scans; ten scans of a
     # small findings set is kilobytes, so pruning arrives when a real project's history measures
     # large enough to justify it, not preemptively here.
     return scan_id
+
+
+def _replace_graph(conn: sqlite3.Connection, project_id: int, rows: GraphRows) -> None:
+    """Make the stored graph this project's graph, as this scan just derived it.
+
+    Edges are dropped and rewritten because an edge has no identity of its own (see
+    `insert_edges`): re-deriving the same call site would otherwise add a second row every
+    scan, and a `CALLS` edge counted twice is a traversal that reports the same path twice.
+    Nodes are not dropped, only re-inserted, and their content-derived ids make that a no-op
+    for everything unchanged.
+
+    ponytail: a node for a class or file that has since been deleted is never removed, so the
+    node table only ever grows. Ceiling: a stale node has no edges - those were just dropped -
+    so it cannot appear in a traversal or a finding, and the cost is disk plus a `kind` count
+    that overstates a long-lived project. Upgrade trigger: docs/04-knowledge-graph section
+    "Invalidation", which needs per-file node deletion keyed on the content hash anyway; the
+    same pass that drops a changed file's nodes drops a removed file's.
+    """
+    conn.execute("DELETE FROM edges WHERE project_id = ?", (project_id,))
+    insert_nodes(conn, project_id, rows.nodes)
+    insert_edges(conn, project_id, rows.edges)
+
+
+def project_id_for(conn: sqlite3.Connection, root: Path) -> int | None:
+    """The stored project for a root path, or None if it has never been scanned.
+
+    Every other reader here takes a `project_id`, and a caller holding a directory has no
+    other way to get one. None rather than a raise: "this project has no history" is the
+    ordinary state of a first run, not an error.
+    """
+    row = conn.execute("SELECT id FROM projects WHERE root_path = ?", (str(root),)).fetchone()
+    return int(row[0]) if row else None
+
+
+def latest_scan(conn: sqlite3.Connection, project_id: int) -> int | None:
+    """The most recent scan of a project, or None if it has none.
+
+    Keyed on `id` rather than on `started_at`. `id` is assigned by the insert, so it orders
+    scans by when they were actually recorded; `started_at` is derived by subtracting the
+    measured duration from the finish time, so a long scan can carry an earlier start than a
+    short one that ran after it and "latest" would then mean the wrong row.
+    """
+    row = conn.execute(
+        "SELECT id FROM scans WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,)
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def findings_for_scan(conn: sqlite3.Connection, scan_id: int) -> list[StoredFinding]:
+    """Every finding one scan recorded, each with its complete evidence path."""
+    return _load_findings(conn, "fi.scan_id = ?", (scan_id,))
+
+
+def findings_by_fingerprint(
+    conn: sqlite3.Connection, project_id: int, fingerprint: str
+) -> list[StoredFinding]:
+    """Every scan's view of one finding, oldest scan first.
+
+    Fingerprint and not `id`, because this answers "is this the same problem I saw before"
+    across code that has moved. `id` changes the moment a line shifts; the fingerprint is what
+    a baseline and a `// vigilloo-ignore` are written against, and matching on the wrong one
+    is exactly the bug that resurrects a suppressed backlog after a reformat.
+    """
+    return _load_findings(
+        conn, "fi.project_id = ? AND fi.fingerprint = ?", (project_id, fingerprint)
+    )
+
+
+def _load_findings(
+    conn: sqlite3.Connection, where: str, params: tuple[object, ...]
+) -> list[StoredFinding]:
+    """Findings matching `where`, each with its path, in two queries rather than one per row.
+
+    docs/23-dev-guide section Performance names N+1 against SQLite as what dominates, and a
+    scan with 500 findings would otherwise be 501 round trips to rebuild what one pass over
+    `evidence_paths` already returns in order. The steps query reuses the same predicate
+    through a subquery, so a caller cannot ask for findings and paths that disagree.
+
+    Ordered by scan and then by source position, never by severity. Ranking findings is the
+    reporter's decision and it changes; where a finding is does not, and a stable order is
+    what makes two reads of the same rows comparable (invariant 8).
+
+    `where` is interpolated into the SQL and its values are not. It is private to this module
+    and every call site passes a literal - it is a fragment of a query, not data - while
+    everything that varies goes through `params` as a bound parameter. A scanner that built
+    its own queries by concatenating values would be an unusually poor advertisement.
+    """
+    steps: dict[tuple[int, str], list[StoredStep]] = {}
+    for row in conn.execute(
+        "SELECT e.scan_id, e.finding_id, e.step, e.role, f.path, e.line, e.snippet, e.note, "
+        "e.node_id "
+        "FROM evidence_paths e LEFT JOIN files f ON f.id = e.file_id "
+        "WHERE e.is_primary = 1 AND (e.scan_id, e.finding_id) IN "
+        f"(SELECT fi.scan_id, fi.id FROM findings fi WHERE {where}) "
+        "ORDER BY e.scan_id, e.finding_id, e.step",
+        params,
+    ):
+        steps.setdefault((row[0], row[1]), []).append(
+            StoredStep(
+                step=row[2],
+                role=row[3],
+                file=None if row[4] is None else Path(row[4]),
+                line=row[5],
+                snippet=row[6] or "",
+                note=row[7] or "",
+                node_id=row[8],
+            )
+        )
+
+    findings: list[StoredFinding] = []
+    for row in conn.execute(
+        "SELECT fi.id, fi.fingerprint, fi.scan_id, fi.rule_id, fi.severity, fi.title, "
+        "fi.remediation, fi.cwe, f.path, fi.start_line, fi.first_seen_scan "
+        "FROM findings fi LEFT JOIN files f ON f.id = fi.file_id "
+        f"WHERE {where} "
+        "ORDER BY fi.scan_id, f.path, fi.start_line, fi.id",
+        params,
+    ):
+        path = steps.get((row[2], row[0]), [])
+        if not path:
+            # Invariant 2: no path, no finding. Returning one anyway would hand a caller
+            # something the engine is not allowed to produce, and the caller would have no way
+            # to tell it from a finding whose path was genuinely empty - which cannot happen,
+            # because Finding.__post_init__ refuses to construct one.
+            raise ValueError(
+                f"finding {row[0]} in scan {row[2]} has no stored evidence path; "
+                f"{_DB_FILENAME} is corrupt"
+            )
+        findings.append(
+            StoredFinding(
+                id=row[0],
+                fingerprint=row[1],
+                scan_id=row[2],
+                rule_id=row[3],
+                severity=row[4],
+                title=row[5],
+                remediation=row[6] or "",
+                cwe=tuple(json.loads(row[7])) if row[7] else (),
+                file=None if row[8] is None else Path(row[8]),
+                start_line=row[9],
+                first_seen_scan=row[10],
+                path=tuple(path),
+            )
+        )
+    return findings
 
 
 def insert_nodes(conn: sqlite3.Connection, project_id: int, nodes: Iterable[NodeRow]) -> None:
@@ -343,10 +504,11 @@ def insert_edges(conn: sqlite3.Connection, project_id: int, edges: Iterable[Edge
     ponytail: no idempotence. `edges.id` is an autoincrement rowid, per docs/17-database,
     because an edge has no identity of its own - it is (src, dst, kind) between two nodes that
     do. Ceiling: inserting the same logical edge twice writes two rows, so a caller must not
-    re-derive edges for a file whose nodes are already stored. Harmless while the graph is
-    rebuilt whole per run and nothing reads it back. Upgrade trigger: incremental scanning,
-    which re-derives one file at a time; then this needs `UNIQUE (src_id, dst_id, kind)` with
-    the same DO NOTHING, and docs/17-database gains it.
+    re-derive edges that are already stored. `_replace_graph` is what keeps that true today, by
+    dropping the project's edges before every rewrite - which only works because the graph is
+    still derived whole per scan. Upgrade trigger: incremental scanning, which re-derives one
+    file at a time and cannot drop the whole project's edges to do it; then this needs
+    `UNIQUE (src_id, dst_id, kind)` with the same DO NOTHING, and docs/17-database gains it.
     """
     conn.executemany(
         "INSERT INTO edges (project_id, src_id, dst_id, kind, confidence, resolution, attrs) "
@@ -491,6 +653,7 @@ def _insert_finding(
     scan_id: int,
     finding: Finding,
     file_ids: dict[Path, int],
+    locator: NodeLocator,
 ) -> None:
     fingerprint = finding.fingerprint
     first_seen_scan = _first_seen_scan(conn, project_id, fingerprint, scan_id)
@@ -534,16 +697,23 @@ def _insert_finding(
         ),
     )
 
+    # node_id is what makes a stored step a position in the graph rather than a line number:
+    # invariant 2 wants a path whose every step is a real node, and a reader holding one can
+    # ask what else reaches it. It stays nullable because a step can land somewhere no node
+    # covers - a Blade template resolves only to its file node - and inventing one there would
+    # be worse than admitting the gap.
     for step_index, step in enumerate(finding.evidence_path):
         conn.execute(
             "INSERT INTO evidence_paths "
-            "(scan_id, finding_id, step, file_id, line, role, snippet, note, is_primary) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) "
+            "(scan_id, finding_id, step, node_id, file_id, line, role, snippet, note, "
+            "is_primary) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) "
             "ON CONFLICT (scan_id, finding_id, step, is_primary) DO NOTHING",
             (
                 scan_id,
                 finding.id,
                 step_index,
+                locator.at(step.span.file, step.span.start_line),
                 file_ids.get(step.span.file),
                 step.span.start_line,
                 step.role,

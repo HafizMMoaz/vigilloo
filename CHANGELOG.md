@@ -93,6 +93,54 @@ Ruleset hash: `520914c8731f4c0d`.
   FQN and a discriminator and returns 16 hex characters, so the graph layer and every adapter
   above it derive the same ID for the same node without any of them owning the rule.
 
+- **Slice 9 - every scan writes its graph** (branch `slice-9-store-read-write`, TASK-010). The
+  in-memory `Project` is now flattened into the `nodes` and `edges` of
+  [docs/04-knowledge-graph](docs/04-knowledge-graph/README.md) and written inside the scan's own
+  transaction: one node per file, class, method, route and named middleware, and `DECLARES`,
+  `EXTENDS`, `HANDLES`, `PROTECTED_BY`, `CALLS` and `INSTANTIATES` between them. Node IDs are the
+  content-derived ones from `vigilloo.ids.node_id`, so re-scanning an unchanged project rewrites
+  the same rows; edges have no identity of their own and are replaced wholesale per scan rather
+  than accumulating a duplicate every run.
+
+  Call edges resolve only receivers the source states outright - `$this`, `self`, `parent`, a
+  class name, and a property whose declared type names a class, which is the constructor-injected
+  Laravel controller shape. A call reaching a facade, a variable receiver or a plain function
+  produces no edge and is counted instead, since a wrong edge is a false evidence path and a
+  missing one is only a missed finding. An inherited method's edge lands on the ancestor that
+  declares it, because that is the node that exists. A class whose parent is outside the project
+  keeps the parent's name in its node attributes, which is how `extends Model` survives having no
+  `EXTENDS` edge to carry it.
+
+- **Findings read back with their evidence paths** (TASK-011). `findings_for_scan` returns each
+  stored finding with its complete path, in source order, in two queries rather than one per
+  finding. The stored step is a `StoredStep` and not a `PathStep`: docs/17-database keeps a
+  step's line and not its columns, and handing back a `Span` would mean inventing three numbers
+  a caller could not distinguish from the real one. What matters survives regardless - every
+  input to `Finding.id` and `Finding.fingerprint` is stored, so both hashes recompute exactly
+  from a stored row, which is what makes a baseline written against one scan still match in the
+  next.
+
+  Each step now also carries the id of the innermost graph node covering it, so an evidence path
+  is a walk over the graph rather than a list of line numbers (invariant 2). A step inside a
+  controller action resolves to that method; one on a model's `$guarded` line resolves to the
+  class; a Blade step, which no method covers, resolves to its file node rather than to a guess.
+  Reading a finding whose path rows are missing raises instead of returning it, because a
+  pathless finding is something the engine is not allowed to produce.
+
+- **Reading a previous scan without re-scanning it** (TASK-012). `project_id_for` ->
+  `latest_scan` -> `findings_for_scan` is the path `vigilloo report` and `vigilloo explain` will
+  take, and `findings_by_fingerprint` returns every scan's view of one finding, oldest first, for
+  "when did this get introduced". Latest is keyed on the scan's own id and not on `started_at`:
+  a start time is a finish time minus a measured duration, so a long scan can carry an earlier
+  start than a short one that ran after it.
+
+  This needed an index [docs/17-database](docs/17-database/README.md) did not define. The
+  document specifies the indexes the graph and finding readers need but none on `scans`, so
+  "the latest scan of this project" read every scan row of every project in the file. It gains
+  `idx_scans_project ON scans(project_id, id)`, and the schema version moves to 3. A test asserts
+  the query plans rather than assuming them - at fixture scale an unused index is still fast and
+  still correct, so nothing else would notice it being ignored.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not
