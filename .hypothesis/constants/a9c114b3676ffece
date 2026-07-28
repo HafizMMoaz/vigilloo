@@ -1,0 +1,4 @@
+# file: /Users/Apple/Projects/vigilloo/.claude/worktrees/agent-a76cd0ab00f3770e5/src/structural.py
+# hypothesis_version: 6.145.1
+
+[':', '::', 'Gate', '\\', '\\{(\\w+)\\??\\}', 'allows', 'any', 'auth', 'auth.basic', 'authorize', 'authorizeForUser', 'authorizeResource', 'binding', 'body', 'can', 'can:', 'canAny', 'cannot', 'check', 'denies', 'entry', 'gap', 'name', 'none', 'password.confirm', 'policy', 'scope', '{']

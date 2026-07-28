@@ -1,0 +1,4 @@
+# file: /Users/Apple/Projects/vigilloo/.claude/worktrees/agent-a76cd0ab00f3770e5/src/symbols.py
+# hypothesis_version: 6.145.1
+
+[' as ', '$', '&', '\'"', '=', '?', '\\', 'array', 'base_clause', 'bool', 'callable', 'class_declaration', 'default_value', 'false', 'float', 'int', 'iterable', 'method', 'method_declaration', 'mixed', 'name', 'namespace_definition', 'namespace_use_clause', 'never', 'null', 'object', 'parameters', 'parent', 'property_declaration', 'property_element', 'qualified_name', 'self', 'simple_parameter', 'static', 'string', 'true', 'type', 'void', '|']
