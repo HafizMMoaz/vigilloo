@@ -235,6 +235,37 @@ def _rate(succeeded: int, attempted: int) -> float:
     return succeeded / attempted
 
 
+@dataclass(frozen=True, order=True)
+class ParseFailure:
+    """One syntax error, attributed to the smallest named construct around it.
+
+    A file path alone says a scan went blind somewhere in three hundred lines.
+    That is enough to make the parse rate fall, which invariant 4 requires, and
+    not enough to act on: the reader still has to find the break themselves, and
+    a CI gate that fires names a filename rather than a cause. The construct is
+    the actionable half of the same fact.
+
+    `kind` is "file" and `name` empty when the error is at the top level and no
+    named construct encloses it. That pairing is deliberately not fudged into a
+    guess: an invented name would point somewhere that does not exist, which is
+    worse than the file the reader already had.
+
+    Ordered, so a report over these is stable however the tree was walked
+    (invariant 8).
+    """
+
+    file: Path
+    kind: str
+    name: str
+
+    @property
+    def label(self) -> str:
+        """One line naming what failed, for a human reading a report."""
+        if not self.name:
+            return f"{self.file} (top level)"
+        return f"{self.kind} {self.name} ({self.file})"
+
+
 @dataclass(frozen=True)
 class Coverage:
     """What one scan managed to look at, in counts and the two rates over them.
@@ -246,6 +277,13 @@ class Coverage:
 
     Counts are what was observed; the rates are derived, never stored, so the
     two can never disagree.
+
+    `parse_failures` is detail hung off the same record, never an input to it:
+    the rates are computed from the counts above and adding per-construct detail
+    must not be able to move a number that docs/22-testing gates in CI. Several
+    failures can share one file - one file, one unit of the parse rate - and a
+    file can be counted in `files_with_errors` with no failure listed beside it,
+    which is what a caller that did not collect the detail looks like.
     """
 
     files_discovered: int
@@ -253,6 +291,7 @@ class Coverage:
     files_with_errors: int
     calls_resolved: int
     calls_unresolved: int
+    parse_failures: tuple[ParseFailure, ...] = ()
 
     @property
     def files_parsed(self) -> int:

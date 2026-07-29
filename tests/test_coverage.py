@@ -9,12 +9,13 @@ measurement honest. The rates are gated in CI by docs/22-testing section
 import shutil
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
 from vigilloo.cli import app
 from vigilloo.graph import coverage, load_project
-from vigilloo.models import Coverage, WalkStats
+from vigilloo.models import Coverage, ParseFailure, WalkStats
 from vigilloo.report import render_coverage
 from vigilloo.rules import scan_project
 from vigilloo.taint import find_taint_paths
@@ -177,3 +178,100 @@ def test_the_rendered_rate_is_a_fixed_format_not_a_float_repr() -> None:
     assert captured.get().strip() == (
         "Coverage: 2/3 files parsed (66.7%), 2/3 call sites resolved (66.7%)"
     )
+
+
+def test_the_scan_names_the_construct_that_failed_to_parse() -> None:
+    """TASK-031: the parse rate points at a cause, not only at a filename.
+
+    Measured over the whole scan rather than over the parser alone, because the
+    detail is only useful if it survives to the record the report reads.
+    """
+    result = _scan(BROKEN)
+
+    assert [f.label for f in result.parse_failures] == [
+        "method ReportController::index (app/Http/Controllers/ReportController.php)"
+    ]
+
+
+def test_naming_the_constructs_does_not_move_the_parse_rate() -> None:
+    """The gate in tests/test_coverage_gates.py divides by files, and must stay
+    doing so. One file with four broken methods is one file, not four."""
+    result = _scan(BROKEN)
+
+    assert result.files_with_errors == 1
+    assert result.parse_success_rate == 2 / 3
+    assert len({f.file for f in result.parse_failures}) == result.files_with_errors
+
+
+def test_a_clean_project_collects_no_failure_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A project that parses pays nothing for this feature.
+
+    `load_project` must consult `has_errors` before it asks for the detail, so a
+    codebase with ten thousand healthy files never walks one of them looking for
+    errors it already knows are absent.
+    """
+
+    def explode(parsed: object) -> None:
+        raise AssertionError("a clean file must not be inspected for parse failures")
+
+    monkeypatch.setattr("vigilloo.graph.error_constructs", explode)
+    stats = WalkStats()
+    project = load_project(FIXTURE, stats)
+
+    assert project.parse_failures == []
+    assert coverage(project, stats).parse_failures == ()
+
+
+def test_the_construct_detail_is_printed_with_the_rates() -> None:
+    console = Console(width=200)
+    with console.capture() as captured:
+        render_coverage(
+            Coverage(
+                files_discovered=2,
+                files_unreadable=0,
+                files_with_errors=1,
+                calls_resolved=1,
+                calls_unresolved=0,
+                parse_failures=(
+                    ParseFailure(
+                        Path("app/Http/Controllers/OrderController.php"), "method", "O::s"
+                    ),
+                    ParseFailure(Path("app/helpers.php"), "file", ""),
+                ),
+            ),
+            console,
+        )
+
+    assert captured.get().strip().splitlines()[1] == (
+        "Parse errors in: method O::s (app/Http/Controllers/OrderController.php); "
+        "app/helpers.php (top level)"
+    )
+
+
+def test_hundreds_of_failures_are_capped_and_counted() -> None:
+    """The coverage block stays readable on a project that is broadly broken.
+
+    A scan of a codebase parsed with the wrong PHP version fails in every file,
+    and a coverage block that prints all of them buries the findings under
+    itself. The remainder is stated so the cap cannot be misread as the total.
+    """
+    console = Console(width=400)
+    failures = tuple(
+        ParseFailure(Path(f"app/C{n:03d}.php"), "method", f"C{n:03d}::handle") for n in range(40)
+    )
+    with console.capture() as captured:
+        render_coverage(
+            Coverage(
+                files_discovered=40,
+                files_unreadable=0,
+                files_with_errors=40,
+                calls_resolved=0,
+                calls_unresolved=0,
+                parse_failures=failures,
+            ),
+            console,
+        )
+
+    printed = captured.get().strip().splitlines()[1]
+    assert printed.count(";") == 4  # five named
+    assert printed.endswith("and 35 more")
