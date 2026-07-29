@@ -174,6 +174,27 @@ Ruleset hash: `520914c8731f4c0d`.
   property still passes - and it is paired with an example-based test that pins the entries the
   design rests on.
 
+- **Static and scoped calls are walked, and the `DB` facade sinks fire** (TASK-023, TASK-024).
+  The walk iterated `member_call_expression` for sinks and propagation and `scoped_call_expression`
+  only for mass-assignment writes, so `Foo::bar($tainted)` propagated nowhere and `DB::raw` - the
+  SQL injection every Laravel guide warns about - was unreachable by construction. Scoped calls
+  now check sinks and follow into project methods, and `self`, `static` and `parent` resolve
+  against the class the call is written inside rather than being treated as class names.
+
+  `DB::raw`, `statement`, `unprepared`, `select`, `insert`, `update` and `delete` are sinks,
+  keyed on `(receiver, method)` rather than on the method name. That is what lets `select` be a
+  sink at all: `DB::select($sql)` runs a query and `$query->select(['id', 'name'])` names
+  columns, and a name-keyed table would fire on the single most common line in any query builder
+  in any Laravel codebase. It also means somebody's own class legitimately named `DB` never
+  matches, since the receiver is matched on its resolved FQN.
+
+  `Project.ancestry` is new and decides what counts as a coverage gap. A call whose target lives
+  outside the project is a boundary, not a resolution failure - `load_project` excludes `vendor/`
+  by design. The distinction is finer than "is the receiver ours": `App\Models\Post` is a
+  project class and `Post::find` still lands in Eloquent, because the chain leaves the project at
+  `extends Model`. Counting those would subtract from the resolution rate in proportion to how
+  much framework a project uses.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not

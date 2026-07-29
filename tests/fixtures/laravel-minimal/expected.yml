@@ -19,7 +19,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 26
+        line: 27
         symbol: 'GET|HEAD /invoices/{invoice}'
         note: 'authenticated by: auth'
       - role: binding
@@ -42,7 +42,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 27
+        line: 28
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Receipt $receipt'
@@ -58,7 +58,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 35
+        line: 36
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Invoice $invoice'
@@ -76,7 +76,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 50
+        line: 51
         symbol: '/invoices/{invoice}/grouped'
         note: 'authenticated by: auth'
       - role: binding
@@ -95,7 +95,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 14
+        line: 15
         symbol: 'POST /users'
       - role: source
         symbol: '$request->all()'
@@ -116,7 +116,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 16
+        line: 17
       - role: source
         symbol: '$request->all()'
       - role: model
@@ -136,7 +136,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 20
+        line: 21
       - role: source
         line: 45
         symbol: "Post::find($request->input('id'))"
@@ -158,7 +158,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 21
+        line: 22
         symbol: 'PUT /users/{user}'
       - role: source
         symbol: '$request->all()'
@@ -178,7 +178,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 10
+        line: 11
         symbol: 'POST /orders/search'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -200,7 +200,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 12
+        line: 13
         symbol: 'GET|HEAD /orders/display'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -211,6 +211,67 @@ findings:
       - role: sink
         symbol: '{!! $sort !!}'
         note: 'raw echo, no HTML escaping'
+
+  # ---- php.sql-injection through the DB facade (TASK-024) ----------------------------
+  # Static-facade sinks. Unreachable before scoped calls were walked, which is the whole
+  # reason these three exist: DB::raw is the SQL injection every Laravel guide warns about
+  # and the engine could not see it at all.
+  - rule: php.sql-injection
+    file: app/Repositories/ReportRepository.php
+    line: 16
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 55
+        symbol: 'GET|HEAD /reports/status'
+      - role: propagator
+        file: app/Http/Controllers/ReportController.php
+        line: 21
+        symbol: "$this->reports->byStatus($request->input('status'))"
+      - role: sink
+        file: app/Repositories/ReportRepository.php
+        line: 16
+        symbol: 'DB::select("select * from orders'
+        note: 'unparameterised SQL fragment'
+
+  - rule: php.sql-injection
+    file: app/Repositories/ReportRepository.php
+    line: 29
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 56
+        symbol: 'GET|HEAD /reports/totals'
+      - role: propagator
+        file: app/Http/Controllers/ReportController.php
+        line: 26
+        symbol: "$this->reports->totalExpression($request->input('column'))"
+      - role: sink
+        file: app/Repositories/ReportRepository.php
+        line: 29
+        symbol: 'DB::raw("sum({$column}) as total")'
+        note: 'unparameterised SQL fragment'
+
+  - rule: php.sql-injection
+    file: app/Repositories/ReportRepository.php
+    line: 35
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 57
+        symbol: 'POST /reports/purge'
+      - role: propagator
+        file: app/Http/Controllers/ReportController.php
+        line: 31
+        symbol: "$this->reports->purge($request->input('table'))"
+      - role: sink
+        file: app/Repositories/ReportRepository.php
+        line: 35
+        symbol: 'DB::unprepared("truncate table {$table}")'
+        note: 'unparameterised SQL fragment'
 
 must_not_find:
   # ---- mass assignment: the model configuration is read, not the word "create" --------
@@ -291,3 +352,15 @@ must_not_find:
     file: resources/views/orders/show.blade.php
     line: 4
     reason: '{!! e($sort) !!} - e() clears the html kind'
+
+  # ---- the DB facade: the two forms that must stay silent -----------------------------
+  # These are the whole reason STATIC_SINKS is keyed on the receiver rather than the method
+  # name. Either one firing turns the DB sinks from a rule into a nuisance.
+  - rule: php.sql-injection
+    file: app/Repositories/ReportRepository.php
+    line: 41
+    reason: "DB::select('... where status = ?', [$status]) - the query is a constant and the user data is a binding"
+  - rule: php.sql-injection
+    file: app/Repositories/ReportRepository.php
+    line: 47
+    reason: "$query->select(['id', 'status']) is a column list, not a query - same method name as the sink, opposite meaning"

@@ -84,6 +84,12 @@ mysqli_query()   PDO::query()   PDO::exec()   pg_query()
 ```
 
 Critical nuance: the `*Raw` methods **accept bindings as a second argument**.
+**`DB::select` and `->select` share a name and nothing else.** `DB::select($sql)` runs a query;
+`$query->select(['id', 'name'])` names columns. A sink table keyed on the method name cannot
+express that difference, so the static-facade sinks above are keyed on `(receiver, method)` and
+match only when the receiver resolves to the DB facade. This also means `use App\Reporting\DB;`
+- somebody's own class, legitimately named `DB` - never matches.
+
 `whereRaw('age > ?', [$age])` is safe; `whereRaw("age > $age")` is not. The rule must inspect
 which argument the taint reaches. Flagging every `whereRaw` is exactly the noise that makes
 developers stop reading security reports.
