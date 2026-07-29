@@ -43,7 +43,7 @@ CRITICAL - SQL Injection
   3. OrderController.php:19  flows   argument 0 into OrderRepository::search
   4. OrderRepository.php:12  sink    DB::table('orders')->orderByRaw("created_at {$sort}")
 
-10 findings (1 critical, 9 high)
+13 findings (4 critical, 9 high)
 ```
 
 Coverage is printed on every scan, including when it is 100%. A clean result over a codebase

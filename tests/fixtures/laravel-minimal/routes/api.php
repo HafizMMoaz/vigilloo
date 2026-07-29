@@ -4,6 +4,7 @@
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ReceiptController;
+use App\Http\Controllers\ReportController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -49,3 +50,10 @@ Route::get('/invoices/{invoice}/unreadable', [InvoiceController::class, 'unreada
 Route::middleware(['auth'])->group(function () {
     Route::get('/invoices/{invoice}/grouped', [InvoiceController::class, 'inGroup']);
 });
+
+// The DB facade, reached through a repository. Three sinks and two negatives.
+Route::get('/reports/status', [ReportController::class, 'byStatus']);
+Route::get('/reports/totals', [ReportController::class, 'totals']);
+Route::post('/reports/purge', [ReportController::class, 'purge']);
+Route::get('/reports/bound', [ReportController::class, 'bound']);
+Route::get('/reports/columns', [ReportController::class, 'columns']);

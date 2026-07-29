@@ -1,3 +1,4 @@
+import re
 import shutil
 import sqlite3
 from pathlib import Path
@@ -28,6 +29,10 @@ def test_scan_records_what_it_printed(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scan", str(root)])
     assert result.exit_code == 1
 
+    # "N findings (…)" is the summary line the report ends with. Parsing it is what makes the
+    # store's count comparable to the terminal's without either being written down here.
+    printed = int(re.search(r"(\d+) findings?", result.stdout).group(1))
+
     conn = sqlite3.connect(root / ".vigilloo" / "vigilloo.db")
     scans = conn.execute("SELECT id, status FROM scans").fetchall()
     assert len(scans) == 1
@@ -40,7 +45,10 @@ def test_scan_records_what_it_printed(tmp_path: Path) -> None:
         "JOIN files ON files.id = f.file_id WHERE f.scan_id = ?",
         (scans[0][0],),
     ).fetchall()
-    assert len(stored) == 10
+    # Compared against what the scan printed, not against a literal: the point is that the
+    # store recorded exactly what the report showed, and a hardcoded count checks the
+    # fixture's size instead.
+    assert len(stored) == printed
     for rule_id, path, start_line in stored:
         assert rule_id in result.stdout
         assert f"{path}:{start_line}" in result.stdout
