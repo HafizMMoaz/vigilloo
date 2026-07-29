@@ -77,7 +77,12 @@ def _imports(root: Node, source: bytes) -> dict[str, str]:
     return imports
 
 
-def resolve_type_name(type_name: str, namespace: str, imports: dict[str, str]) -> str:
+def resolve_type_name(
+    type_name: str,
+    namespace: str,
+    imports: dict[str, str],
+    autoload_roots: frozenset[str] = frozenset(),
+) -> str:
     """Resolve a written type name to a fully qualified name.
 
     Only class-like names get namespace resolution. Scalar/builtin type
@@ -85,6 +90,28 @@ def resolve_type_name(type_name: str, namespace: str, imports: dict[str, str]) -
     class names and must be returned unchanged, otherwise a promoted
     parameter like `private int $perPage` would be recorded as a bogus
     class property.
+
+    `autoload_roots` is the set of PSR-4 namespace prefixes `composer.json`
+    declares, each ending in a backslash. A qualified name that begins with one
+    of them - `App\\Models\\User` where `App\\` is autoloaded - is already
+    fully qualified and is returned unchanged, which is step 1 of docs/03-parser
+    section Discovery and the reason such a name resolves at all with no `use`
+    statement above it. This module never sees `composer.json`: it is handed the
+    prefixes as plain data, because a parser that knew about Composer would be
+    the layering violation CLAUDE.md warns about.
+
+    Order matters and follows PHP's own. An import alias wins over an autoload
+    root, because `use Other\\Thing as App;` genuinely rebinds `App` for this
+    file, and only names that no `use` statement claims reach the autoload set.
+
+    ponytail: the ceiling is a class whose own name repeats an autoloaded root,
+    `App\\App\\Models\\User` referenced from inside `namespace App;`. PHP would
+    read the written `App\\Models\\User` there as namespace-relative and so does
+    Composer, and this returns the autoloadable name instead. Resolving it needs
+    the answer to "is this FQN a class the project defines", which lives in
+    `Project`, not here; the upgrade trigger is a resolver that has the class
+    table to hand and can prefer the namespace-relative reading when it names a
+    class that actually exists.
     """
     type_name = type_name.strip().lstrip("?")
     if not type_name:
@@ -98,12 +125,20 @@ def resolve_type_name(type_name: str, namespace: str, imports: dict[str, str]) -
     head, _, rest = type_name.partition("\\")
     if head in imports:
         return f"{imports[head]}\\{rest}" if rest else imports[head]
+    if any(type_name.startswith(root) for root in autoload_roots):
+        return type_name
     if namespace:
         return f"{namespace}\\{type_name}"
     return type_name
 
 
-def _base_class(cls: Node, source: bytes, namespace: str, imports: dict[str, str]) -> str | None:
+def _base_class(
+    cls: Node,
+    source: bytes,
+    namespace: str,
+    imports: dict[str, str],
+    autoload_roots: frozenset[str],
+) -> str | None:
     """The resolved FQN of the class this one extends, if any.
 
     class_declaration has no `base_clause` field, so the child is found by
@@ -113,7 +148,9 @@ def _base_class(cls: Node, source: bytes, namespace: str, imports: dict[str, str
         if child.type == "base_clause":
             for name in child.children:
                 if name.type in ("name", "qualified_name"):
-                    return resolve_type_name(node_text(name, source), namespace, imports)
+                    return resolve_type_name(
+                        node_text(name, source), namespace, imports, autoload_roots
+                    )
     return None
 
 
@@ -153,7 +190,17 @@ def _params(method: Node, source: bytes) -> tuple[tuple[str, ...], tuple[str | N
     return tuple(names), tuple(types)
 
 
-def extract_symbols(parsed: ParsedFile) -> FileSymbols:
+def extract_symbols(
+    parsed: ParsedFile, autoload_roots: frozenset[str] = frozenset()
+) -> FileSymbols:
+    """The symbol table for one file.
+
+    `autoload_roots` are the project's PSR-4 namespace prefixes, from
+    `vigilloo.laravel.detect`; see `resolve_type_name` for what they change.
+    They default to empty so that a caller holding a single file and no project
+    - the parser tests, and anything reasoning about one file in isolation -
+    still gets file-local resolution rather than needing a `composer.json`.
+    """
     root = parsed.tree.root_node
     source = parsed.source
     namespace = _namespace(root, source)
@@ -169,7 +216,7 @@ def extract_symbols(parsed: ParsedFile) -> FileSymbols:
         info = ClassInfo(
             fqn=fqn,
             span=node_span(cls, parsed.path),
-            parent=_base_class(cls, source, namespace, imports),
+            parent=_base_class(cls, source, namespace, imports, autoload_roots),
         )
 
         for method in find_all(cls, "method_declaration"):
@@ -184,7 +231,8 @@ def extract_symbols(parsed: ParsedFile) -> FileSymbols:
                 span=node_span(method, parsed.path),
                 params=names,
                 param_types=tuple(
-                    resolve_type_name(t, namespace, imports) if t else None for t in types
+                    resolve_type_name(t, namespace, imports, autoload_roots) if t else None
+                    for t in types
                 ),
             )
             # PHP 8 constructor property promotion declares a property and a
@@ -196,7 +244,9 @@ def extract_symbols(parsed: ParsedFile) -> FileSymbols:
                     p_name = node_text(promoted.child_by_field_name("name"), source).lstrip("$")
                     p_type = node_text(promoted.child_by_field_name("type"), source)
                     if p_name and p_type:
-                        info.properties[p_name] = resolve_type_name(p_type, namespace, imports)
+                        info.properties[p_name] = resolve_type_name(
+                            p_type, namespace, imports, autoload_roots
+                        )
 
         # Explicitly declared typed properties, plus the array defaults the
         # framework-structural rules read. An untyped `protected $guarded = []`
@@ -210,7 +260,7 @@ def extract_symbols(parsed: ParsedFile) -> FileSymbols:
                     continue
                 if type_node is not None:
                     info.properties[p_name] = resolve_type_name(
-                        node_text(type_node, source), namespace, imports
+                        node_text(type_node, source), namespace, imports, autoload_roots
                     )
                 default = element.child_by_field_name("default_value")
                 if default is not None and default.type == "array_creation_expression":

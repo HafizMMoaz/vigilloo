@@ -79,6 +79,14 @@ def scan(
             f"partially analysed: {shown}{more}.[/yellow]"
         )
 
+    # A refused autoload mapping is a whole namespace that no longer resolves, which is a
+    # larger blind spot than any single unparsed file and exactly the kind invariant 4
+    # forbids hiding. It prints here, with the other caveats and ahead of the findings,
+    # rather than raising: one crafted or malformed entry degrades the scan, it does not
+    # end it. See vigilloo.laravel.detect for why skipping is the chosen answer.
+    for message in project.autoload.rejected:
+        console.print(f"[yellow]Autoload mapping ignored: {message}.[/yellow]")
+
     if project.files and not project.routes:
         console.print(
             "[yellow]No HTTP entry points discovered; route-reachable findings "
