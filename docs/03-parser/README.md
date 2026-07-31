@@ -61,13 +61,19 @@ These are the ones that break naive parsers and silently lose findings:
 | Feature | Why it matters |
 | --- | --- |
 | Facades (`DB::`, `Http::`, `Storage::`) | A static call whose real target lives elsewhere. Parser records the static call verbatim; the adapter resolves it. |
-| Traits | Methods are physically in another file. The symbol table must flatten trait methods into the using class, honouring `insteadof` / `as`. |
+| Traits | Methods are physically in another file. Method lookup must compose traits into the using class, honouring `insteadof` / `as`. |
 | Magic methods `__call`, `__get`, `__callStatic` | Make some calls unresolvable statically. Record as unresolved rather than dropping. |
 | Variable variables, `$$x`, `call_user_func`, `{$obj->$m}()` | Dynamic dispatch. Mark the edge unresolved; the taint engine treats unresolved sinks conservatively. |
 | String interpolation `"... $x ..."` and heredoc | The single most common SQL-injection vehicle in PHP. Interpolated expressions must be first-class AST children, not opaque string text. |
 | Null-safe `?->`, spread, named args, first-class callables `foo(...)` | PHP 8 syntax that must not produce ERROR nodes |
 | Attributes `#[...]` | Used by newer packages for routing and validation |
 | Anonymous classes, closures with `use (&$x)` | By-reference capture affects data flow |
+
+**Implemented trait facts:** trait declarations and their methods are extracted separately from
+classes. Class and trait `use` lists, `insteadof` precedence and `as` aliases are resolved by the
+project method lookup rather than copied into each class, so a method keeps the span and FQN of
+the trait that declares it. An unresolved trait conflict stays unresolved rather than selecting
+whichever declaration happened to be parsed first.
 
 ## Blade templates
 

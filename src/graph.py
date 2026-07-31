@@ -38,6 +38,7 @@ class Project:
     files: dict[Path, ParsedFile] = field(default_factory=dict)
     symbols: dict[Path, FileSymbols] = field(default_factory=dict)
     classes: dict[str, ClassInfo] = field(default_factory=dict)
+    traits: dict[str, ClassInfo] = field(default_factory=dict)
     routes: list[Route] = field(default_factory=list)
     blade: dict[Path, ParsedFile] = field(default_factory=dict)
     blade_lines: dict[Path, list[str]] = field(default_factory=dict)
@@ -62,9 +63,91 @@ class Project:
     autoload: Autoload = field(default_factory=Autoload)
 
     def method(self, fqn: str) -> Symbol | None:
+        """The method a call to `fqn` actually executes, or None if none does.
+
+        `Child::handle` may be declared on `Child`, on a trait it composes, or on an
+        ancestor, and the answer is the one node that owns the body - never a synthetic
+        `Child::handle` that no file contains.
+        """
         class_fqn, _, method_name = fqn.rpartition("::")
-        info = self.classes.get(class_fqn)
-        return info.methods.get(method_name) if info else None
+        return self._method(class_fqn, method_name, set())
+
+    def _method(self, type_fqn: str, method_name: str, seen: set[tuple[str, str]]) -> Symbol | None:
+        """Resolve PHP method precedence, returning only a declaration with a body.
+
+        PHP looks in the class itself, then its composed traits, then its parent.
+        A trait follows the same first two steps for traits it composes.
+
+        Two rules here exist to avoid answers that look resolved and are not.
+
+        An `abstract` declaration is a requirement and not an implementation, so it
+        is stepped past rather than returned: `trait T { abstract function f(); }`
+        composed into a class extending a base that defines `f` executes the base's
+        body. Returning the abstract one would point the call graph at a bodyless
+        declaration and end a taint walk with nothing to walk, which reads as a
+        resolved call and hides whatever the real implementation does.
+
+        Two traits providing the same method with no `insteadof` between them is a
+        class PHP refuses to load, so None is returned rather than a pick. That is
+        also why `insteadof` is stored as exclusions: it names the traits that lose,
+        and a class using a third trait that no clause excludes still collides.
+        """
+        key = (type_fqn, method_name)
+        if key in seen:
+            return None
+        seen.add(key)
+
+        info = self.classes.get(type_fqn) or self.traits.get(type_fqn)
+        if info is None:
+            return None
+
+        own = info.methods.get(method_name)
+        if own is not None and method_name not in info.abstract_methods:
+            return own
+
+        alias = info.trait_aliases.get(method_name)
+        if alias is not None:
+            trait_fqn, original = alias
+            if trait_fqn:
+                return self._method(trait_fqn, original, seen)
+            candidates = self._trait_candidates(info, original, seen)
+            return candidates[0] if len(candidates) == 1 else None
+
+        candidates = self._trait_candidates(info, method_name, seen)
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            # An unresolved collision. PHP would not load this class, so there is no
+            # call to describe and picking one would invent a path through code that
+            # cannot run.
+            return None
+
+        if type_fqn in self.classes and info.parent is not None:
+            return self._method(info.parent, method_name, seen)
+        return None
+
+    def _trait_candidates(
+        self, info: ClassInfo, method_name: str, seen: set[tuple[str, str]]
+    ) -> list[Symbol]:
+        """The distinct implementations this type's composed traits offer for a method.
+
+        Sorted by FQN so a collision that a caller reports is the same one every run
+        (invariant 8), and keyed by FQN so two traits that both compose the same third
+        trait count once rather than as a conflict with itself.
+
+        Each branch gets its own copy of `seen`: the set exists to stop a cycle from
+        recursing forever, and sharing one across sibling traits would let the first
+        branch visited mark a type as seen and silently blank the second.
+        """
+        excluded = info.trait_exclusions.get(method_name, frozenset())
+        candidates: dict[str, Symbol] = {}
+        for trait_fqn in info.traits:
+            if trait_fqn in excluded:
+                continue
+            found = self._method(trait_fqn, method_name, set(seen))
+            if found is not None:
+                candidates[found.fqn] = found
+        return [candidates[fqn] for fqn in sorted(candidates)]
 
     def ancestry(self, class_fqn: str) -> tuple[list[str], bool]:
         """The known ancestor chain of a class, and whether it is complete.
@@ -114,13 +197,39 @@ class Project:
         if parsed is None:
             return None
         for method in find_all(parsed.tree.root_node, "method_declaration"):
-            if node_span(method, parsed.path).start_line == symbol.span.start_line:
+            # The whole span, not its first line. Two declarations can share a line -
+            # `trait T { function a() {} } class C { use T; function b() {} }` is one
+            # line of perfectly ordinary PHP - and matching on the line alone would
+            # hand back a different method's body while every counter reported success.
+            if node_span(method, parsed.path) == symbol.span:
                 return method, parsed
         return None
 
     def resolve_property_type(self, class_fqn: str, prop: str) -> str | None:
-        info = self.classes.get(class_fqn)
-        return info.properties.get(prop) if info else None
+        """The declared class of a property, wherever in the hierarchy it is declared.
+
+        A property declared on a base class or supplied by a trait is as real as one
+        declared locally, and `$this->repo->find($x)` has to resolve through it.
+        """
+        return self._property_type(class_fqn, prop, set())
+
+    def _property_type(self, type_fqn: str, prop: str, seen: set[str]) -> str | None:
+        if type_fqn in seen:
+            return None
+        seen.add(type_fqn)
+        info = self.classes.get(type_fqn) or self.traits.get(type_fqn)
+        if info is None:
+            return None
+        own = info.properties.get(prop)
+        if own is not None:
+            return own
+        for trait_fqn in info.traits:
+            found = self._property_type(trait_fqn, prop, seen)
+            if found is not None:
+                return found
+        if type_fqn in self.classes and info.parent is not None:
+            return self._property_type(info.parent, prop, seen)
+        return None
 
     def resolve_class_name(self, file: Path, written: str) -> str | None:
         """Resolve a class name as written in `file` to its FQN.
@@ -206,6 +315,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         syms = extract_symbols(parsed, autoload_roots)
         project.symbols[rel_path] = syms
         project.classes.update(syms.classes)
+        project.traits.update(syms.traits)
 
         # ponytail: routes are recognised only by living in a directory
         # literally named "routes" (Laravel's default routes/api.php,
@@ -266,6 +376,7 @@ class GraphRows:
 # approximate `FLOWS_TO` would be worse than an absent one.
 _KIND_FILE = "file"
 _KIND_CLASS = "class"
+_KIND_TRAIT = "trait"
 _KIND_METHOD = "method"
 _KIND_ROUTE = "route"
 _KIND_MIDDLEWARE = "middleware"
@@ -347,6 +458,12 @@ class _RowBuilder:
             if info.parent is not None and info.parent in self.project.classes:
                 self.edges.append(EdgeRow(class_id, self._id(_KIND_CLASS, info.parent), "EXTENDS"))
 
+            for trait_fqn in info.traits:
+                if trait_fqn in self.project.traits:
+                    self.edges.append(
+                        EdgeRow(class_id, self._id(_KIND_TRAIT, trait_fqn), "USES_TRAIT")
+                    )
+
             for name in sorted(info.methods):
                 symbol = info.methods[name]
                 method_id = self._id(_KIND_METHOD, symbol.fqn)
@@ -362,6 +479,42 @@ class _RowBuilder:
                     )
                 )
                 self._declares(class_id, method_id)
+
+        for fqn in sorted(self.project.traits):
+            info = self.project.traits[fqn]
+            trait_id = self._id(_KIND_TRAIT, fqn)
+            self.nodes.append(
+                NodeRow(
+                    id=trait_id,
+                    kind=_KIND_TRAIT,
+                    name=fqn.rsplit("\\", 1)[-1],
+                    fqn=fqn,
+                    file_id=self.file_ids.get(info.span.file),
+                    **_span_columns(info.span),
+                    attrs=None,
+                )
+            )
+            self._declares(self._id(_KIND_FILE, info.span.file.as_posix()), trait_id)
+            for used_fqn in info.traits:
+                if used_fqn in self.project.traits:
+                    self.edges.append(
+                        EdgeRow(trait_id, self._id(_KIND_TRAIT, used_fqn), "USES_TRAIT")
+                    )
+            for name in sorted(info.methods):
+                symbol = info.methods[name]
+                method_id = self._id(_KIND_METHOD, symbol.fqn)
+                self.nodes.append(
+                    NodeRow(
+                        id=method_id,
+                        kind=_KIND_METHOD,
+                        name=name,
+                        fqn=symbol.fqn,
+                        file_id=self.file_ids.get(symbol.span.file),
+                        **_span_columns(symbol.span),
+                        attrs={"params": list(symbol.params)},
+                    )
+                )
+                self._declares(trait_id, method_id)
 
     def add_routes(self) -> None:
         """Route nodes, plus the two framework edges a structural rule traverses.
@@ -400,10 +553,9 @@ class _RowBuilder:
                 )
             )
 
-            if self.project.method(route.action_fqn) is not None:
-                self.edges.append(
-                    EdgeRow(route_id, self._id(_KIND_METHOD, route.action_fqn), "HANDLES")
-                )
+            action = self.project.method(route.action_fqn)
+            if action is not None:
+                self.edges.append(EdgeRow(route_id, self._id(_KIND_METHOD, action.fqn), "HANDLES"))
 
             for name in named:
                 mw_id = self._id(_KIND_MIDDLEWARE, name)
@@ -451,6 +603,30 @@ class _RowBuilder:
                         continue
                     caller = f"{class_fqn}::{node_text(m_name, parsed.source)}"
                     self._calls_from(method, parsed, class_fqn, caller)
+            for trait in find_all(parsed.tree.root_node, "trait_declaration"):
+                name_node = trait.child_by_field_name("name")
+                if name_node is None:
+                    continue
+                short = node_text(name_node, parsed.source)
+                trait_fqn = f"{syms.namespace}\\{short}" if syms.namespace else short
+                # ponytail: a trait's body is walked with the trait itself as the
+                # receiver, so `$this->consumerMethod()` inside a trait resolves only
+                # when the trait supplies that method too. In PHP `$this` there is
+                # whichever class composed the trait, and a trait used by four classes
+                # has four answers - emitting an edge per consumer would multiply one
+                # call site into four claims, and picking one would be a guess. Such
+                # calls are counted in `unresolved_calls` rather than invented, which
+                # is the same direction every other unresolvable receiver takes here.
+                # The taint walk does carry the consuming class, so a *path* through a
+                # trait is followed even where this edge is absent. Upgrade trigger: a
+                # per-consumer call layer, which needs edges that can say which
+                # composition they belong to (docs/07-call-graph, `RESOLVES_TO`).
+                for method in find_all(trait, "method_declaration"):
+                    m_name = method.child_by_field_name("name")
+                    if m_name is None:
+                        continue
+                    caller = f"{trait_fqn}::{node_text(m_name, parsed.source)}"
+                    self._calls_from(method, parsed, trait_fqn, caller)
 
     def _calls_from(
         self, method: Node, parsed: ParsedFile, class_fqn: str, caller_fqn: str
@@ -536,10 +712,10 @@ class _RowBuilder:
 
         if receiver is None:
             return None
-        declaring = _declaring_class(self.project, receiver, method_name)
-        if declaring is None:
+        target = self.project.method(f"{receiver}::{method_name}")
+        if target is None:
             return None
-        return f"{declaring}::{method_name}", how
+        return target.fqn, how
 
     def _declares(self, parent_id: str, child_id: str) -> None:
         self.edges.append(EdgeRow(parent_id, child_id, "DECLARES"))
@@ -617,21 +793,6 @@ def _resolved_class(project: Project, parsed: ParsedFile, creation: Node) -> str
         if child.type in ("name", "qualified_name"):
             resolved = project.resolve_class_name(parsed.path, node_text(child, parsed.source))
             return resolved if resolved in project.classes else None
-    return None
-
-
-def _declaring_class(project: Project, class_fqn: str, method: str) -> str | None:
-    """The class in the inheritance chain that actually declares `method`, if any.
-
-    An edge must point at a node that exists, and an inherited method has no node under the
-    subclass - it has one under whichever ancestor declares it. None when no known ancestor
-    declares it, since a method inherited from `Illuminate\\...\\Model` is real but has no node
-    here, and pointing the edge at the subclass instead would invent one.
-    """
-    chain, _ = project.ancestry(class_fqn)
-    for ancestor in chain:
-        if method in project.classes[ancestor].methods:
-            return ancestor
     return None
 
 

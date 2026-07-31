@@ -87,3 +87,33 @@ def test_extracts_base_class_and_array_property_defaults(tmp_path: Path) -> None
     # Unreadable is absent, not empty: the two mean opposite things.
     assert "unreadable" not in info.array_props
     assert info.array_prop_spans["guarded"].start_line == 6
+
+
+def test_extracts_traits_and_their_methods(tmp_path: Path) -> None:
+    path = tmp_path / "Auditable.php"
+    path.write_text(
+        "<?php\n"
+        "namespace App\\Support;\n"
+        "trait Auditable { public function audit(string $value) { return $value; } }\n"
+        "class Service { use Auditable; }\n"
+    )
+    syms = extract_symbols(parse_php(path))
+
+    trait = syms.traits["App\\Support\\Auditable"]
+    service = syms.classes["App\\Support\\Service"]
+    assert trait.methods["audit"].fqn == "App\\Support\\Auditable::audit"
+    assert service.traits == ("App\\Support\\Auditable",)
+
+
+def test_trait_use_aliases_are_resolved(tmp_path: Path) -> None:
+    path = tmp_path / "Service.php"
+    path.write_text(
+        "<?php\n"
+        "namespace App\\Support;\n"
+        "trait Auditable { public function audit(string $value) { return $value; } }\n"
+        "class Service { use Auditable { audit as record; } }\n"
+    )
+    service = extract_symbols(parse_php(path)).classes["App\\Support\\Service"]
+
+    assert service.traits == ("App\\Support\\Auditable",)
+    assert service.trait_aliases == {"record": ("App\\Support\\Auditable", "audit")}

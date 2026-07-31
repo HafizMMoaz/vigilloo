@@ -81,6 +81,131 @@ def test_paths_are_deterministic() -> None:
     assert find_taint_paths(project) == find_taint_paths(project)
 
 
+def test_taint_reaches_an_inherited_method(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\Child;\nRoute::post('/child', [Child::class, 'entry']);\n"
+    )
+    (tmp_path / "app" / "Types.php").write_text(
+        "<?php\n"
+        "namespace App;\n"
+        "use Illuminate\\Support\\Facades\\DB;\n"
+        "class Base {\n"
+        "  public function dangerous($value) { return DB::raw($value); }\n"
+        "}\n"
+        "class Child extends Base {\n"
+        "  public function entry($request) { return $this->dangerous($request->input('x')); }\n"
+        "}\n"
+    )
+
+    paths = find_taint_paths(load_project(tmp_path))
+    assert len(paths) == 1
+    assert paths[0][-1].span.start_line == 5
+
+
+def test_taint_reaches_a_trait_method(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\Child;\nRoute::post('/child', [Child::class, 'entry']);\n"
+    )
+    (tmp_path / "app" / "Types.php").write_text(
+        "<?php\n"
+        "namespace App;\n"
+        "use Illuminate\\Support\\Facades\\DB;\n"
+        "trait Dangerous {\n"
+        "  public function dangerous($value) { return DB::raw($value); }\n"
+        "}\n"
+        "class Child {\n"
+        "  use Dangerous;\n"
+        "  public function entry($request) { return $this->dangerous($request->input('x')); }\n"
+        "}\n"
+    )
+
+    paths = find_taint_paths(load_project(tmp_path))
+    assert len(paths) == 1
+    assert paths[0][-1].span.start_line == 5
+
+
+def test_trait_body_dispatches_this_to_the_consuming_class(tmp_path: Path) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\Child;\nRoute::post('/child', [Child::class, 'entry']);\n"
+    )
+    (tmp_path / "app" / "Types.php").write_text(
+        "<?php\n"
+        "namespace App;\n"
+        "use Illuminate\\Support\\Facades\\DB;\n"
+        "trait Delegates {\n"
+        "  public function delegate($value) { return $this->dangerous($value); }\n"
+        "}\n"
+        "class Child {\n"
+        "  use Delegates;\n"
+        "  public function entry($request) { return $this->delegate($request->input('x')); }\n"
+        "  public function dangerous($value) { return DB::raw($value); }\n"
+        "}\n"
+    )
+
+    paths = find_taint_paths(load_project(tmp_path))
+    assert len(paths) == 1
+    assert paths[0][-1].span.start_line == 10
+
+
+def test_a_sink_is_found_when_two_declarations_share_a_line(tmp_path: Path) -> None:
+    """Locating a body by its first line alone walks whichever method shares that line.
+
+    The walk then finds nothing and counts the call as resolved, so the report says 100%
+    coverage and no finding - the exact shape of a silent false negative that invariant 4
+    exists to prevent.
+    """
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\Child;\nRoute::post('/child', [Child::class, 'entry']);\n"
+    )
+    (tmp_path / "app" / "Types.php").write_text(
+        "<?php\nnamespace App;\nuse Illuminate\\Support\\Facades\\DB;\n"
+        "trait T { public function helper($v) { return $v; } } "
+        "class Child { use T; "
+        "public function entry($request) { return DB::raw($request->input('x')); } }\n"
+    )
+
+    paths = find_taint_paths(load_project(tmp_path))
+    assert len(paths) == 1
+    assert "DB::raw" in paths[0][-1].snippet
+
+
+def test_late_static_binding_reaches_an_override(tmp_path: Path) -> None:
+    """`static::` names the runtime class, so the subclass's sink is the one that runs.
+
+    `self::` in the same position would stay on the base and reach the safe helper, which
+    is why the two are resolved differently rather than treated as synonyms.
+    """
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\Child;\nRoute::post('/child', [Child::class, 'entry']);\n"
+    )
+    (tmp_path / "app" / "Types.php").write_text(
+        "<?php\n"
+        "namespace App;\n"
+        "use Illuminate\\Support\\Facades\\DB;\n"
+        "class Base {\n"
+        "  public function entry($request) { return static::handle($request->input('x')); }\n"
+        "  public static function handle($v) { return $v; }\n"
+        "}\n"
+        "class Child extends Base {\n"
+        "  public static function handle($v) { return DB::raw($v); }\n"
+        "}\n"
+    )
+
+    paths = find_taint_paths(load_project(tmp_path))
+    assert len(paths) == 1
+    assert paths[0][-1].span.start_line == 9
+
+
 def test_reassignment_to_a_constant_untaints_the_variable(tmp_path: Path) -> None:
     """$sort is overwritten with a literal before it ever reaches the sink."""
     project_root = _minimal_project(

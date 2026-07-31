@@ -93,11 +93,38 @@ reachability analysis reports nothing:
 
 ### Traits and inheritance
 
-Trait methods are flattened into the using class before resolution, honouring `insteadof` and
+Trait methods are composed into the using class during resolution, honouring `insteadof` and
 `as` aliasing. Calls to an inherited method resolve to the nearest definition walking up the
 hierarchy. Calls to an abstract or interface method fan out to implementations (strategy 6/7).
 
+**Implemented today:** class methods override traits, traits override parents, traits may compose
+other traits, and `insteadof` / `as` adaptations are honoured. The method body keeps the FQN and
+span of the class or trait that declares it; the graph stores explicit `USES_TRAIT` edges instead
+of cloning method nodes under every consumer. An ambiguous conflict without `insteadof` is
+recorded unresolved and never guessed. Abstract/interface fan-out remains specified only.
+
+An `abstract` declaration is a requirement, not an implementation, so resolution steps past it to
+whichever composed trait or ancestor supplies the body. Stopping on it would name a bodyless
+declaration and end a taint walk with nothing to walk - a resolved-looking call that hides what
+actually runs.
+
+### What `$this`, `self` and `static` resolve to
+
+These three are not synonyms, and the taint walk carries all of them at once because collapsing
+any pair loses a real path:
+
+| Written | Resolves to | Why |
+| --- | --- | --- |
+| `$this->m()` | the class the call was made on | A trait body composed into a consumer dispatches to the consumer, so a trait may call a method the trait itself does not declare. |
+| `self::m()` | the class or trait the code was written in | Bound lexically. An inherited method's `self::helper()` runs the ancestor's helper, not a subclass override. |
+| `static::m()` | the class the call was made on | Late static binding, so a subclass override is the one that runs. |
+| `parent::m()` | the base of the class the code was written in | Inside a trait, a trait has no parent of its own, so it climbs from the class that composed it. |
+
+Inside a trait, `self` means the consuming class rather than the trait, because PHP composes a
+trait's body into whatever used it.
+
 ## Algorithms over the graph
+
 
 - **Reachability** - is a sink reachable from any entry point? Recursive CTE in SQL, or BFS in
   NetworkX for the materialised layer. A sink that no route reaches is severity-reduced, not

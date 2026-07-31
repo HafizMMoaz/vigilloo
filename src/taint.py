@@ -317,7 +317,9 @@ def _scoped_parts(call: Node, source: bytes) -> tuple[str, str, list[Node]] | No
     return node_text(scope_node, source), node_text(name_node, source), args
 
 
-def _scoped_receiver(project: Project, written: str, class_fqn: str, file: Path) -> str | None:
+def _scoped_receiver(
+    project: Project, written: str, lexical_fqn: str, runtime_fqn: str, file: Path
+) -> str | None:
     """The class a scoped call's left-hand side names.
 
     `self` and `static` are the enclosing class and `parent` is its base, none of which
@@ -326,16 +328,23 @@ def _scoped_receiver(project: Project, written: str, class_fqn: str, file: Path)
     `self::helper($tainted)` resolves to a class literally named `self`, finds no method, and is
     counted as an unresolved call on code that is perfectly resolvable.
 
-    `static::` is treated as `self::`, which is right for the call graph and wrong for PHP: late
-    static binding means it names the *runtime* class, so a subclass overriding the method is
-    where the call actually lands. Following the lexical class finds the base implementation,
-    which is the conservative direction - it may miss an override's sink, and it cannot invent a
-    path through a class the code never reaches.
+    `self` and `static` are not the same thing and are not treated as such. In a class body
+    `self::` is bound where the code was written, so it stays on `lexical_fqn`: an inherited
+    method's `self::helper()` runs the ancestor's helper, not a subclass's. `static::` is late
+    static binding - it names the class the call was made on - so it follows `runtime_fqn` and
+    reaches an override, which is the one PHP would run.
+
+    Inside a *trait*, `self` is the consuming class and not the trait, because PHP composes a
+    trait's body into whatever used it. `parent::` follows the same rule for the same reason: a
+    trait has no parent of its own, so it climbs from the class that composed it.
     """
     if written in ("self", "static"):
-        return class_fqn
+        if written == "static" or lexical_fqn in project.traits:
+            return runtime_fqn
+        return lexical_fqn
     if written == "parent":
-        info = project.classes.get(class_fqn)
+        owner = lexical_fqn if lexical_fqn in project.classes else runtime_fqn
+        info = project.classes.get(owner)
         return info.parent if info else None
     return project.resolve_class_name(file, written)
 
@@ -409,10 +418,10 @@ def _follow_static(
 
     `Project.ancestry` is what tells the two apart, and the distinction is finer than "is the
     receiver ours". `App\\Models\\Post` is a project class and `Post::find` still resolves into
-    the framework, because the chain leaves the project at `extends Model`. A method missing
-    from a chain that stays *inside* the project is the real gap: the code is here and the walk
-    failed to reach it, which today means an inherited or trait-provided method, and TASK-025 is
-    what closes it. That one is counted.
+    the framework, because the chain leaves the project at `extends Model`. A method missing from
+    a chain that stays *inside* the project is the real gap: the code is here and the walk failed
+    to reach it. Inherited and trait-provided methods now resolve, so what remains is genuinely
+    absent or ambiguous and is counted rather than guessed.
     """
     passed = {
         i: kinds
@@ -444,10 +453,17 @@ def _follow_static(
         role="propagator",
         span=node_span(call, parsed.path),
         snippet=node_text(call, parsed.source).strip(),
-        note=f"argument {min(passed)} into {callee_fqn}",
+        note=f"argument {min(passed)} into {callee.fqn}",
     )
     return _walk_method(
-        project, callee_fqn, callee_tainted, prefix + [step], depth + 1, max_depth, stats
+        project,
+        callee_fqn,
+        callee_tainted,
+        prefix + [step],
+        depth + 1,
+        max_depth,
+        stats,
+        receiver_fqn,
     )
 
 
@@ -516,8 +532,18 @@ def _walk_method(
     depth: int,
     max_depth: int,
     stats: WalkStats | None = None,
+    receiver_fqn: str | None = None,
 ) -> list[list[PathStep]]:
-    """Walk one method body, returning every completed source-to-sink path."""
+    """Walk one method body, returning every completed source-to-sink path.
+
+    `fqn` is the method requested at the call site and `receiver_fqn` is the class
+    the call was made on, which `$this` and `static::` mean. For an inherited or
+    trait-provided method those differ from the class that owns the body, and all
+    three are needed at once: the body comes from the declaring type, `$this`
+    dispatches on the receiver, and `self::` stays bound where the code was written.
+    Collapsing them would either lose a consumer's override or bind a trait's
+    `self::` to the wrong type.
+    """
     if depth > max_depth:
         return []
     found = project.method_node(fqn)
@@ -525,7 +551,12 @@ def _walk_method(
         return []
     method_node, parsed = found
     source = parsed.source
-    class_fqn = fqn.rpartition("::")[0]
+    requested_class = fqn.rpartition("::")[0]
+    # What `$this` and `static::` mean: the class the call was made on.
+    runtime_class = receiver_fqn or requested_class
+    symbol = project.method(fqn)
+    # What `self::` means: the class or trait whose file this body is in.
+    lexical_class = symbol.fqn.rpartition("::")[0] if symbol is not None else requested_class
     local = dict(tainted)
     paths: list[list[PathStep]] = []
     request_vars = _request_like_params(project, fqn)
@@ -535,7 +566,6 @@ def _walk_method(
     # binding, and `$order->update(...)` in an action whose signature binds the
     # model is where this bug actually ships.
     local_types: dict[str, str] = {}
-    symbol = project.method(fqn)
     if symbol is not None:
         for param_name, param_type in zip(symbol.params, symbol.param_types, strict=True):
             if param_type:
@@ -597,10 +627,12 @@ def _walk_method(
             if parts is None:
                 continue
             written, name, args = parts
-            receiver_fqn = _scoped_receiver(project, written, class_fqn, parsed.path)
+            scoped_receiver_fqn = _scoped_receiver(
+                project, written, lexical_class, runtime_class, parsed.path
+            )
 
             steps = _mass_assign_steps(
-                project, call, name, args, receiver_fqn, parsed, local, request_vars
+                project, call, name, args, scoped_receiver_fqn, parsed, local, request_vars
             )
             if steps is not None:
                 # Empty means "resolved and safe" - stop here rather than let the
@@ -613,7 +645,7 @@ def _walk_method(
             # for readability today, since no name appears in both, but the scoped table is
             # the more specific statement and a more specific rule losing to a general one
             # is the kind of thing that is invisible until the general one is widened.
-            scoped_sink = static_sink(receiver_fqn, name) or sink(name)
+            scoped_sink = static_sink(scoped_receiver_fqn, name) or sink(name)
             if scoped_sink is not None:
                 sink_steps = _sink_steps(call, args, scoped_sink, parsed, local, request_vars)
                 if sink_steps:
@@ -624,7 +656,7 @@ def _walk_method(
                 _follow_static(
                     project,
                     call,
-                    receiver_fqn,
+                    scoped_receiver_fqn,
                     name,
                     args,
                     parsed,
@@ -677,13 +709,19 @@ def _walk_method(
                 if (kinds := expr_kinds(arg, source, local, request_vars))
             }
 
-            # $this->prop->method($tainted) - follow into the callee.
-            if not obj.startswith("$this->"):
+            # `$this->method($tainted)` resolves through the enclosing class,
+            # including its traits and parents. `$this->prop->method(...)`
+            # resolves through the property's declared type.
+            target_class: str | None
+            if obj == "$this":
+                target_class = runtime_class
+            elif obj.startswith("$this->"):
+                prop = obj.removeprefix("$this->")
+                target_class = project.resolve_property_type(runtime_class, prop)
+            else:
                 if passed:
                     _giveup(stats)
                 continue
-            prop = obj.removeprefix("$this->")
-            target_class = project.resolve_property_type(class_fqn, prop)
             if target_class is None:
                 if passed:
                     _giveup(stats)
@@ -709,7 +747,7 @@ def _walk_method(
                 role="propagator",
                 span=node_span(call, parsed.path),
                 snippet=node_text(call, source).strip(),
-                note=f"argument {min(passed)} into {callee_fqn}",
+                note=f"argument {min(passed)} into {callee.fqn}",
             )
             paths.extend(
                 _walk_method(
@@ -720,6 +758,7 @@ def _walk_method(
                     depth + 1,
                     max_depth,
                     stats,
+                    target_class,
                 )
             )
 

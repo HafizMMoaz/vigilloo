@@ -111,6 +111,11 @@ growing an option at a time. Both serialisers accept either the rows a scan has 
 the rows read back out of SQLite by `store.graph_for_project`, so exporting a project scanned
 earlier never means re-analysing it.
 
+The persisted symbol/call layer also includes trait nodes and `USES_TRAIT` edges. Calls to
+inherited or trait-provided methods point at the method node that actually declares the body,
+and a route whose action is inherited uses that same real node for `HANDLES`. No edge points at
+a synthetic `Child::method` node that does not exist.
+
 Both formats are byte-identical across two exports of the same graph (invariant 8), which
 means neither may inherit the order it was handed: nodes sort by kind, then fqn, then id, and
 edges by kind, endpoints, confidence, resolution and attributes - an edge has no id to break

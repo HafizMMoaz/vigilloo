@@ -68,6 +68,18 @@ def test_a_plain_class_is_not_a_model(tmp_path: Path) -> None:
     assert model_config(classes, "App\\Models\\Thing") is None
 
 
+def test_model_detection_walks_an_app_base_class(tmp_path: Path) -> None:
+    classes = _classes(
+        tmp_path,
+        "class BaseModel extends Model {}\n"
+        "class Thing extends BaseModel { protected $guarded = []; }",
+    )
+    config = model_config(classes, "App\\Models\\Thing")
+
+    assert config is not None
+    assert config.protection is Protection.OPEN
+
+
 def test_privileged_columns_are_matched_whole_never_as_substrings() -> None:
     """`user_id` as a substring makes `contributor_id_hash` a hit."""
     assert privileged_columns(("role", "is_admin", "user_id", "balance")) == (
