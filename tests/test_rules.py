@@ -17,7 +17,14 @@ def test_every_implemented_rule_fires_on_the_fixture() -> None:
         "laravel.missing-authorization",
     }
 
-    finding = next(f for f in findings if f.rule_id == "php.sql-injection")
+    # By file, not by position: findings sort by path, so a new fixture case in an
+    # earlier file would otherwise silently move this assertion onto a different
+    # finding. This one is here for the interprocedural path.
+    finding = next(
+        f
+        for f in findings
+        if f.rule_id == "php.sql-injection" and f.span.file.name == "OrderRepository.php"
+    )
     assert finding.severity == "critical"
     assert finding.cwe == ("CWE-89",)
     assert finding.span.file.name == "OrderRepository.php"

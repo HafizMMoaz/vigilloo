@@ -19,7 +19,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 27
+        line: 28
         symbol: 'GET|HEAD /invoices/{invoice}'
         note: 'authenticated by: auth'
       - role: binding
@@ -42,7 +42,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 28
+        line: 29
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Receipt $receipt'
@@ -58,7 +58,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 36
+        line: 37
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Invoice $invoice'
@@ -76,7 +76,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 51
+        line: 52
         symbol: '/invoices/{invoice}/grouped'
         note: 'authenticated by: auth'
       - role: binding
@@ -95,7 +95,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 15
+        line: 16
         symbol: 'POST /users'
       - role: source
         symbol: '$request->all()'
@@ -116,7 +116,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 17
+        line: 18
       - role: source
         symbol: '$request->all()'
       - role: model
@@ -136,7 +136,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 21
+        line: 22
       - role: source
         line: 45
         symbol: "Post::find($request->input('id'))"
@@ -158,7 +158,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 22
+        line: 23
         symbol: 'PUT /users/{user}'
       - role: source
         symbol: '$request->all()'
@@ -178,7 +178,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 11
+        line: 12
         symbol: 'POST /orders/search'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -200,7 +200,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 13
+        line: 14
         symbol: 'GET|HEAD /orders/display'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -223,7 +223,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 55
+        line: 56
         symbol: 'GET|HEAD /reports/status'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -242,7 +242,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 56
+        line: 57
         symbol: 'GET|HEAD /reports/totals'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -261,7 +261,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 57
+        line: 58
         symbol: 'POST /reports/purge'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -271,6 +271,47 @@ findings:
         file: app/Repositories/ReportRepository.php
         line: 35
         symbol: 'DB::unprepared("truncate table {$table}")'
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.sql-injection from a PHP superglobal (TASK-026) ---------------------------
+  # Read straight off $_GET, without the Request object. The source note names which
+  # superglobal it was: "request data" would leave the developer looking for a $request
+  # this action does not have.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/LegacyController.php
+    line: 23
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 65
+        symbol: 'GET|HEAD /legacy/search'
+      - role: source
+        line: 23
+        symbol: "$_GET['sort']"
+        note: 'attacker-controlled $_GET'
+      - role: sink
+        symbol: "DB::raw('select * from orders order by ' . $_GET['sort'])"
+        note: 'unparameterised SQL fragment'
+
+  # $_SERVER['HTTP_HOST'] is a request header, so it is tainted. Assigned first, so the
+  # source step lands on the assignment and the sink two lines later.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/LegacyController.php
+    line: 32
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 66
+        symbol: 'GET|HEAD /legacy/host'
+      - role: source
+        line: 30
+        symbol: "$host = $_SERVER['HTTP_HOST']"
+        note: 'attacker-controlled $_SERVER'
+      - role: sink
+        line: 32
+        symbol: 'DB::raw("select * from sites where host'
         note: 'unparameterised SQL fragment'
 
 must_not_find:
@@ -364,3 +405,16 @@ must_not_find:
     file: app/Repositories/ReportRepository.php
     line: 47
     reason: "$query->select(['id', 'status']) is a column list, not a query - same method name as the sink, opposite meaning"
+
+  # ---- superglobals: the two reads that must stay silent -------------------------------
+  # $_SERVER is the only superglobal whose key decides the answer, so these are what make
+  # it a per-key table rather than a variable name. Tainting the array wholesale would
+  # report the first; tainting none of it would miss HTTP_HOST above.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/LegacyController.php
+    line: 40
+    reason: "$_SERVER['DOCUMENT_ROOT'] is server configuration, not request data"
+  - rule: php.sql-injection
+    file: app/Http/Controllers/LegacyController.php
+    line: 50
+    reason: 'an ordinary local array subscript - reading $config[key] is not reading a superglobal'

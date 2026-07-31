@@ -2,6 +2,7 @@
 // tests/fixtures/laravel-minimal/routes/api.php
 
 use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\LegacyController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ReceiptController;
 use App\Http\Controllers\ReportController;
@@ -57,3 +58,11 @@ Route::get('/reports/totals', [ReportController::class, 'totals']);
 Route::post('/reports/purge', [ReportController::class, 'purge']);
 Route::get('/reports/bound', [ReportController::class, 'bound']);
 Route::get('/reports/columns', [ReportController::class, 'columns']);
+
+// PHP superglobals, read directly rather than through the Request object. The
+// route is what makes them reachable: a sink no entry point reaches is not a
+// finding here, by design.
+Route::get('/legacy/search', [LegacyController::class, 'search']);
+Route::get('/legacy/host', [LegacyController::class, 'host']);
+Route::get('/legacy/root', [LegacyController::class, 'documentRoot']);
+Route::get('/legacy/local', [LegacyController::class, 'localArray']);

@@ -61,7 +61,17 @@ file_get_contents('php://input')     getenv()     apache_request_headers()
 ```
 
 `$_SERVER` needs care: `HTTP_*`, `REQUEST_URI`, `QUERY_STRING`, `PATH_INFO`, `HTTP_HOST` and
-`HTTP_X_FORWARDED_FOR` are attacker-controlled; `DOCUMENT_ROOT` is not.
+`HTTP_X_FORWARDED_FOR` are attacker-controlled; `DOCUMENT_ROOT` is not. `HTTP_HOST` and
+`HTTP_X_FORWARDED_FOR` are instances of the `HTTP_*` rule rather than separate entries: every
+request header arrives under that prefix, so matching the prefix is what stops an unlisted
+header being a silent miss.
+
+**An unclassified `$_SERVER` key is tainted**, and so is a read of the whole array or one
+whose key is not a literal (`$_SERVER[$name]`). The safe keys are a short known list and the
+dangerous ones are open-ended, so the unknown case errs towards the finding: erring the other
+way is a false negative nothing downstream can recover, per invariant 4. The other superglobals
+need no such rule, because the attacker chooses their keys as well as their values - which is
+also why they carry `mass_assign` and not only the injection kinds.
 
 ### Second-order (stored)
 
