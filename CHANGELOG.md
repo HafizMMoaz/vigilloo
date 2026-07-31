@@ -195,6 +195,17 @@ Ruleset hash: `520914c8731f4c0d`.
   `extends Model`. Counting those would subtract from the resolution rate in proportion to how
   much framework a project uses.
 
+- **Traits and inherited methods resolve** (TASK-025). The symbol table now records trait
+  declarations, composed traits and `insteadof` / `as` adaptations. `Project.method` applies PHP's
+  class-then-trait-then-parent precedence, leaves unresolved conflicts ambiguous instead of
+  choosing by parse order, and lets the taint walk follow request data into inherited and
+  trait-provided sinks. The persisted graph gains trait nodes and `USES_TRAIT` edges; calls and
+  inherited route actions point at the real method node that owns the body. `self::` and `static::`
+  are no longer synonyms: `self` is bound lexically and `static` is late static binding, so an
+  inherited method's `self::helper()` runs the ancestor's helper while `static::helper()` reaches
+  a subclass override. Inside a trait body, `$this->method()` dispatches to the consuming class
+  rather than staying on the trait, and `self` means the consumer rather than the trait itself.
+
 - **Measured coverage in every scan** (TASK-018). `vigilloo scan` now opens with the two rates
   from [docs/22-testing](docs/22-testing/README.md) section "Metrics gated in CI" - parse success
   and call-graph resolution - each with the counts it was computed from, printed whether or not

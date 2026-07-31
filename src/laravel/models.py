@@ -68,9 +68,10 @@ class ModelConfig:
 def is_model(classes: dict[str, ClassInfo], fqn: str) -> bool:
     """Does this class inherit from an Eloquent model base?
 
-    ponytail: `use HasFactory`-style traits and models whose base lives behind
-    an alias are not resolved. A model reached this way is missed rather than
-    guessed at - fabricating a model relationship would fabricate a finding.
+    Parent names and import aliases are resolved by the core symbol layer before
+    this framework-specific model check runs. A model whose base still cannot be
+    resolved is missed rather than guessed at - fabricating a model relationship
+    would fabricate a finding.
     """
     seen: set[str] = set()
     current: str | None = fqn

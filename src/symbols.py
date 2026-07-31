@@ -37,6 +37,25 @@ class ClassInfo:
     methods: dict[str, Symbol] = field(default_factory=dict)
     properties: dict[str, str] = field(default_factory=dict)
     parent: str | None = None
+    traits: tuple[str, ...] = ()
+    # Alias -> (trait FQN, original method). The trait is empty only for an
+    # unqualified adaptation over several traits; Project resolves that form
+    # only when exactly one used trait provides the method.
+    trait_aliases: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # Method -> the traits `insteadof` excludes for it. Exclusions, not a
+    # winner, because that is what PHP's construct says: `A::run insteadof B`
+    # removes B's copy and says nothing about a third trait, so a class using
+    # A, B and C still has a real collision on `run`. Recording the left-hand
+    # side as "the winner" would resolve that invalid class to A, and would
+    # make the result depend on the order the clauses happened to be written.
+    trait_exclusions: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Methods declared without a body: `abstract function f();` in a class or a
+    # trait. A requirement, never an implementation - PHP dispatches such a
+    # call to whichever composed trait or ancestor supplies the body, so
+    # resolution must look past it rather than stop on it. Stopping would point
+    # the call graph at a bodyless declaration and silently end a taint walk,
+    # which is a false negative dressed as a resolved call.
+    abstract_methods: set[str] = field(default_factory=set)
     # Property name -> the string literals of its array default, for the
     # framework-structural rules that read model configuration ($fillable,
     # $guarded). A property whose array holds anything the extractor cannot
@@ -53,6 +72,7 @@ class FileSymbols:
     namespace: str
     imports: dict[str, str]
     classes: dict[str, ClassInfo]
+    traits: dict[str, ClassInfo] = field(default_factory=dict)
 
 
 def _namespace(root: Node, source: bytes) -> str:
@@ -190,6 +210,209 @@ def _params(method: Node, source: bytes) -> tuple[tuple[str, ...], tuple[str | N
     return tuple(names), tuple(types)
 
 
+def _direct_children(node: Node, type_name: str) -> list[Node]:
+    """Named children of `node` with one type, without descending into nested types."""
+    return [child for child in node.named_children if child.type == type_name]
+
+
+def _type_body(declaration: Node) -> Node | None:
+    return declaration.child_by_field_name("body")
+
+
+def _trait_reference(node: Node, source: bytes) -> tuple[str, str]:
+    """The optional trait and method named by one adaptation reference."""
+    if node.type == "class_constant_access_expression":
+        names = [child for child in node.named_children if child.type in ("name", "qualified_name")]
+        if len(names) >= 2:
+            return node_text(names[0], source), node_text(names[1], source)
+    if node.type in ("name", "qualified_name"):
+        return "", node_text(node, source)
+    return "", ""
+
+
+def _adaptation_names(node: Node, source: bytes) -> list[str]:
+    """Every trait name written on the right-hand side of one adaptation clause.
+
+    ponytail: the installed tree-sitter-php grammar has no rule for the comma list in
+    `A::run insteadof B, C`, so it parses the first losing trait into an `ERROR` node and
+    leaves the rest as siblings. The names are all still there and are read from both
+    places, because reading only the siblings would silently drop `B` and turn a class
+    the author fully disambiguated into a reported collision. The file is separately
+    recorded as a parse failure by `error_constructs`, so the coverage report already
+    says the grammar could not read it (invariant 4). Upgrade trigger: a grammar release
+    with the rule, after which the ERROR branch stops matching and can go.
+    """
+    if node.type in ("name", "qualified_name"):
+        return [node_text(node, source)]
+    if node.type == "ERROR":
+        return [
+            node_text(child, source)
+            for child in node.named_children
+            if child.type in ("name", "qualified_name")
+        ]
+    return []
+
+
+def _trait_uses(
+    declaration: Node,
+    source: bytes,
+    namespace: str,
+    imports: dict[str, str],
+    autoload_roots: frozenset[str],
+) -> tuple[tuple[str, ...], dict[str, tuple[str, str]], dict[str, frozenset[str]]]:
+    """Traits and adaptations declared directly in a class or trait body.
+
+    Only `use_declaration` children of this body are read, so a nested class or
+    trait declared in the same file contributes nothing here.
+    """
+    body = _type_body(declaration)
+    if body is None:
+        return (), {}, {}
+
+    used: list[str] = []
+    aliases: dict[str, tuple[str, str]] = {}
+    exclusions: dict[str, frozenset[str]] = {}
+
+    for use in _direct_children(body, "use_declaration"):
+        for child in use.named_children:
+            if child.type in ("name", "qualified_name"):
+                used.append(
+                    resolve_type_name(node_text(child, source), namespace, imports, autoload_roots)
+                )
+
+        lists = _direct_children(use, "use_list")
+        if not lists:
+            continue
+        for clause in lists[0].named_children:
+            if clause.type == "use_instead_of_clause":
+                named = list(clause.named_children)
+                if not named:
+                    continue
+                _, method = _trait_reference(named[0], source)
+                if not method:
+                    continue
+                # `A::run insteadof B, C` names every losing trait, so all of them are
+                # collected. Only the named traits lose; a trait no clause mentions is
+                # still a live copy, which is what keeps a genuine collision visible.
+                losing = {
+                    resolve_type_name(written, namespace, imports, autoload_roots)
+                    for child in named[1:]
+                    for written in _adaptation_names(child, source)
+                }
+                if losing:
+                    exclusions[method] = exclusions.get(method, frozenset()) | losing
+            elif clause.type == "use_as_clause":
+                named = list(clause.named_children)
+                if not named:
+                    continue
+                trait, method = _trait_reference(named[0], source)
+                # `Shared::work as protected;` only changes visibility and
+                # introduces no second name, and the grammar gives that clause a
+                # `visibility_modifier` rather than a `name`. Filtering on the
+                # node type is what keeps it from being read as an alias called
+                # `protected`.
+                aliases_found = [child for child in named[1:] if child.type == "name"]
+                if not method or not aliases_found:
+                    continue
+                alias = node_text(aliases_found[-1], source)
+                resolved_trait = (
+                    resolve_type_name(trait, namespace, imports, autoload_roots)
+                    if trait
+                    else (used[0] if len(used) == 1 else "")
+                )
+                aliases[alias] = (resolved_trait, method)
+
+    return tuple(used), aliases, exclusions
+
+
+def _extract_type(
+    declaration: Node,
+    parsed: ParsedFile,
+    namespace: str,
+    imports: dict[str, str],
+    autoload_roots: frozenset[str],
+    *,
+    is_trait: bool,
+) -> ClassInfo | None:
+    """Extract one class-like declaration without absorbing nested declarations."""
+    source = parsed.source
+    name_node = declaration.child_by_field_name("name")
+    if name_node is None:
+        return None
+    short = node_text(name_node, source)
+    fqn = f"{namespace}\\{short}" if namespace else short
+    traits, aliases, exclusions = _trait_uses(
+        declaration, source, namespace, imports, autoload_roots
+    )
+    info = ClassInfo(
+        fqn=fqn,
+        span=node_span(declaration, parsed.path),
+        parent=(
+            None
+            if is_trait
+            else _base_class(declaration, source, namespace, imports, autoload_roots)
+        ),
+        traits=traits,
+        trait_aliases=aliases,
+        trait_exclusions=exclusions,
+    )
+    body = _type_body(declaration)
+    if body is None:
+        return info
+
+    for method in _direct_children(body, "method_declaration"):
+        m_name_node = method.child_by_field_name("name")
+        if m_name_node is None:
+            continue
+        m_name = node_text(m_name_node, source)
+        names, types = _params(method, source)
+        if method.child_by_field_name("body") is None:
+            info.abstract_methods.add(m_name)
+        info.methods[m_name] = Symbol(
+            fqn=f"{fqn}::{m_name}",
+            kind="method",
+            span=node_span(method, parsed.path),
+            params=names,
+            param_types=tuple(
+                resolve_type_name(t, namespace, imports, autoload_roots) if t else None
+                for t in types
+            ),
+        )
+        # PHP 8 constructor property promotion declares a property and a
+        # parameter in one place. Capturing it here is what lets a later
+        # layer resolve $this->prop->method() to a concrete class.
+        params_node = method.child_by_field_name("parameters")
+        if params_node is not None:
+            for promoted in find_all(params_node, "property_promotion_parameter"):
+                p_name = node_text(promoted.child_by_field_name("name"), source).lstrip("$")
+                p_type = node_text(promoted.child_by_field_name("type"), source)
+                if p_name and p_type:
+                    info.properties[p_name] = resolve_type_name(
+                        p_type, namespace, imports, autoload_roots
+                    )
+
+    # Explicitly declared typed properties, plus the array defaults the
+    # framework-structural rules read.
+    for prop in _direct_children(body, "property_declaration"):
+        type_node = prop.child_by_field_name("type")
+        for element in find_all(prop, "property_element"):
+            p_name = node_text(element, source).split("=")[0].strip().lstrip("$")
+            if not p_name:
+                continue
+            if type_node is not None:
+                info.properties[p_name] = resolve_type_name(
+                    node_text(type_node, source), namespace, imports, autoload_roots
+                )
+            default = element.child_by_field_name("default_value")
+            if default is not None and default.type == "array_creation_expression":
+                values = array_literal(default, source)
+                if values is not None:
+                    info.array_props[p_name] = values
+                    info.array_prop_spans[p_name] = node_span(prop, parsed.path)
+
+    return info
+
+
 def extract_symbols(
     parsed: ParsedFile, autoload_roots: frozenset[str] = frozenset()
 ) -> FileSymbols:
@@ -206,69 +429,16 @@ def extract_symbols(
     namespace = _namespace(root, source)
     imports = _imports(root, source)
     classes: dict[str, ClassInfo] = {}
+    traits: dict[str, ClassInfo] = {}
 
     for cls in find_all(root, "class_declaration"):
-        name_node = cls.child_by_field_name("name")
-        if name_node is None:
-            continue
-        short = node_text(name_node, source)
-        fqn = f"{namespace}\\{short}" if namespace else short
-        info = ClassInfo(
-            fqn=fqn,
-            span=node_span(cls, parsed.path),
-            parent=_base_class(cls, source, namespace, imports, autoload_roots),
-        )
+        info = _extract_type(cls, parsed, namespace, imports, autoload_roots, is_trait=False)
+        if info is not None:
+            classes[info.fqn] = info
 
-        for method in find_all(cls, "method_declaration"):
-            m_name_node = method.child_by_field_name("name")
-            if m_name_node is None:
-                continue
-            m_name = node_text(m_name_node, source)
-            names, types = _params(method, source)
-            info.methods[m_name] = Symbol(
-                fqn=f"{fqn}::{m_name}",
-                kind="method",
-                span=node_span(method, parsed.path),
-                params=names,
-                param_types=tuple(
-                    resolve_type_name(t, namespace, imports, autoload_roots) if t else None
-                    for t in types
-                ),
-            )
-            # PHP 8 constructor property promotion declares a property and a
-            # parameter in one place. Capturing it here is what lets a later
-            # layer resolve $this->prop->method() to a concrete class.
-            params_node = method.child_by_field_name("parameters")
-            if params_node is not None:
-                for promoted in find_all(params_node, "property_promotion_parameter"):
-                    p_name = node_text(promoted.child_by_field_name("name"), source).lstrip("$")
-                    p_type = node_text(promoted.child_by_field_name("type"), source)
-                    if p_name and p_type:
-                        info.properties[p_name] = resolve_type_name(
-                            p_type, namespace, imports, autoload_roots
-                        )
+    for trait in find_all(root, "trait_declaration"):
+        info = _extract_type(trait, parsed, namespace, imports, autoload_roots, is_trait=True)
+        if info is not None:
+            traits[info.fqn] = info
 
-        # Explicitly declared typed properties, plus the array defaults the
-        # framework-structural rules read. An untyped `protected $guarded = []`
-        # has no type node at all, which is why it needs its own branch here
-        # rather than falling out of the typed-property loop.
-        for prop in find_all(cls, "property_declaration"):
-            type_node = prop.child_by_field_name("type")
-            for element in find_all(prop, "property_element"):
-                p_name = node_text(element, source).split("=")[0].strip().lstrip("$")
-                if not p_name:
-                    continue
-                if type_node is not None:
-                    info.properties[p_name] = resolve_type_name(
-                        node_text(type_node, source), namespace, imports, autoload_roots
-                    )
-                default = element.child_by_field_name("default_value")
-                if default is not None and default.type == "array_creation_expression":
-                    values = array_literal(default, source)
-                    if values is not None:
-                        info.array_props[p_name] = values
-                        info.array_prop_spans[p_name] = node_span(prop, parsed.path)
-
-        classes[fqn] = info
-
-    return FileSymbols(namespace=namespace, imports=imports, classes=classes)
+    return FileSymbols(namespace=namespace, imports=imports, classes=classes, traits=traits)

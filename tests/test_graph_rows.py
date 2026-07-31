@@ -13,7 +13,7 @@ import pytest
 
 from vigilloo.graph import GraphRows, Project, graph_rows, load_project
 from vigilloo.ids import node_id
-from vigilloo.laravel.routes import UNRESOLVED_MIDDLEWARE
+from vigilloo.laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
 from vigilloo.models import Finding, PathStep, Span
 from vigilloo.parser import parse_source
 from vigilloo.store import connect, record_scan
@@ -38,6 +38,7 @@ def _project_from(source: str, path: str = "app/Example.php") -> Project:
         files={rel: parsed},
         symbols={rel: syms},
         classes=dict(syms.classes),
+        traits=dict(syms.traits),
         digests={rel: "0" * 64},
     )
 
@@ -55,7 +56,10 @@ def test_every_symbol_in_the_project_becomes_exactly_one_node() -> None:
 
     kinds = _by_kind(rows)
     assert kinds["class"] == len(project.classes)
-    assert kinds["method"] == sum(len(info.methods) for info in project.classes.values())
+    assert kinds["trait"] == len(project.traits)
+    assert kinds["method"] == sum(
+        len(info.methods) for info in (*project.classes.values(), *project.traits.values())
+    )
     assert kinds["route"] == len(project.routes)
     assert kinds["file"] == len(project.files) + len(project.blade) + len(project.failed)
 
@@ -148,6 +152,30 @@ def test_a_route_handles_its_action_and_is_protected_by_each_middleware() -> Non
         assert guarded[f"{','.join(route.verbs)} {route.uri}"] == len(named)
 
 
+def test_a_route_to_an_inherited_action_handles_the_real_method_node() -> None:
+    project = _project_from(
+        "<?php\nnamespace App;\n"
+        "class Base { public function index() {} }\n"
+        "class Child extends Base {}\n"
+    )
+    route_file = Path("routes/api.php")
+    route_parsed = parse_source(
+        route_file,
+        b"<?php\nuse App\\Child;\nRoute::get('/child', [Child::class, 'index']);\n",
+    )
+    route_symbols = extract_symbols(route_parsed)
+
+    project.files[route_file] = route_parsed
+    project.symbols[route_file] = route_symbols
+    project.routes.extend(extract_routes(route_parsed, route_symbols))
+    project.digests[route_file] = "1" * 64
+
+    rows = _rows(project)
+    by_id = {node.id: node for node in rows.nodes}
+    handled = [by_id[edge.dst_id].fqn for edge in rows.edges if edge.kind == "HANDLES"]
+    assert handled == ["App\\Base::index"]
+
+
 def test_a_call_through_a_typed_property_resolves_to_the_callee() -> None:
     """The Laravel controller shape: a repository injected in the constructor."""
     project = _project_from(
@@ -182,6 +210,35 @@ def test_a_call_to_an_inherited_method_points_at_the_class_that_declares_it() ->
     calls = [(by_id[e.src_id].fqn, by_id[e.dst_id].fqn) for e in rows.edges if e.kind == "CALLS"]
     assert calls == [("App\\Child::go", "App\\Base::run")]
     assert [e.kind for e in rows.edges if e.kind == "EXTENDS"] == ["EXTENDS"]
+
+
+def test_a_trait_precedence_selects_the_declared_trait() -> None:
+    project = _project_from(
+        "<?php\nnamespace App;\n"
+        "trait First { public function run() {} }\n"
+        "trait Second { public function run() {} }\n"
+        "class Child { use First, Second { First::run insteadof Second; }\n"
+        "public function go() { $this->run(); } }\n"
+    )
+    rows = _rows(project)
+    by_id = {node.id: node for node in rows.nodes}
+
+    calls = [(by_id[e.src_id].fqn, by_id[e.dst_id].fqn) for e in rows.edges if e.kind == "CALLS"]
+    assert calls == [("App\\Child::go", "App\\First::run")]
+
+
+def test_a_trait_is_a_node_and_calls_land_on_its_method() -> None:
+    project = _project_from(
+        "<?php\nnamespace App;\n"
+        "trait Shared { public function run() {} }\n"
+        "class Child { use Shared; public function go() { $this->run(); } }\n"
+    )
+    rows = _rows(project)
+    by_id = {node.id: node for node in rows.nodes}
+
+    calls = [(by_id[e.src_id].fqn, by_id[e.dst_id].fqn) for e in rows.edges if e.kind == "CALLS"]
+    assert calls == [("App\\Child::go", "App\\Shared::run")]
+    assert [e.kind for e in rows.edges if e.kind == "USES_TRAIT"] == ["USES_TRAIT"]
 
 
 def test_an_inheritance_cycle_terminates() -> None:
@@ -239,7 +296,10 @@ def test_a_scan_stores_the_graph(fixture_project: Path) -> None:
 
     stored = Counter(dict(conn.execute("SELECT kind, COUNT(*) FROM nodes GROUP BY kind")))
     assert stored["class"] == len(project.classes)
-    assert stored["method"] == sum(len(i.methods) for i in project.classes.values())
+    assert stored["trait"] == len(project.traits)
+    assert stored["method"] == sum(
+        len(i.methods) for i in (*project.classes.values(), *project.traits.values())
+    )
     assert stored["route"] == len(project.routes)
     assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] > 0
 
