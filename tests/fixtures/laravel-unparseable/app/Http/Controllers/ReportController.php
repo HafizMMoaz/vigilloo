@@ -12,8 +12,8 @@ use Illuminate\Http\Request;
 // then pass no matter what the engine counted.
 class ReportController
 {
-    public function index(Request $request)
+    public function index(Request $request
     {
-        return view('reports.index');
+        return view('reports.index'
     }
 }
