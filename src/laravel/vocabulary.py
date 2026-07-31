@@ -46,6 +46,42 @@ SOURCE_METHODS: dict[str, frozenset[TaintKind]] = {
     for name in ("only", "validated", "safe")
 }
 
+# PHP superglobals whose every key the attacker chooses, per docs/06-taint-analysis
+# section "PHP native". $_SERVER is deliberately absent: it is half request and half
+# server configuration, and it gets the per-key rule below.
+#
+# All carry every kind, mass_assign included, because the attacker names the keys as
+# well as the values. `?u[is_admin]=1` makes `$_GET['u']` an array whose keys came off
+# the wire, which is the property that makes an Eloquent array write dangerous.
+#
+# $_ENV, getenv(), php://input and apache_request_headers() appear in the same spec
+# section and are not here. None of them is a subscript read on a known variable name,
+# so each needs its own handling rather than an entry in this table, and the roadmap
+# already reports the taint vocabulary as partial rather than complete.
+FULLY_TAINTED_SUPERGLOBALS: frozenset[str] = frozenset(
+    {
+        "_GET",
+        "_POST",
+        "_REQUEST",
+        "_COOKIE",
+        "_FILES",
+        "argv",
+    }
+)
+
+# The $_SERVER keys docs/06-taint-analysis names as attacker-controlled. The HTTP_
+# prefix is the general rule rather than a list of headers: a request header arrives
+# as HTTP_<NAME>, so HTTP_HOST and HTTP_X_FORWARDED_FOR are instances of it and not
+# separate facts to be maintained.
+_TAINTED_SERVER_KEYS: frozenset[str] = frozenset(
+    {
+        "REQUEST_URI",
+        "QUERY_STRING",
+        "PATH_INFO",
+    }
+)
+_TAINTED_SERVER_PREFIX = "HTTP_"
+
 # Rule identities live here rather than in rules.py because the taint walk has
 # to name the rule it matched and rules.py imports the walk, not the other way
 # round. They are plain strings, so the graph layer never learns what a Rule
@@ -173,6 +209,40 @@ def is_source(method: str) -> bool:
 def source_kinds(method: str) -> frozenset[TaintKind]:
     """The kinds a value entering through this Request method carries."""
     return SOURCE_METHODS.get(method, frozenset())
+
+
+def is_superglobal(variable: str) -> bool:
+    """Is this variable name, written without its `$`, a superglobal source?"""
+    return variable in FULLY_TAINTED_SUPERGLOBALS or variable == "_SERVER"
+
+
+def superglobal_kinds(variable: str, key: str | None) -> frozenset[TaintKind]:
+    """The kinds `$variable[key]` carries, or `$variable` itself when `key` is None.
+
+    `variable` is the name without its `$`. `key` is the literal text of the subscript,
+    and None both when there is no subscript and when the subscript is not a literal.
+
+    $_SERVER is the only superglobal that inspects the key, and it is the reason this
+    takes one. `$_SERVER['HTTP_HOST']` is a request header and `$_SERVER['DOCUMENT_ROOT']`
+    is a path out of the server's own configuration. Tainting the array wholesale reports
+    a filesystem path no attacker can influence; tainting none of it misses the header
+    every Host-header poisoning bug is built on.
+
+    An unrecognised $_SERVER key is tainted, and the asymmetry with the allowlist above is
+    deliberate. A key this module does not name is either one of the attacker-controlled
+    keys the spec lists that nobody has added yet, or a dynamic `$_SERVER[$name]` whose
+    value is not known until the request arrives. A bare `$_SERVER` is treated the same
+    way, because it contains the tainted keys. Guessing the other way would be a silent
+    false negative, which is what invariant 4 exists to prevent: the set of safe keys is
+    short and knowable, and the set of dangerous ones is open-ended.
+    """
+    if variable in FULLY_TAINTED_SUPERGLOBALS:
+        return ALL_KINDS
+    if variable != "_SERVER":
+        return frozenset()
+    if key is None or key.startswith(_TAINTED_SERVER_PREFIX) or key in _TAINTED_SERVER_KEYS:
+        return ALL_KINDS
+    return frozenset()
 
 
 def sink(method: str) -> tuple[int, TaintKind, str] | None:

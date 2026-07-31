@@ -148,6 +148,18 @@ are expensive to rediscover and easy to contradict.
   `Co-Authored-By: Claude` trailer, no "Generated with Claude Code" footer. This overrides the
   default Claude Code commit guidance.
 
+## Agent tooling
+
+- **Never use a shell heredoc.** `cat > f <<'EOF'`, `python - <<'PY'` and friends hang this
+  environment's shell, and the work in that turn is lost. To create a file, use the file-write
+  tool; to run a throwaway script, write it to `/tmp/` first and then run
+  `uv run python /tmp/probe.py` as its own command. Scratch probes never go in the repo.
+- `scripts/dump_ast.py <file>` prints the parse of a PHP file. Reach for it before guessing at
+  tree-sitter node types: the PHP grammar labels fields inconsistently, and
+  `subscript_expression` in particular has **no** `object`/`index` fields - the base is
+  `named_children[0]` and the index is `named_children[1]`.
+
+
 ## Context
 
 - Repo: `github.com/HafizMMoaz/vigilloo`, **private**. `gh` CLI is authenticated as `HafizMMoaz`.

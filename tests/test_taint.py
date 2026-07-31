@@ -481,3 +481,133 @@ def test_only_the_matched_rule_is_named_on_the_sink_step() -> None:
     by_file = {p[-1].span.file.name: p[-1].rule_id for p in find_taint_paths(load_project(FIXTURE))}
     assert by_file["OrderRepository.php"] == "php.sql-injection"
     assert by_file["show.blade.php"] == "php.xss"
+
+
+def test_a_superglobal_reaches_the_sink(tmp_path: Path) -> None:
+    """$_GET read directly, without the Request object.
+
+    This is the shape of older PHP and older Laravel code, which is the code most
+    likely to be vulnerable. Before TASK-026 the walk had no rule for a subscript
+    read at all, so it produced nothing here.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body='        return DB::table("t")->orderByRaw($_GET["sort"]);',
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    paths = find_taint_paths(load_project(project_root))
+    assert len(paths) == 1
+    assert paths[0][-1].role == "sink"
+
+
+def test_the_source_step_names_which_superglobal_it_read(tmp_path: Path) -> None:
+    """ "request data" would send the developer looking for a $request that is not there."""
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body='        return DB::table("t")->orderByRaw($_GET["sort"]);',
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    paths = find_taint_paths(load_project(project_root))
+    source = next(step for step in paths[0] if step.role == "source")
+    assert source.note == "attacker-controlled $_GET"
+
+
+def test_a_safe_server_key_produces_nothing(tmp_path: Path) -> None:
+    """$_SERVER['DOCUMENT_ROOT'] is server configuration.
+
+    The negative half of the $_SERVER pair, and the reason the table is keyed on the
+    key rather than on the variable. It also pins that the read is decided by the
+    subscript and not by the array underneath it: a bare $_SERVER *is* tainted,
+    because it holds the attacker-controlled keys, so a walk that fell through to the
+    base variable would report this line.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body='        return DB::table("t")->orderByRaw($_SERVER["DOCUMENT_ROOT"]);',
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    assert find_taint_paths(load_project(project_root)) == []
+
+
+def test_an_ordinary_array_subscript_produces_nothing(tmp_path: Path) -> None:
+    """Reading $config['sort'] is not reading a superglobal."""
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            '        $config = ["sort" => "created_at"];\n'
+            '        return DB::table("t")->orderByRaw($config["sort"]);'
+        ),
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    assert find_taint_paths(load_project(project_root)) == []
+
+
+def test_a_superglobal_inside_an_interpolated_string_is_seen(tmp_path: Path) -> None:
+    """`"... {$_GET['x']} ..."` is the form that actually ships.
+
+    The subscript is nested inside the string node rather than standing as the
+    argument itself, so it is only reached because taint unions over children.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            '        return DB::table("t")->orderByRaw("order by {$_GET[\'sort\']}");'
+        ),
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    paths = find_taint_paths(load_project(project_root))
+    assert len(paths) == 1
+    assert paths[0][-1].role == "sink"
+
+
+def test_a_superglobal_mass_assigns(tmp_path: Path) -> None:
+    """$_POST into an unprotected model is mass assignment, not only injection.
+
+    The kinds a superglobal carries have to include mass_assign for this to fire,
+    which is what "the attacker names the keys as well as the values" means.
+    """
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Models").mkdir(parents=True)
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\LegacyStore;\n"
+        "Route::post('/legacy', [LegacyStore::class, 'store']);\n"
+    )
+    (tmp_path / "app" / "Models" / "Account.php").write_text(
+        "<?php\n"
+        "namespace App\\Models;\n"
+        "use Illuminate\\Database\\Eloquent\\Model;\n"
+        "class Account extends Model\n"
+        "{\n"
+        "    protected $guarded = [];\n"
+        "}\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "LegacyStore.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "use App\\Models\\Account;\n"
+        "class LegacyStore\n"
+        "{\n"
+        "    public function store()\n"
+        "    {\n"
+        "        return Account::create($_POST);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    paths = find_taint_paths(load_project(tmp_path))
+    assert len(paths) == 1
+    assert paths[0][-1].rule_id == "laravel.mass-assignment"
+
+
+def test_a_superglobal_read_is_not_counted_as_an_unresolved_call(tmp_path: Path) -> None:
+    """A subscript read resolves completely. Nothing about it is a coverage gap."""
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body='        return DB::table("t")->orderByRaw($_GET["sort"]);',
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    stats = WalkStats()
+    find_taint_paths(load_project(project_root), stats=stats)
+    assert stats.unresolved == 0

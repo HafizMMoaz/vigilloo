@@ -23,10 +23,12 @@ from .laravel.vocabulary import (
     XSS_RULE,
     eloquent_write,
     is_source,
+    is_superglobal,
     sanitizer_clears,
     sink,
     source_kinds,
     static_sink,
+    superglobal_kinds,
 )
 from .models import PathStep, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, walk
@@ -58,6 +60,46 @@ def _followed(stats: WalkStats | None) -> None:
 
 def _var_name(node: Node, source: bytes) -> str:
     return node_text(node, source).lstrip("$")
+
+
+def _literal_key(node: Node, source: bytes) -> str | None:
+    """The text of a literal subscript, or None when the key is not a literal.
+
+    `$_SERVER['HTTP_HOST']` has to be told apart from `$_SERVER[$name]`: the first
+    states which key is read and the second does not. An interpolated
+    `"{$prefix}_HOST"` is not a literal either - what it evaluates to is not knowable
+    here, and reading it as the text that happens to be written would be a guess.
+    """
+    if node.type == "string":
+        content = next((c for c in node.named_children if c.type == "string_content"), None)
+        return node_text(content, source) if content is not None else ""
+    if node.type == "encapsed_string" and all(
+        c.type == "string_content" for c in node.named_children
+    ):
+        return "".join(node_text(c, source) for c in node.named_children)
+    return None
+
+
+def _superglobal_read(node: Node, source: bytes) -> tuple[str, str | None] | None:
+    """`(name, key)` when this node reads a superglobal, else None.
+
+    Both forms the grammar produces are handled: a bare `$_POST`, and a subscript
+    `$_POST['x']`. tree-sitter-php gives `subscript_expression` no `object` or `index`
+    field, so the base is the first named child and the key the second - see the
+    dump_ast note in CLAUDE.md.
+    """
+    if node.type == "subscript_expression":
+        children = node.named_children
+        if not children or children[0].type != "variable_name":
+            return None
+        name = _var_name(children[0], source)
+        if not is_superglobal(name):
+            return None
+        return name, (_literal_key(children[1], source) if len(children) > 1 else None)
+    if node.type == "variable_name":
+        name = _var_name(node, source)
+        return (name, None) if is_superglobal(name) else None
+    return None
 
 
 def _union_of_children(
@@ -94,6 +136,18 @@ def expr_kinds(
     negative, and a security tool that under-reports without saying so is worse
     than one that over-reports.
     """
+    # A superglobal read, bare or subscripted. Checked ahead of the local-variable
+    # branch because a superglobal is never in `local`: no statement assigned it, PHP
+    # populated it before the first line ran, so looking it up in the local state finds
+    # nothing and the read looks clean.
+    superglobal = _superglobal_read(node, source)
+    if superglobal is not None:
+        # Decisive even when it returns no kinds. Falling through to the union over
+        # children would reach the bare `$_SERVER` under `$_SERVER['DOCUMENT_ROOT']`,
+        # which is tainted because the array holds the attacker-controlled keys, and
+        # that would taint the one key the spec calls safe by way of its container.
+        return superglobal_kinds(*superglobal)
+
     if node.type == "variable_name":
         return local.get(_var_name(node, source), frozenset())
 
@@ -171,13 +225,39 @@ def _is_request_receiver(call: Node, source: bytes, request_vars: frozenset[str]
     return False
 
 
-def _crosses_source(node: Node, source: bytes, request_vars: frozenset[str]) -> bool:
-    """Does evaluating this expression read from a Request source?"""
-    return any(
-        is_source(node_text(c.child_by_field_name("name"), source))
-        and _is_request_receiver(c, source, request_vars)
-        for c in find_all(node, "member_call_expression")
-    )
+def _source_note(node: Node, source: bytes, request_vars: frozenset[str]) -> str | None:
+    """How this expression reads attacker-controlled data, or None if it does not.
+
+    The return value is the evidence step's note, so the step names *which* source was
+    crossed and not merely that one was. `$_SERVER['HTTP_HOST']` and
+    `$request->input('x')` are both request data, and a developer following the path has
+    to know which of them to go and look at.
+
+    Pre-order, first crossing wins. A step describes one crossing, and picking whichever
+    of several the walk happened to reach first would make the path depend on iteration
+    order, which invariant 8 forbids.
+    """
+    superglobal = _superglobal_read(node, source)
+    if superglobal is not None:
+        if superglobal_kinds(*superglobal):
+            return f"attacker-controlled ${superglobal[0]}"
+        # A superglobal read carrying nothing is `$_SERVER['DOCUMENT_ROOT']`, and the
+        # bare `$_SERVER` underneath it is not a source in its own right here. Stopping
+        # rather than descending is what keeps the safe key safe, for the same reason
+        # expr_kinds is decisive above.
+        if node.type == "subscript_expression":
+            return None
+    if (
+        node.type == "member_call_expression"
+        and is_source(node_text(node.child_by_field_name("name"), source))
+        and _is_request_receiver(node, source, request_vars)
+    ):
+        return "attacker-controlled request data"
+    for child in node.children:
+        note = _source_note(child, source, request_vars)
+        if note is not None:
+            return note
+    return None
 
 
 def _inline_source_steps(
@@ -190,14 +270,15 @@ def _inline_source_steps(
     path jumps from the route to the sink and never says where the data
     entered, which is exactly the gap invariant 2 exists to prevent.
     """
-    if not _crosses_source(arg, parsed.source, request_vars):
+    note = _source_note(arg, parsed.source, request_vars)
+    if note is None:
         return []
     return [
         PathStep(
             role="source",
             span=node_span(arg, parsed.path),
             snippet=node_text(arg, parsed.source).strip(),
-            note="attacker-controlled request data",
+            note=note,
         )
     ]
 
@@ -607,13 +688,14 @@ def _walk_method(
             # cleared every kind, because it costs nothing on a path that then
             # never reaches a sink, and omitting it would drop the source step
             # from a path where only one kind was cleared.
-            if _crosses_source(right, source, request_vars):
+            entered = _source_note(right, source, request_vars)
+            if entered is not None:
                 prefix = prefix + [
                     PathStep(
                         role="source",
                         span=node_span(assign, parsed.path),
                         snippet=node_text(assign, source).strip(),
-                        note="attacker-controlled request data",
+                        note=entered,
                     )
                 ]
 

@@ -235,6 +235,26 @@ Ruleset hash: `520914c8731f4c0d`.
   GraphML has no list type, and a key set derived from whichever attribute names a project
   happens to produce would change under the reader between two scans of the same code.
 
+- **PHP superglobals are sources** (TASK-026). `$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`,
+  `$_FILES` and `$argv` carry every taint kind, `mass_assign` included: the attacker names the
+  keys as well as the values, so `Account::create($_POST)` is the same finding as
+  `Account::create($request->all())`. The walk had no rule for a subscript read at all before
+  this, so none of it was visible - and code reaching past the Request object is
+  disproportionately the code that is vulnerable.
+
+  `$_SERVER` is split per key, because it is half request and half server configuration.
+  `HTTP_*` covers every request header as a prefix rather than a list, `REQUEST_URI`,
+  `QUERY_STRING` and `PATH_INFO` are named, and `DOCUMENT_ROOT` is not a source. A key the
+  table does not classify is treated as tainted, as is `$_SERVER[$name]` and a read of the
+  whole array: the safe keys are short and knowable while the dangerous ones are open-ended, so
+  the unknown case errs towards the finding rather than towards silence. This decision was not
+  in [06-taint-analysis](docs/06-taint-analysis/README.md), which named the keys without saying
+  what to do with an unnamed one, and that document now records it.
+
+  A source step names which source it crossed - `attacker-controlled $_GET` rather than
+  `attacker-controlled request data` - because an evidence path that says "request data" in an
+  action that has no `$request` sends the reader looking for the wrong thing.
+
 ### Changed
 
 - **The node ID scheme no longer contains the span**, correcting
