@@ -66,6 +66,7 @@ These are the ones that break naive parsers and silently lose findings:
 | Variable variables, `$$x`, `call_user_func`, `{$obj->$m}()` | Dynamic dispatch. Mark the edge unresolved; the taint engine treats unresolved sinks conservatively. |
 | String interpolation `"... $x ..."` and heredoc | The single most common SQL-injection vehicle in PHP. Interpolated expressions must be first-class AST children, not opaque string text. |
 | Null-safe `?->`, spread, named args, first-class callables `foo(...)` | PHP 8 syntax that must not produce ERROR nodes |
+| Enums (`enum Status: string`) | A type with methods, extracted as a class. Its methods have bodies, take parameters and can hold a sink, so an enum the symbol table omits is a call target that resolves to nothing - and a stop the resolution rate cannot even count, because a type that was never created is indistinguishable from framework code. It has no `base_clause`: the `: string` is a backing type, not a parent. |
 | Attributes `#[...]` | Used by newer packages for routing and validation |
 | Anonymous classes, closures with `use (&$x)` | By-reference capture affects data flow |
 

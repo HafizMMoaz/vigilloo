@@ -73,6 +73,20 @@ def find_all(node: Node, type_name: str) -> list[Node]:
     return [n for n in walk(node) if n.type == type_name]
 
 
+def find_any(node: Node, type_names: tuple[str, ...]) -> list[Node]:
+    """Every descendant of one of several types, in document order.
+
+    One walk rather than one per type, and the difference is not performance.
+    Concatenating two `find_all` results groups the matches by type, so a
+    statement holding `$a->x($tainted)` and `$b?->y($tainted)` would be visited
+    in an order that depends on which type was listed first rather than on where
+    the calls appear. The walk emits path steps as it goes, and invariant 8
+    requires the same input to produce byte-identical output.
+    """
+    wanted = frozenset(type_names)
+    return [n for n in walk(node) if n.type in wanted]
+
+
 # The declarations worth naming in a parse failure, and the word each is called
 # by in a report. A construct earns a place here by being something a developer
 # can go and open: "the method OrderController::search failed to parse" is a

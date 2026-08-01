@@ -19,7 +19,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 31
+        line: 34
         symbol: 'GET|HEAD /invoices/{invoice}'
         note: 'authenticated by: auth'
       - role: binding
@@ -42,7 +42,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 32
+        line: 35
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Receipt $receipt'
@@ -58,7 +58,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 40
+        line: 43
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Invoice $invoice'
@@ -76,7 +76,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 55
+        line: 58
         symbol: '/invoices/{invoice}/grouped'
         note: 'authenticated by: auth'
       - role: binding
@@ -95,7 +95,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 19
+        line: 22
         symbol: 'POST /users'
       - role: source
         symbol: '$request->all()'
@@ -116,7 +116,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 21
+        line: 24
       - role: source
         symbol: '$request->all()'
       - role: model
@@ -136,7 +136,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 25
+        line: 28
       - role: source
         line: 45
         symbol: "Post::find($request->input('id'))"
@@ -158,7 +158,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 26
+        line: 29
         symbol: 'PUT /users/{user}'
       - role: source
         symbol: '$request->all()'
@@ -178,7 +178,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 15
+        line: 18
         symbol: 'POST /orders/search'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -200,7 +200,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 17
+        line: 20
         symbol: 'GET|HEAD /orders/display'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -223,7 +223,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 59
+        line: 62
         symbol: 'GET|HEAD /reports/status'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -242,7 +242,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 60
+        line: 63
         symbol: 'GET|HEAD /reports/totals'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -261,7 +261,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 61
+        line: 64
         symbol: 'POST /reports/purge'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -284,7 +284,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 68
+        line: 71
         symbol: 'GET|HEAD /legacy/search'
       - role: source
         line: 23
@@ -303,7 +303,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 69
+        line: 72
         symbol: 'GET|HEAD /legacy/host'
       - role: source
         line: 30
@@ -325,7 +325,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 76
+        line: 79
         symbol: 'GET|HEAD /magic/sort'
       - role: source
         symbol: '$request->sort'
@@ -343,7 +343,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 77
+        line: 80
         symbol: 'GET|HEAD /magic/search'
       - role: source
         symbol: '$column = $request->column'
@@ -362,7 +362,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 84
+        line: 87
         symbol: 'GET|HEAD /pages/{slug}'
       - role: source
         file: app/Http/Controllers/SlugController.php
@@ -383,7 +383,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 85
+        line: 88
         symbol: 'GET|HEAD /pages/{column}/ordered'
       - role: source
         line: 31
@@ -406,7 +406,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 95
+        line: 98
         symbol: 'GET|HEAD /helper/sort'
       - role: source
         line: 24
@@ -425,7 +425,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 96
+        line: 99
         symbol: 'GET|HEAD /helper/legacy'
       - role: source
         line: 32
@@ -443,7 +443,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 97
+        line: 100
         symbol: 'GET|HEAD /helper/assigned'
       - role: source
         line: 38
@@ -452,6 +452,135 @@ findings:
       - role: sink
         line: 40
         symbol: 'DB::raw("select * from orders order by {$column}")'
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.sql-injection through the nullsafe operator (TASK-030) ---------------------
+  # `$request?->input('x')` reads what `$request->input('x')` reads. The operator decides
+  # what happens when the receiver is null and says nothing about where the value came
+  # from, but tree-sitter spells the two as different node types, so the walk saw one and
+  # was blind to the other. Same note as the arrow form deliberately: the developer is
+  # being sent to the same source, and naming it differently would imply otherwise.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NullsafeController.php
+    line: 25
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 107
+        symbol: 'GET|HEAD /nullsafe/sort'
+      - role: source
+        line: 25
+        symbol: "$request?->input('sort')"
+        note: 'attacker-controlled request data'
+      - role: sink
+        line: 25
+        symbol: "DB::raw('select * from orders order by ' . $request?->input('sort'))"
+        note: 'unparameterised SQL fragment'
+
+  # The nullsafe magic-property form. Two node types are involved rather than one, and a
+  # fix to the call form alone would leave this silent.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NullsafeController.php
+    line: 32
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 108
+        symbol: 'GET|HEAD /nullsafe/magic'
+      - role: source
+        line: 32
+        symbol: '$request?->column'
+        note: 'attacker-controlled request data, read as a magic property'
+      - role: sink
+        line: 32
+        note: 'unparameterised SQL fragment'
+
+  # Assigned before use, so the source step lands on the assignment rather than on the
+  # sink argument - the other of the two places the walk can recognise a source.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NullsafeController.php
+    line: 40
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 109
+        symbol: 'GET|HEAD /nullsafe/assigned'
+      - role: source
+        line: 38
+        symbol: "$column = $request?->input('column')"
+        note: 'attacker-controlled request data'
+      - role: sink
+        line: 40
+        symbol: 'DB::raw("select * from orders order by {$column}")'
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.sql-injection through named arguments (TASK-030) --------------------------
+  # Named and written in the declared order, so the value is still at position 0. This is
+  # the control: it fires with or without name resolution, and pins that reading names did
+  # not break the ordinary case.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NamedArgController.php
+    line: 27
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 116
+        symbol: 'GET|HEAD /named/ordered'
+      - role: source
+        line: 27
+        symbol: "$request->input('filter')"
+        note: 'attacker-controlled request data'
+      - role: sink
+        line: 27
+        note: 'unparameterised SQL fragment'
+
+  # Named and REORDERED, which is the case that was silently missed. Argument 0 is the
+  # empty bindings array and the injectable SQL is at 1, so an index-only sink read the
+  # safe argument, found nothing, and reported a clean file.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NamedArgController.php
+    line: 34
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 117
+        symbol: 'GET|HEAD /named/reordered'
+      - role: source
+        symbol: "$request->input('filter')"
+        note: 'attacker-controlled request data'
+      - role: sink
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.sql-injection inside an enum method (TASK-030) ----------------------------
+  # The sink is in the enum, not in the caller, and that placement is the test. Taint is
+  # unioned over a call's children, so a sink in the *controller* fires whether or not the
+  # callee was ever resolved - it would pass with enum extraction reverted and prove
+  # nothing. Reaching this one requires the enum to have been extracted, the static call
+  # resolved to it, and the body walked, which is why the propagator step has to name
+  # App\Enums\ReportFormat::purge.
+  - rule: php.sql-injection
+    file: app/Enums/ReportFormat.php
+    line: 30
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 124
+        symbol: 'POST /enum/purge'
+      - role: propagator
+        file: app/Http/Controllers/EnumController.php
+        line: 26
+        symbol: "ReportFormat::purge($request->input('table'))"
+        note: 'argument 0 into App\Enums\ReportFormat::purge'
+      - role: sink
+        file: app/Enums/ReportFormat.php
+        line: 30
+        symbol: 'DB::unprepared("truncate table {$table}")'
         note: 'unparameterised SQL fragment'
 
 must_not_find:
@@ -600,3 +729,39 @@ must_not_find:
     file: app/Http/Controllers/HelperController.php
     line: 56
     reason: "config('orders.default_sort') is not the request() helper - it reads the application's own config"
+
+  # ---- the nullsafe operator: the two reads that must stay silent ----------------------
+  # The receiver is what makes a read a source, and `?->` does not change the receiver.
+  # Without these the fix degrades into "every nullsafe read is tainted", and `?->` is all
+  # over modern PHP precisely because it is the safe way to traverse a maybe-null chain.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NullsafeController.php
+    line: 48
+    reason: '$invoice?->column is a nullsafe read on an ordinary object, not on a Request'
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NullsafeController.php
+    line: 55
+    reason: 'intval($request?->input(...)) - a nullsafe read is an ordinary tainted value, so the sanitizer table still applies'
+
+  # ---- named arguments: the two parameterised calls that must stay silent --------------
+  # Reading the name has to cut both ways. These are the mirror image of the two findings
+  # above: the query is a constant and the request data is a binding, which is what
+  # bindings are for. A rule that resolved names in only one direction would trade a
+  # silent miss for a false positive on correct code, which is the worse of the two.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NamedArgController.php
+    line: 45
+    reason: 'whereRaw(sql: constant, bindings: [request data]) - the parameterised form, written with names'
+  - rule: php.sql-injection
+    file: app/Http/Controllers/NamedArgController.php
+    line: 56
+    reason: 'the same safe call reordered - position 0 now holds the tainted binding, and it is still not the query'
+
+  # ---- enums: the parameterised query inside an enum body ------------------------------
+  # The walk now enters enum bodies, so every ordinary rule has to keep applying once it
+  # is in there. Without this, "the walk can see enums" would be free to drift into
+  # "anything reached through an enum is a finding".
+  - rule: php.sql-injection
+    file: app/Enums/ReportFormat.php
+    line: 39
+    reason: "DB::select('... where status = ?', [$status]) inside an enum - the query is a constant and the request data is a binding"

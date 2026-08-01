@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from tree_sitter import Node
 
 from .models import Span, Symbol
-from .parser import ParsedFile, find_all, node_span, node_text
+from .parser import ParsedFile, find_all, find_any, node_span, node_text
 
 _BUILTIN_TYPES = frozenset(
     {
@@ -431,8 +431,24 @@ def extract_symbols(
     classes: dict[str, ClassInfo] = {}
     traits: dict[str, ClassInfo] = {}
 
-    for cls in find_all(root, "class_declaration"):
-        info = _extract_type(cls, parsed, namespace, imports, autoload_roots, is_trait=False)
+    # Enums are extracted as classes, and belong in the same table rather than a
+    # third one beside `traits`. A method on an enum has a body, takes parameters
+    # and can reach a sink, so to everything downstream - method lookup, the call
+    # graph, the taint walk - an enum is a type with methods and nothing about it
+    # needs a special case. Leaving them out was not a partial answer but a silent
+    # one: the type did not exist, so a call into it resolved to nothing and the
+    # walk stopped without even counting the call as unresolved.
+    #
+    # `_extract_type` needs no change to read one. The grammar gives
+    # enum_declaration the same `name` and `body` fields, and hangs its methods
+    # off the body as direct children exactly as a class does; `enum_case` children
+    # are simply not method_declarations and are skipped. An enum has no
+    # `base_clause` - `enum Status: string` is a backing type, not a parent - so
+    # the parent it records is None, which is the truth rather than a default.
+    for declaration in find_any(root, ("class_declaration", "enum_declaration")):
+        info = _extract_type(
+            declaration, parsed, namespace, imports, autoload_roots, is_trait=False
+        )
         if info is not None:
             classes[info.fqn] = info
 

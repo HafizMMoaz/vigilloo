@@ -25,6 +25,41 @@ Ruleset hash: `520914c8731f4c0d`.
 
 ### Added
 
+- **Modern PHP syntax is no longer a blind spot** (TASK-030), covering four constructs from
+  [docs/03-parser](docs/03-parser/README.md) section "PHP features that must be handled
+  correctly". Each was verified against the grammar first, and the two constructs that turned
+  out to work already - `match`, arrow functions, `readonly` and promoted properties - were
+  left alone rather than given a change that would have claimed credit for nothing.
+
+  - **The nullsafe operator reads as a source.** `$request?->input('sort')` and
+    `$request?->bio` read exactly what their `->` forms read: `?->` decides what happens when
+    the receiver is null and says nothing about where the value came from. tree-sitter gives
+    the two spellings different node types, so a walk keyed on the arrow form found a textbook
+    injection in one and reported nothing at all for the other. The receiver still decides, so
+    `$invoice?->column` is not a source and `intval($request?->input('c'))` is sanitized.
+
+  - **Sinks resolve named arguments by name.** `whereRaw(bindings: [], sql: $x)` puts the
+    injectable SQL at position 1, so an index-only sink read the empty bindings array and lost
+    the finding - and on the mirror image `whereRaw(bindings: [$x], sql: 'a = ?')` it would read
+    a binding and report a parameterised call as an injection. Each sink now declares the
+    parameter name its dangerous argument arrives under, and the index remains the fallback,
+    counting positional arguments only, which is PHP's own rule.
+
+  - **Enum declarations are extracted as classes.** An enum is an ordinary call target: its
+    methods have bodies, take parameters and can hold a sink. An enum the symbol table omitted
+    was a call that resolved to nothing, and the give-up was not even counted, because a type
+    the extractor never created is indistinguishable from framework code - so the resolution
+    rate reported full coverage over a real gap.
+
+  - **Dynamic invocations are counted as unresolved.** `$fn($tainted)` was silent in both
+    directions: no finding, because there was no loop over `function_call_expression`, and no
+    give-up either, because the call site was never visited. It is now marked unresolved, as
+    docs/03-parser requires. A literal callee (`strlen($x)`) stays uncounted, and `$fn(...)` is
+    the first-class callable placeholder rather than a call, so it passes nothing and loses
+    nothing.
+
+  No new rule IDs: all four are reachability fixes to `php.sql-injection` and `php.xss`.
+
 - **The `request()` helper and the legacy `Input` facade are taint sources** (TASK-029), both
   listed in [docs/06-taint-analysis](docs/06-taint-analysis/README.md) section "Laravel HTTP".
   Neither reaches the Request through a parameter, so the receiver check that recognises

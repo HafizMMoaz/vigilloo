@@ -58,6 +58,15 @@ cannot reach a string sink on its own. **The receiver decides, not the syntax**:
 fetch on anything other than a Request is not a source, or the rule would report every
 property read in the project.
 
+**The nullsafe operator changes nothing about the source.** `$request?->input('x')` and
+`$request?->bio` read exactly what their `->` forms read: `?->` decides what happens when the
+receiver is null and says nothing about where the value came from. Both spellings therefore
+carry the same kinds and produce the same evidence note, because the developer is being sent
+to the same read. This is a source of silent false negatives rather than a subtle one - the
+grammar gives the two forms different node types, so recognising only `->` misses a textbook
+injection entirely and reports nothing at all. The receiver rule above still decides:
+`$invoice?->column` is not a source.
+
 Route parameters injected into controller signatures are sources:
 `public function show(Request $r, string $slug)` - `$slug` is attacker-controlled.
 
@@ -115,6 +124,18 @@ match only when the receiver resolves to the DB facade. This also means `use App
 `whereRaw('age > ?', [$age])` is safe; `whereRaw("age > $age")` is not. The rule must inspect
 which argument the taint reaches. Flagging every `whereRaw` is exactly the noise that makes
 developers stop reading security reports.
+
+**A named argument binds by name, so the index is only a fallback.** `whereRaw(bindings: [],
+sql: $x)` puts the injectable SQL at position 1 and an empty array at position 0, so an
+index-only sink reads the safe argument and reports nothing. The mirror image is worse rather
+than better: `whereRaw(bindings: [$x], sql: 'a = ?')` would have the index read a binding and
+report a parameterised call as an injection. Argument precision is what separates these rules
+from a nuisance, so each sink declares the parameter name its dangerous argument arrives under
+- `$sql` for the `*Raw` builders, `$expression` for `selectRaw` and `fromRaw`, `$value` for
+`DB::raw`, `$query` for the connection-level methods - and the name wins whenever the call site
+writes one. Where names are mixed with positional arguments the index counts positional
+arguments only, which is PHP's own rule.
+
 
 Also: `->orderBy($request->input('col'))` is not injectable in modern Laravel (identifiers are
 quoted), but `orderByRaw` is. Version-check this - the adapter tracks the Laravel version.

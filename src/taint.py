@@ -33,14 +33,26 @@ from .laravel.vocabulary import (
     route_param_is_source,
     sanitizer_clears,
     sink,
+    sink_arg_name,
     source_kinds,
     static_sink,
     superglobal_kinds,
 )
 from .models import PathStep, Route, TaintKind, WalkStats
-from .parser import ParsedFile, find_all, node_span, node_text, walk
+from .parser import ParsedFile, find_all, find_any, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
+
+# `$request->input('x')` and `$request?->input('x')` read the same value from the
+# same object. The nullsafe operator decides what happens when the receiver is
+# null; it says nothing about where the value came from, so every branch that
+# recognises one form has to recognise the other. tree-sitter spells them as two
+# node types, which is the entire reason this constant exists: a walk keyed on
+# the arrow form alone is silently blind to modern code, and a missed source is
+# a false negative that no part of the report mentions.
+_MEMBER_CALLS = ("member_call_expression", "nullsafe_member_call_expression")
+_MEMBER_ACCESSES = ("member_access_expression", "nullsafe_member_access_expression")
+
 
 # Resolves a class name as written at a call site to its FQN, or None when the file's
 # imports and namespace do not settle it. Passed in rather than reached for, because
@@ -180,7 +192,7 @@ def expr_kinds(
     if node.type == "variable_name":
         return local.get(_var_name(node, source), frozenset())
 
-    if node.type == "member_call_expression":
+    if node.type in _MEMBER_CALLS:
         name = node_text(node.child_by_field_name("name"), source)
         entering = source_kinds(name)
         if entering and _is_request_receiver(node, source, request_vars):
@@ -191,7 +203,7 @@ def expr_kinds(
     # union over children would reach the bare `$request` underneath, which carries
     # nothing, so the read would look clean. The receiver check is what stops this
     # tainting every property fetch in the project.
-    if node.type == "member_access_expression" and _is_request_receiver(node, source, request_vars):
+    if node.type in _MEMBER_ACCESSES and _is_request_receiver(node, source, request_vars):
         return MAGIC_PROPERTY_KINDS
 
     if node.type == "function_call_expression":
@@ -310,12 +322,12 @@ def _source_note(
         if node.type == "subscript_expression":
             return None
     if (
-        node.type == "member_call_expression"
+        node.type in _MEMBER_CALLS
         and is_source(node_text(node.child_by_field_name("name"), source))
         and _is_request_receiver(node, source, request_vars)
     ):
         return "attacker-controlled request data"
-    if node.type == "member_access_expression" and _is_request_receiver(node, source, request_vars):
+    if node.type in _MEMBER_ACCESSES and _is_request_receiver(node, source, request_vars):
         # Named apart from the method form deliberately. A developer sent to
         # "request data" goes looking for a call and finds a property, and the
         # entire point of this source is that the property form does not look
@@ -520,11 +532,54 @@ def _scoped_receiver(
     return project.resolve_class_name(file, written)
 
 
+def _argument_name(arg: Node, source: bytes) -> str | None:
+    """The name a named argument was passed under, or None when it is positional.
+
+    tree-sitter gives an `argument` node a `name` field only when the call site wrote
+    one, so this is the whole test. The value is the node's remaining child, which
+    `_sink_argument` reads rather than the argument wrapper - the wrapper's text is
+    `sql: $x`, and taking that as the expression would put the parameter name into the
+    evidence snippet.
+    """
+    name = arg.child_by_field_name("name")
+    return node_text(name, source) if name is not None else None
+
+
+def _sink_argument(args: list[Node], index: int, param: str | None, source: bytes) -> Node | None:
+    """The argument a sink's dangerous parameter actually received, or None if absent.
+
+    Position is how PHP binds an argument only until a name is written. Once the call
+    site says `whereRaw(bindings: [], sql: $x)`, position 0 holds the empty bindings
+    array and the injectable SQL is at position 1, so an index-only lookup is wrong in
+    both directions at once: it loses that injection, and on the mirror image
+    `whereRaw(bindings: [$x], sql: 'a = ?')` it reads the binding and reports a
+    parameterised call that is perfectly safe.
+
+    The name wins whenever it appears, and the index is the fallback - which is PHP's
+    own rule, not a heuristic. A sink whose parameter name this module does not know
+    (`param` is None) keeps the old behaviour exactly.
+
+    Named arguments may follow positional ones, so the index fallback counts only the
+    positional arguments rather than indexing the list. `f($sql, bindings: [])` binds
+    `$sql` to parameter 0 because it is the first *positional* argument, and a list
+    index happens to agree here only because nothing precedes it.
+    """
+    if param is not None:
+        for arg in args:
+            if _argument_name(arg, source) == param:
+                return arg
+    positional = [arg for arg in args if _argument_name(arg, source) is None]
+    if index >= len(positional):
+        return None
+    return positional[index]
+
+
 def _sink_steps(
     call: Node,
     args: list[Node],
     found: tuple[int, TaintKind, str],
     parsed: ParsedFile,
+    method: str,
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
@@ -537,11 +592,12 @@ def _sink_steps(
     two copies of that check are two chances for one of them to drift into flagging the call.
     """
     index, kind, rule_id = found
-    if index >= len(args):
+    argument = _sink_argument(args, index, sink_arg_name(method), parsed.source)
+    if argument is None:
         return []
-    if kind not in expr_kinds(args[index], parsed.source, local, request_vars, resolve):
+    if kind not in expr_kinds(argument, parsed.source, local, request_vars, resolve):
         return []
-    return _inline_source_steps(args[index], parsed, request_vars, resolve) + [
+    return _inline_source_steps(argument, parsed, request_vars, resolve) + [
         PathStep(
             role="sink",
             span=node_span(call, parsed.path),
@@ -836,8 +892,9 @@ def _walk_method(
             scoped_sink = static_sink(scoped_receiver_fqn, name) or sink(name)
             if scoped_sink is not None:
                 sink_steps = _sink_steps(
-                    call, args, scoped_sink, parsed, local, request_vars, resolve
+                    call, args, scoped_sink, parsed, name, local, request_vars, resolve
                 )
+
                 if sink_steps:
                     paths.append(prefix + sink_steps)
                 continue
@@ -860,8 +917,11 @@ def _walk_method(
                 )
             )
 
-        # 2b. Calls: either a sink, or a step deeper into another method.
-        for call in find_all(stmt, "member_call_expression"):
+        # 2b. Calls: either a sink, or a step deeper into another method. Both
+        #     spellings of the operator, because `$repo?->search($tainted)` is
+        #     the same call as `$repo->search($tainted)` and stopping at one of
+        #     them loses the trail without recording that anything was lost.
+        for call in find_any(stmt, _MEMBER_CALLS):
             obj, name, args = _call_parts(call, source)
 
             steps = _mass_assign_steps(
@@ -885,8 +945,9 @@ def _walk_method(
             sink_found = sink(name)
             if sink_found is not None:
                 sink_steps = _sink_steps(
-                    call, args, sink_found, parsed, local, request_vars, resolve
+                    call, args, sink_found, parsed, name, local, request_vars, resolve
                 )
+
                 if sink_steps:
                     paths.append(prefix + sink_steps)
                 continue
@@ -956,8 +1017,47 @@ def _walk_method(
                 )
             )
 
+        # 2c. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
+        #     docs/03-parser is explicit about these - "Dynamic dispatch. Mark the
+        #     edge unresolved" - and until now they were not marked at all. There is
+        #     no loop over function_call_expression in this walk, so a tainted value
+        #     handed to a variable callee vanished: no finding, and no give-up either,
+        #     so the resolution rate reported full coverage over a trail it had lost.
+        #     That is precisely the combination invariant 4 exists to prevent.
+        #
+        #     Only a *dynamic* callee counts. A written name - `strlen($x)`,
+        #     `sprintf($x)`, `\strlen($x)` - is skipped, and that exclusion is what
+        #     keeps the number meaningful: every PHP file is full of calls to builtins
+        #     and to project functions, none of which this walk was ever going to
+        #     enter, and counting them would bury the one call that genuinely lost a
+        #     trail under thousands that never had one. `name` and `qualified_name`
+        #     are both literal spellings of a known callee; anything else - a
+        #     variable, a parenthesised expression, an array offset - is a callee
+        #     whose identity is not knowable here.
+        #
+        #     ponytail: the edge is counted, not followed. Following it needs the set
+        #     of closures a variable may hold, which is a data-flow question this
+        #     statement-order walk cannot answer - see docs/05-data-flow-analysis.
+        #     The upgrade trigger is a fixture where a closure assigned in one branch
+        #     reaches a sink, at which point the give-up here becomes a real edge.
+        for call in find_all(stmt, "function_call_expression"):
+            invoked = call.child_by_field_name("function")
+            if invoked is None or invoked.type in ("name", "qualified_name"):
+                continue
+            args_node = call.child_by_field_name("arguments")
+            if args_node is None:
+                continue
+            dynamic_args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+            # Same condition as every other give-up in this walk: a call is only a
+            # lost trail when something was being carried into it. `$fn()` and
+            # `$fn($constant)` lose nothing, and `$fn(...)` is a first-class callable
+            # that has not been invoked yet - nothing is passed to any of them.
+            if any(expr_kinds(arg, source, local, request_vars, resolve) for arg in dynamic_args):
+                _giveup(stats)
+
         # 3. view() hands data to a template, where html taint can reach a
         #    raw echo. A statement can hold more than one view() call, as in a
+
         #    ternary choosing between two templates, so each is walked.
         for binding in extract_view_bindings(stmt, source):
             bound: dict[str, frozenset[TaintKind]] = {}

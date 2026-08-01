@@ -2,9 +2,12 @@
 // tests/fixtures/laravel-minimal/routes/api.php
 
 use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\EnumController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\LegacyController;
 use App\Http\Controllers\MagicController;
+use App\Http\Controllers\NamedArgController;
+use App\Http\Controllers\NullsafeController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ReceiptController;
 use App\Http\Controllers\ReportController;
@@ -97,3 +100,26 @@ Route::get('/helper/legacy', [HelperController::class, 'legacy']);
 Route::get('/helper/assigned', [HelperController::class, 'assigned']);
 Route::get('/helper/escaped', [HelperController::class, 'escaped']);
 Route::get('/helper/config', [HelperController::class, 'notTheHelper']);
+
+// The nullsafe operator (TASK-030). `$request?->input('x')` reads what
+// `$request->input('x')` reads - tree-sitter just spells it as a different node
+// type, so a walk keyed on the arrow form is blind to it.
+Route::get('/nullsafe/sort', [NullsafeController::class, 'sort']);
+Route::get('/nullsafe/magic', [NullsafeController::class, 'magic']);
+Route::get('/nullsafe/assigned', [NullsafeController::class, 'assigned']);
+Route::get('/nullsafe/ordinary/{invoice}', [NullsafeController::class, 'ordinary']);
+Route::get('/nullsafe/escaped', [NullsafeController::class, 'escaped']);
+
+// Named arguments (TASK-030). `whereRaw(bindings: [], sql: $x)` puts the
+// injectable SQL at position 1, so an index-only sink reads the empty bindings
+// array and loses the finding - and reads the binding on the safe mirror image.
+Route::get('/named/ordered', [NamedArgController::class, 'ordered']);
+Route::get('/named/reordered', [NamedArgController::class, 'reordered']);
+Route::get('/named/bound', [NamedArgController::class, 'bound']);
+Route::get('/named/bound-reordered', [NamedArgController::class, 'boundReordered']);
+
+// Enum methods (TASK-030). An enum is an ordinary call target - its methods have
+// bodies and parameters - but enum declarations were not extracted at all, so a
+// call into one resolved to nothing and the walk stopped without counting it.
+Route::post('/enum/purge', [EnumController::class, 'purge']);
+Route::get('/enum/status', [EnumController::class, 'status']);
