@@ -5,6 +5,7 @@ use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\LegacyController;
 use App\Http\Controllers\MagicController;
+use App\Http\Controllers\NullsafeController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ReceiptController;
 use App\Http\Controllers\ReportController;
@@ -97,3 +98,12 @@ Route::get('/helper/legacy', [HelperController::class, 'legacy']);
 Route::get('/helper/assigned', [HelperController::class, 'assigned']);
 Route::get('/helper/escaped', [HelperController::class, 'escaped']);
 Route::get('/helper/config', [HelperController::class, 'notTheHelper']);
+
+// The nullsafe operator (TASK-030). `$request?->input('x')` reads what
+// `$request->input('x')` reads - tree-sitter just spells it as a different node
+// type, so a walk keyed on the arrow form is blind to it.
+Route::get('/nullsafe/sort', [NullsafeController::class, 'sort']);
+Route::get('/nullsafe/magic', [NullsafeController::class, 'magic']);
+Route::get('/nullsafe/assigned', [NullsafeController::class, 'assigned']);
+Route::get('/nullsafe/ordinary/{invoice}', [NullsafeController::class, 'ordinary']);
+Route::get('/nullsafe/escaped', [NullsafeController::class, 'escaped']);

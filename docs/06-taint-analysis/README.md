@@ -58,6 +58,15 @@ cannot reach a string sink on its own. **The receiver decides, not the syntax**:
 fetch on anything other than a Request is not a source, or the rule would report every
 property read in the project.
 
+**The nullsafe operator changes nothing about the source.** `$request?->input('x')` and
+`$request?->bio` read exactly what their `->` forms read: `?->` decides what happens when the
+receiver is null and says nothing about where the value came from. Both spellings therefore
+carry the same kinds and produce the same evidence note, because the developer is being sent
+to the same read. This is a source of silent false negatives rather than a subtle one - the
+grammar gives the two forms different node types, so recognising only `->` misses a textbook
+injection entirely and reports nothing at all. The receiver rule above still decides:
+`$invoice?->column` is not a source.
+
 Route parameters injected into controller signatures are sources:
 `public function show(Request $r, string $slug)` - `$slug` is attacker-controlled.
 

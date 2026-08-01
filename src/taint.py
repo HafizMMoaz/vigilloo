@@ -38,9 +38,20 @@ from .laravel.vocabulary import (
     superglobal_kinds,
 )
 from .models import PathStep, Route, TaintKind, WalkStats
-from .parser import ParsedFile, find_all, node_span, node_text, walk
+from .parser import ParsedFile, find_all, find_any, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
+
+# `$request->input('x')` and `$request?->input('x')` read the same value from the
+# same object. The nullsafe operator decides what happens when the receiver is
+# null; it says nothing about where the value came from, so every branch that
+# recognises one form has to recognise the other. tree-sitter spells them as two
+# node types, which is the entire reason this constant exists: a walk keyed on
+# the arrow form alone is silently blind to modern code, and a missed source is
+# a false negative that no part of the report mentions.
+_MEMBER_CALLS = ("member_call_expression", "nullsafe_member_call_expression")
+_MEMBER_ACCESSES = ("member_access_expression", "nullsafe_member_access_expression")
+
 
 # Resolves a class name as written at a call site to its FQN, or None when the file's
 # imports and namespace do not settle it. Passed in rather than reached for, because
@@ -180,7 +191,7 @@ def expr_kinds(
     if node.type == "variable_name":
         return local.get(_var_name(node, source), frozenset())
 
-    if node.type == "member_call_expression":
+    if node.type in _MEMBER_CALLS:
         name = node_text(node.child_by_field_name("name"), source)
         entering = source_kinds(name)
         if entering and _is_request_receiver(node, source, request_vars):
@@ -191,7 +202,7 @@ def expr_kinds(
     # union over children would reach the bare `$request` underneath, which carries
     # nothing, so the read would look clean. The receiver check is what stops this
     # tainting every property fetch in the project.
-    if node.type == "member_access_expression" and _is_request_receiver(node, source, request_vars):
+    if node.type in _MEMBER_ACCESSES and _is_request_receiver(node, source, request_vars):
         return MAGIC_PROPERTY_KINDS
 
     if node.type == "function_call_expression":
@@ -310,12 +321,12 @@ def _source_note(
         if node.type == "subscript_expression":
             return None
     if (
-        node.type == "member_call_expression"
+        node.type in _MEMBER_CALLS
         and is_source(node_text(node.child_by_field_name("name"), source))
         and _is_request_receiver(node, source, request_vars)
     ):
         return "attacker-controlled request data"
-    if node.type == "member_access_expression" and _is_request_receiver(node, source, request_vars):
+    if node.type in _MEMBER_ACCESSES and _is_request_receiver(node, source, request_vars):
         # Named apart from the method form deliberately. A developer sent to
         # "request data" goes looking for a call and finds a property, and the
         # entire point of this source is that the property form does not look
@@ -860,8 +871,11 @@ def _walk_method(
                 )
             )
 
-        # 2b. Calls: either a sink, or a step deeper into another method.
-        for call in find_all(stmt, "member_call_expression"):
+        # 2b. Calls: either a sink, or a step deeper into another method. Both
+        #     spellings of the operator, because `$repo?->search($tainted)` is
+        #     the same call as `$repo->search($tainted)` and stopping at one of
+        #     them loses the trail without recording that anything was lost.
+        for call in find_any(stmt, _MEMBER_CALLS):
             obj, name, args = _call_parts(call, source)
 
             steps = _mass_assign_steps(
