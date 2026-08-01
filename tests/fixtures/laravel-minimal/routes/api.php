@@ -5,6 +5,7 @@ use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\LegacyController;
 use App\Http\Controllers\MagicController;
+use App\Http\Controllers\NamedArgController;
 use App\Http\Controllers\NullsafeController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ReceiptController;
@@ -107,3 +108,11 @@ Route::get('/nullsafe/magic', [NullsafeController::class, 'magic']);
 Route::get('/nullsafe/assigned', [NullsafeController::class, 'assigned']);
 Route::get('/nullsafe/ordinary/{invoice}', [NullsafeController::class, 'ordinary']);
 Route::get('/nullsafe/escaped', [NullsafeController::class, 'escaped']);
+
+// Named arguments (TASK-030). `whereRaw(bindings: [], sql: $x)` puts the
+// injectable SQL at position 1, so an index-only sink reads the empty bindings
+// array and loses the finding - and reads the binding on the safe mirror image.
+Route::get('/named/ordered', [NamedArgController::class, 'ordered']);
+Route::get('/named/reordered', [NamedArgController::class, 'reordered']);
+Route::get('/named/bound', [NamedArgController::class, 'bound']);
+Route::get('/named/bound-reordered', [NamedArgController::class, 'boundReordered']);

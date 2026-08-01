@@ -306,8 +306,49 @@ STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = {
     )
 }
 
+# Sink method -> the name Laravel declares its dangerous parameter under, for
+# call sites that pass it as a named argument.
+#
+# PHP lets the caller write `whereRaw(bindings: [], sql: $x)`, and once a name is
+# written the position stops meaning anything. An index alone is then wrong in
+# both directions: it reads the empty bindings array and loses that injection,
+# and on the mirror image `whereRaw(bindings: [$x], sql: 'a = ?')` it reads the
+# binding and reports the safe parameterised call. Argument precision is what
+# separates these rules from a nuisance, so the name is part of the sink's
+# definition rather than something the walk infers.
+#
+# The names are the framework's, which is why they belong in this module and not
+# in the walk: the *Raw builders declare `$sql`, except selectRaw and fromRaw
+# which declare `$expression`; `DB::raw` declares `$value`; and the
+# connection-level methods declare `$query`. A call site that names nothing costs
+# nothing - the walk falls back to the index, which is what PHP itself does for a
+# positional argument.
+SINK_ARG_NAMES: dict[str, str] = {
+    "orderByRaw": "sql",
+    "whereRaw": "sql",
+    "orWhereRaw": "sql",
+    "havingRaw": "sql",
+    "groupByRaw": "sql",
+    "selectRaw": "expression",
+    "fromRaw": "expression",
+    "raw": "value",
+    "statement": "query",
+    "unprepared": "query",
+    "select": "query",
+    "insert": "query",
+    "update": "query",
+    "delete": "query",
+}
+
+
+def sink_arg_name(method: str) -> str | None:
+    """The parameter name a sink's dangerous argument can arrive under, if known."""
+    return SINK_ARG_NAMES.get(method)
+
+
 # Function name -> the kinds calling it genuinely clears, per the sanitizer
 # table in docs/06-taint-analysis.
+
 #
 # strip_tags, addslashes and mysql_real_escape_string are deliberately absent.
 # The spec classes them as anti-sanitizers and findings in their own right;

@@ -33,6 +33,7 @@ from .laravel.vocabulary import (
     route_param_is_source,
     sanitizer_clears,
     sink,
+    sink_arg_name,
     source_kinds,
     static_sink,
     superglobal_kinds,
@@ -531,11 +532,54 @@ def _scoped_receiver(
     return project.resolve_class_name(file, written)
 
 
+def _argument_name(arg: Node, source: bytes) -> str | None:
+    """The name a named argument was passed under, or None when it is positional.
+
+    tree-sitter gives an `argument` node a `name` field only when the call site wrote
+    one, so this is the whole test. The value is the node's remaining child, which
+    `_sink_argument` reads rather than the argument wrapper - the wrapper's text is
+    `sql: $x`, and taking that as the expression would put the parameter name into the
+    evidence snippet.
+    """
+    name = arg.child_by_field_name("name")
+    return node_text(name, source) if name is not None else None
+
+
+def _sink_argument(args: list[Node], index: int, param: str | None, source: bytes) -> Node | None:
+    """The argument a sink's dangerous parameter actually received, or None if absent.
+
+    Position is how PHP binds an argument only until a name is written. Once the call
+    site says `whereRaw(bindings: [], sql: $x)`, position 0 holds the empty bindings
+    array and the injectable SQL is at position 1, so an index-only lookup is wrong in
+    both directions at once: it loses that injection, and on the mirror image
+    `whereRaw(bindings: [$x], sql: 'a = ?')` it reads the binding and reports a
+    parameterised call that is perfectly safe.
+
+    The name wins whenever it appears, and the index is the fallback - which is PHP's
+    own rule, not a heuristic. A sink whose parameter name this module does not know
+    (`param` is None) keeps the old behaviour exactly.
+
+    Named arguments may follow positional ones, so the index fallback counts only the
+    positional arguments rather than indexing the list. `f($sql, bindings: [])` binds
+    `$sql` to parameter 0 because it is the first *positional* argument, and a list
+    index happens to agree here only because nothing precedes it.
+    """
+    if param is not None:
+        for arg in args:
+            if _argument_name(arg, source) == param:
+                return arg
+    positional = [arg for arg in args if _argument_name(arg, source) is None]
+    if index >= len(positional):
+        return None
+    return positional[index]
+
+
 def _sink_steps(
     call: Node,
     args: list[Node],
     found: tuple[int, TaintKind, str],
     parsed: ParsedFile,
+    method: str,
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
@@ -548,11 +592,12 @@ def _sink_steps(
     two copies of that check are two chances for one of them to drift into flagging the call.
     """
     index, kind, rule_id = found
-    if index >= len(args):
+    argument = _sink_argument(args, index, sink_arg_name(method), parsed.source)
+    if argument is None:
         return []
-    if kind not in expr_kinds(args[index], parsed.source, local, request_vars, resolve):
+    if kind not in expr_kinds(argument, parsed.source, local, request_vars, resolve):
         return []
-    return _inline_source_steps(args[index], parsed, request_vars, resolve) + [
+    return _inline_source_steps(argument, parsed, request_vars, resolve) + [
         PathStep(
             role="sink",
             span=node_span(call, parsed.path),
@@ -847,8 +892,9 @@ def _walk_method(
             scoped_sink = static_sink(scoped_receiver_fqn, name) or sink(name)
             if scoped_sink is not None:
                 sink_steps = _sink_steps(
-                    call, args, scoped_sink, parsed, local, request_vars, resolve
+                    call, args, scoped_sink, parsed, name, local, request_vars, resolve
                 )
+
                 if sink_steps:
                     paths.append(prefix + sink_steps)
                 continue
@@ -899,8 +945,9 @@ def _walk_method(
             sink_found = sink(name)
             if sink_found is not None:
                 sink_steps = _sink_steps(
-                    call, args, sink_found, parsed, local, request_vars, resolve
+                    call, args, sink_found, parsed, name, local, request_vars, resolve
                 )
+
                 if sink_steps:
                     paths.append(prefix + sink_steps)
                 continue
