@@ -25,6 +25,16 @@ Ruleset hash: `520914c8731f4c0d`.
 
 ### Added
 
+- **Route parameters are taint sources** (TASK-028). A URI segment bound into a controller
+  signature - `Route::get('/pages/{slug}', ...)` arriving as `public function show(Request $r,
+  string $slug)` - is attacker-controlled, per
+  [docs/06-taint-analysis](docs/06-taint-analysis/README.md). Matched by name, because that is
+  how Laravel binds. Three cases stay silent by design: a class-typed parameter is route-model
+  binding and its gap is authorization rather than escaping, an `int`/`float`/`bool` parameter is
+  coerced by PHP before the body runs, and a parameter the URI never names is not bound at all.
+  Carries every kind except `mass_assign`: a path segment is always a scalar, so it cannot supply
+  the attacker-named array keys that make an Eloquent array write dangerous. No new rule ID.
+
 - **Slice 1 - the first vertical slice** (PR #1, plan
   [`docs/plans/2026-07-25-first-vertical-slice.md`](docs/plans/2026-07-25-first-vertical-slice.md)).
   A thin cut through every layer of the pipeline: an error-tolerant tree-sitter PHP parser,

@@ -17,21 +17,24 @@ from tree_sitter import Node
 # over expression_statement alone finds nothing in a typical repository.
 from .graph import Project
 from .laravel.models import Protection, model_config
+from .laravel.routes import uri_params
 from .laravel.views import extract_view_bindings, template_path
 from .laravel.vocabulary import (
     MAGIC_PROPERTY_KINDS,
     MASS_ASSIGNMENT_RULE,
+    ROUTE_PARAM_KINDS,
     XSS_RULE,
     eloquent_write,
     is_source,
     is_superglobal,
+    route_param_is_source,
     sanitizer_clears,
     sink,
     source_kinds,
     static_sink,
     superglobal_kinds,
 )
-from .models import PathStep, TaintKind, WalkStats
+from .models import PathStep, Route, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
@@ -901,6 +904,52 @@ def _walk_method(
     return paths
 
 
+def _route_param_sources(
+    project: Project, route: Route
+) -> tuple[dict[str, frozenset[TaintKind]], list[PathStep]]:
+    """The action parameters this route binds from its URI, and the step that says so.
+
+    docs/06-taint-analysis: "Route parameters injected into controller signatures are
+    sources: public function show(Request $r, string $slug) - $slug is
+    attacker-controlled." Nothing in the body marks the crossing - the value is already
+    in the variable when the first line runs - so unlike every other source this one is
+    seeded at the entry point rather than recognised in an expression.
+
+    Matching is by name, because that is how Laravel binds: `{slug}` fills the parameter
+    called `$slug` wherever it sits in the signature, which is why the Request parameter
+    beside it does not shift the position. A parameter the URI does not name is not
+    bound at all and is left clean.
+
+    The step exists so the path still says where the data entered. An entry step alone
+    would leave a developer reading "GET /pages/{slug}" and then a sink, with nothing
+    naming the variable that carried the payload between them, and invariant 2 is about
+    the path being followable rather than merely present.
+    """
+    symbol = project.method(route.action_fqn)
+    if symbol is None:
+        return {}, []
+
+    declared = set(uri_params(route.uri))
+    bound = [
+        (name, param_type)
+        for name, param_type in zip(symbol.params, symbol.param_types, strict=True)
+        if name in declared and route_param_is_source(param_type)
+    ]
+    if not bound:
+        return {}, []
+
+    seeded = {name: ROUTE_PARAM_KINDS for name, _ in bound}
+    written = ", ".join(f"{ptype} ${name}" if ptype else f"${name}" for name, ptype in bound)
+    return seeded, [
+        PathStep(
+            role="source",
+            span=symbol.span,
+            snippet=written,
+            note="attacker-controlled route parameter, bound from the URL",
+        )
+    ]
+
+
 def find_taint_paths(
     project: Project, max_depth: int = 5, stats: WalkStats | None = None
 ) -> list[list[PathStep]]:
@@ -918,7 +967,12 @@ def find_taint_paths(
             snippet=f"{'|'.join(route.verbs)} {route.uri} -> {route.action_fqn}",
             note="HTTP entry point",
         )
-        paths.extend(_walk_method(project, route.action_fqn, {}, [entry], 0, max_depth, stats))
+        seeded, source_steps = _route_param_sources(project, route)
+        paths.extend(
+            _walk_method(
+                project, route.action_fqn, seeded, [entry, *source_steps], 0, max_depth, stats
+            )
+        )
 
     # Walking nested statements can reach the same call twice, so collapse
     # paths that are step-for-step identical before returning.
