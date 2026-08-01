@@ -66,6 +66,52 @@ SOURCE_METHODS: dict[str, frozenset[TaintKind]] = {
 # as an injection rather than as the mass assignment it is.
 MAGIC_PROPERTY_KINDS: frozenset[TaintKind] = ALL_KINDS
 
+# The kinds a route parameter carries - `/pages/{slug}` arriving as `$slug`, which
+# docs/06-taint-analysis states as a source in its own right: "Route parameters
+# injected into controller signatures are sources".
+#
+# mass_assign is excluded, and it is the one kind that separates this from a query
+# parameter. `?u[is_admin]=1` makes `$_GET['u']` an array whose keys came off the wire,
+# which is what makes an Eloquent array write dangerous. A URI segment cannot do that:
+# Laravel binds it from a single path component, so it is always a scalar string and
+# there are no attacker-named keys in it. Including the kind would report a mass
+# assignment on a value that cannot be an array.
+ROUTE_PARAM_KINDS: frozenset[TaintKind] = ALL_KINDS - {TaintKind.MASS_ASSIGN}
+
+# Declared types that leave a URL segment as the string it arrived as. `mixed` is here
+# because it constrains nothing.
+_STRING_PARAM_TYPES: frozenset[str] = frozenset({"string", "mixed"})
+
+
+def route_param_is_source(declared: str | None) -> bool:
+    """Does a URI segment bound to a parameter of this declared type arrive tainted?
+
+    Three answers, and the third is why this is not simply "is it a string".
+
+    - No declared type, or `string`/`mixed`: yes. This is the spec's own example,
+      `public function show(Request $r, string $slug)`.
+    - A coerced scalar - `int`, `float`, `bool`: no. PHP converts the segment before the
+      first line of the body runs, so a string payload never arrives. This is the same
+      reasoning the walk already applies to an `(int)` cast, and the two have to agree,
+      or a cast would look safer than a type declaration that does strictly more.
+    - A class name: no, because a class-typed parameter is route *model* binding. The
+      segment identifies a record rather than supplying a string, and what such a route
+      is usually missing is authorization, not escaping - that is
+      laravel.missing-authorization, a different rule with different advice. Tainting it
+      would report an injection on an Eloquent object that cannot reach a string sink.
+
+    The last two collapse into one branch deliberately: both are "not a string", and
+    enumerating the scalars separately would mean an unrecognised scalar defaulted to
+    tainted, which is the fabricated-finding direction on a value PHP has coerced.
+    """
+    if declared is None:
+        return True
+    name = declared.strip().lstrip("?").lower()
+    if not name:
+        return True
+    return name in _STRING_PARAM_TYPES
+
+
 # PHP superglobals whose every key the attacker chooses, per docs/06-taint-analysis
 # section "PHP native". $_SERVER is deliberately absent: it is half request and half
 # server configuration, and it gets the per-key rule below.

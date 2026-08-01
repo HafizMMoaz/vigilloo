@@ -7,6 +7,7 @@ use App\Http\Controllers\MagicController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ReceiptController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\SlugController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -75,3 +76,14 @@ Route::get('/magic/sort', [MagicController::class, 'sort']);
 Route::get('/magic/search', [MagicController::class, 'search']);
 Route::get('/magic/token/{token}', [MagicController::class, 'fromToken']);
 Route::get('/magic/escaped', [MagicController::class, 'escaped']);
+
+// Route parameters injected into the action signature (TASK-028). Laravel binds
+// a URI segment to an action parameter by name, so {slug} arrives as $slug and
+// is as attacker-controlled as $request->input('slug') is.
+Route::get('/pages/{slug}', [SlugController::class, 'show']);
+Route::get('/pages/{column}/ordered', [SlugController::class, 'ordered']);
+Route::get('/pages/{invoice}/bound', [SlugController::class, 'bound']);
+Route::get('/pages/{page}/paged', [SlugController::class, 'paged']);
+// No {filter} segment, so nothing binds $filter - the negative that stops the
+// rule from tainting every string parameter it sees.
+Route::get('/pages/filtered', [SlugController::class, 'filtered']);

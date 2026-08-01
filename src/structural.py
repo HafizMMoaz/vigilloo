@@ -17,13 +17,10 @@ from tree_sitter import Node
 from .graph import Project
 from .laravel.models import is_model
 from .laravel.policies import find_policy
-from .laravel.routes import UNRESOLVED_MIDDLEWARE
+from .laravel.routes import UNRESOLVED_MIDDLEWARE, uri_params
 from .laravel.vocabulary import MISSING_AUTHORIZATION_RULE
 from .models import PathStep, Route
 from .parser import ParsedFile, find_all, node_text
-
-# {order} and Laravel's optional {order?}.
-_URI_PARAM = re.compile(r"\{(\w+)\??\}")
 
 # Middleware that establishes *who* the caller is. The rule fires only behind
 # one of these - see the module note on _binding for why.
@@ -52,10 +49,6 @@ _GATE_METHODS = frozenset({"allows", "denies", "authorize", "check", "any", "non
 # stub Laravel's make:request generates, and treating it as a control is the
 # first of the two Laravel traps in docs/08-framework-adapters.
 _RETURNS_TRUE = re.compile(r"^\{\s*return\s+true\s*;?\s*\}$")
-
-
-def _uri_params(uri: str) -> list[str]:
-    return _URI_PARAM.findall(uri)
 
 
 def _authenticated_by(route: Route) -> str | None:
@@ -141,7 +134,7 @@ def _binding(project: Project, route: Route, fqn: str) -> tuple[str, str] | None
     symbol = project.method(fqn)
     if symbol is None:
         return None
-    params = _uri_params(route.uri)
+    params = uri_params(route.uri)
     for name, declared in zip(symbol.params, symbol.param_types, strict=True):
         if name in params and declared and declared in project.classes:
             if is_model(project.classes, declared):

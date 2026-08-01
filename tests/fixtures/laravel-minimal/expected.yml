@@ -19,7 +19,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 29
+        line: 30
         symbol: 'GET|HEAD /invoices/{invoice}'
         note: 'authenticated by: auth'
       - role: binding
@@ -42,7 +42,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 30
+        line: 31
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Receipt $receipt'
@@ -58,7 +58,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 38
+        line: 39
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Invoice $invoice'
@@ -76,7 +76,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 53
+        line: 54
         symbol: '/invoices/{invoice}/grouped'
         note: 'authenticated by: auth'
       - role: binding
@@ -95,7 +95,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 17
+        line: 18
         symbol: 'POST /users'
       - role: source
         symbol: '$request->all()'
@@ -116,7 +116,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 19
+        line: 20
       - role: source
         symbol: '$request->all()'
       - role: model
@@ -136,7 +136,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 23
+        line: 24
       - role: source
         line: 45
         symbol: "Post::find($request->input('id'))"
@@ -158,7 +158,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 24
+        line: 25
         symbol: 'PUT /users/{user}'
       - role: source
         symbol: '$request->all()'
@@ -178,7 +178,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 13
+        line: 14
         symbol: 'POST /orders/search'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -200,7 +200,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 15
+        line: 16
         symbol: 'GET|HEAD /orders/display'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -223,7 +223,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 57
+        line: 58
         symbol: 'GET|HEAD /reports/status'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -242,7 +242,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 58
+        line: 59
         symbol: 'GET|HEAD /reports/totals'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -261,7 +261,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 59
+        line: 60
         symbol: 'POST /reports/purge'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -284,7 +284,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 66
+        line: 67
         symbol: 'GET|HEAD /legacy/search'
       - role: source
         line: 23
@@ -303,7 +303,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 67
+        line: 68
         symbol: 'GET|HEAD /legacy/host'
       - role: source
         line: 30
@@ -325,7 +325,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 74
+        line: 75
         symbol: 'GET|HEAD /magic/sort'
       - role: source
         symbol: '$request->sort'
@@ -343,12 +343,55 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 75
+        line: 76
         symbol: 'GET|HEAD /magic/search'
       - role: source
         symbol: '$column = $request->column'
         note: 'attacker-controlled request data, read as a magic property'
       - role: sink
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.sql-injection from a route parameter (TASK-028) ---------------------------
+  # `{slug}` in the URI arrives as `$slug` in the signature, already populated before the
+  # first line of the body runs. The source step is the signature itself, because there
+  # is no expression anywhere in the body where the crossing happens.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/SlugController.php
+    line: 26
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 83
+        symbol: 'GET|HEAD /pages/{slug}'
+      - role: source
+        file: app/Http/Controllers/SlugController.php
+        line: 24
+        symbol: 'string $slug'
+        note: 'attacker-controlled route parameter, bound from the URL'
+      - role: sink
+        line: 26
+        symbol: "DB::table('pages')->orderByRaw($slug)"
+        note: 'unparameterised SQL fragment'
+
+  # Assigned to a local before it reaches the sink, so the taint has to survive one hop
+  # through ordinary assignment rather than being read straight into the argument.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/SlugController.php
+    line: 35
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 84
+        symbol: 'GET|HEAD /pages/{column}/ordered'
+      - role: source
+        line: 31
+        symbol: 'string $column'
+        note: 'attacker-controlled route parameter, bound from the URL'
+      - role: sink
+        line: 35
+        symbol: 'DB::raw("select * from pages order by {$order}")'
         note: 'unparameterised SQL fragment'
 
 must_not_find:
@@ -468,3 +511,20 @@ must_not_find:
     file: app/Http/Controllers/MagicController.php
     line: 51
     reason: 'intval($request->column) - a magic read is an ordinary tainted value, so the sanitizer table still applies'
+
+  # ---- route parameters: the three bindings that must stay silent ---------------------
+  # A URI segment is only a string source when it actually arrives as a string, and only
+  # when the URI names it. Without these three the rule degrades into "every parameter is
+  # tainted", which fires on most methods in a real application.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/SlugController.php
+    line: 44
+    reason: 'Invoice $invoice is route-model binding - the segment names a record, and what is missing is authorization, not escaping'
+  - rule: php.sql-injection
+    file: app/Http/Controllers/SlugController.php
+    line: 52
+    reason: 'int $page - PHP coerces the segment before the body runs, so no string payload arrives'
+  - rule: php.sql-injection
+    file: app/Http/Controllers/SlugController.php
+    line: 60
+    reason: 'the route declares no {filter} segment, so nothing binds $filter from the URL'

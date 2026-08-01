@@ -1,10 +1,15 @@
 """Extract the Laravel route table, the application's attack surface inventory."""
 
+import re
+
 from tree_sitter import Node
 
 from ..models import Route, WalkStats
 from ..parser import ParsedFile, find_all, node_span, node_text
 from ..symbols import FileSymbols, array_literal
+
+# {order} and Laravel's optional {order?}.
+_URI_PARAM = re.compile(r"\{(\w+)\??\}")
 
 # Middleware this module could not read as a string literal. Recorded rather
 # than dropped: an authorization rule that silently discards `->middleware($m)`
@@ -22,6 +27,18 @@ _VERB_METHODS: dict[str, tuple[str, ...]] = {
     "options": ("OPTIONS",),
     "any": ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"),
 }
+
+
+def uri_params(uri: str) -> list[str]:
+    """The parameter names a route URI declares, in the order they appear.
+
+    `/invoices/{invoice}/lines/{line?}` yields ["invoice", "line"]. Public and
+    shared: both the authorization rule and the taint walk need it, and Laravel
+    binds a URI segment to an action parameter *by name*, so a second copy of
+    this pattern that drifted would silently change which parameters are
+    considered attacker-controlled.
+    """
+    return _URI_PARAM.findall(uri)
 
 
 def _string_literal(node: Node, source: bytes) -> str:
