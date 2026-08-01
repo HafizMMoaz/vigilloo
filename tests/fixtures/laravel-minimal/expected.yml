@@ -19,7 +19,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 33
+        line: 34
         symbol: 'GET|HEAD /invoices/{invoice}'
         note: 'authenticated by: auth'
       - role: binding
@@ -42,7 +42,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 34
+        line: 35
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Receipt $receipt'
@@ -58,7 +58,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 42
+        line: 43
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Invoice $invoice'
@@ -76,7 +76,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 57
+        line: 58
         symbol: '/invoices/{invoice}/grouped'
         note: 'authenticated by: auth'
       - role: binding
@@ -95,7 +95,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 21
+        line: 22
         symbol: 'POST /users'
       - role: source
         symbol: '$request->all()'
@@ -116,7 +116,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 23
+        line: 24
       - role: source
         symbol: '$request->all()'
       - role: model
@@ -136,7 +136,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 27
+        line: 28
       - role: source
         line: 45
         symbol: "Post::find($request->input('id'))"
@@ -158,7 +158,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 28
+        line: 29
         symbol: 'PUT /users/{user}'
       - role: source
         symbol: '$request->all()'
@@ -178,7 +178,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 17
+        line: 18
         symbol: 'POST /orders/search'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -200,7 +200,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 19
+        line: 20
         symbol: 'GET|HEAD /orders/display'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -223,7 +223,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 61
+        line: 62
         symbol: 'GET|HEAD /reports/status'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -242,7 +242,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 62
+        line: 63
         symbol: 'GET|HEAD /reports/totals'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -261,7 +261,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 63
+        line: 64
         symbol: 'POST /reports/purge'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -284,7 +284,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 70
+        line: 71
         symbol: 'GET|HEAD /legacy/search'
       - role: source
         line: 23
@@ -303,7 +303,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 71
+        line: 72
         symbol: 'GET|HEAD /legacy/host'
       - role: source
         line: 30
@@ -325,7 +325,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 78
+        line: 79
         symbol: 'GET|HEAD /magic/sort'
       - role: source
         symbol: '$request->sort'
@@ -343,7 +343,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 79
+        line: 80
         symbol: 'GET|HEAD /magic/search'
       - role: source
         symbol: '$column = $request->column'
@@ -362,7 +362,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 86
+        line: 87
         symbol: 'GET|HEAD /pages/{slug}'
       - role: source
         file: app/Http/Controllers/SlugController.php
@@ -383,7 +383,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 87
+        line: 88
         symbol: 'GET|HEAD /pages/{column}/ordered'
       - role: source
         line: 31
@@ -406,7 +406,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 97
+        line: 98
         symbol: 'GET|HEAD /helper/sort'
       - role: source
         line: 24
@@ -425,7 +425,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 98
+        line: 99
         symbol: 'GET|HEAD /helper/legacy'
       - role: source
         line: 32
@@ -443,7 +443,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 99
+        line: 100
         symbol: 'GET|HEAD /helper/assigned'
       - role: source
         line: 38
@@ -467,7 +467,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 106
+        line: 107
         symbol: 'GET|HEAD /nullsafe/sort'
       - role: source
         line: 25
@@ -487,7 +487,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 107
+        line: 108
         symbol: 'GET|HEAD /nullsafe/magic'
       - role: source
         line: 32
@@ -506,7 +506,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 108
+        line: 109
         symbol: 'GET|HEAD /nullsafe/assigned'
       - role: source
         line: 38
@@ -528,7 +528,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 115
+        line: 116
         symbol: 'GET|HEAD /named/ordered'
       - role: source
         line: 27
@@ -548,12 +548,39 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 116
+        line: 117
         symbol: 'GET|HEAD /named/reordered'
       - role: source
         symbol: "$request->input('filter')"
         note: 'attacker-controlled request data'
       - role: sink
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.sql-injection inside an enum method (TASK-030) ----------------------------
+  # The sink is in the enum, not in the caller, and that placement is the test. Taint is
+  # unioned over a call's children, so a sink in the *controller* fires whether or not the
+  # callee was ever resolved - it would pass with enum extraction reverted and prove
+  # nothing. Reaching this one requires the enum to have been extracted, the static call
+  # resolved to it, and the body walked, which is why the propagator step has to name
+  # App\Enums\ReportFormat::purge.
+  - rule: php.sql-injection
+    file: app/Enums/ReportFormat.php
+    line: 30
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 124
+        symbol: 'POST /enum/purge'
+      - role: propagator
+        file: app/Http/Controllers/EnumController.php
+        line: 26
+        symbol: "ReportFormat::purge($request->input('table'))"
+        note: 'argument 0 into App\Enums\ReportFormat::purge'
+      - role: sink
+        file: app/Enums/ReportFormat.php
+        line: 30
+        symbol: 'DB::unprepared("truncate table {$table}")'
         note: 'unparameterised SQL fragment'
 
 must_not_find:
@@ -729,3 +756,12 @@ must_not_find:
     file: app/Http/Controllers/NamedArgController.php
     line: 56
     reason: 'the same safe call reordered - position 0 now holds the tainted binding, and it is still not the query'
+
+  # ---- enums: the parameterised query inside an enum body ------------------------------
+  # The walk now enters enum bodies, so every ordinary rule has to keep applying once it
+  # is in there. Without this, "the walk can see enums" would be free to drift into
+  # "anything reached through an enum is a finding".
+  - rule: php.sql-injection
+    file: app/Enums/ReportFormat.php
+    line: 39
+    reason: "DB::select('... where status = ?', [$status]) inside an enum - the query is a constant and the request data is a binding"

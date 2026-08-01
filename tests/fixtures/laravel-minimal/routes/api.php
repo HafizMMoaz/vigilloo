@@ -2,6 +2,7 @@
 // tests/fixtures/laravel-minimal/routes/api.php
 
 use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\EnumController;
 use App\Http\Controllers\HelperController;
 use App\Http\Controllers\LegacyController;
 use App\Http\Controllers\MagicController;
@@ -116,3 +117,9 @@ Route::get('/named/ordered', [NamedArgController::class, 'ordered']);
 Route::get('/named/reordered', [NamedArgController::class, 'reordered']);
 Route::get('/named/bound', [NamedArgController::class, 'bound']);
 Route::get('/named/bound-reordered', [NamedArgController::class, 'boundReordered']);
+
+// Enum methods (TASK-030). An enum is an ordinary call target - its methods have
+// bodies and parameters - but enum declarations were not extracted at all, so a
+// call into one resolved to nothing and the walk stopped without counting it.
+Route::post('/enum/purge', [EnumController::class, 'purge']);
+Route::get('/enum/status', [EnumController::class, 'status']);
