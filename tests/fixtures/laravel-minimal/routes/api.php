@@ -2,6 +2,7 @@
 // tests/fixtures/laravel-minimal/routes/api.php
 
 use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\HelperController;
 use App\Http\Controllers\LegacyController;
 use App\Http\Controllers\MagicController;
 use App\Http\Controllers\OrderController;
@@ -87,3 +88,12 @@ Route::get('/pages/{page}/paged', [SlugController::class, 'paged']);
 // No {filter} segment, so nothing binds $filter - the negative that stops the
 // rule from tainting every string parameter it sees.
 Route::get('/pages/filtered', [SlugController::class, 'filtered']);
+
+// The request() helper and the legacy Input facade (TASK-029). Neither reaches
+// the Request through a parameter, so the receiver check that sees
+// $request->input('x') cannot see either of them.
+Route::get('/helper/sort', [HelperController::class, 'helper']);
+Route::get('/helper/legacy', [HelperController::class, 'legacy']);
+Route::get('/helper/assigned', [HelperController::class, 'assigned']);
+Route::get('/helper/escaped', [HelperController::class, 'escaped']);
+Route::get('/helper/config', [HelperController::class, 'notTheHelper']);

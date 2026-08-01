@@ -66,6 +66,59 @@ SOURCE_METHODS: dict[str, frozenset[TaintKind]] = {
 # as an injection rather than as the mass assignment it is.
 MAGIC_PROPERTY_KINDS: frozenset[TaintKind] = ALL_KINDS
 
+# `request('sort')` - the helper called *with* a key, which docs/06-taint-analysis lists
+# beside `$request->input('x')` and `Input::get('x')` in the Laravel HTTP source table.
+#
+# Kept apart from SOURCE_METHODS because this is a plain function and those are methods
+# reached through a receiver check. `request()->input('x')` already works: the helper is
+# recognised there as the *receiver*, and this is the form that returns the value
+# directly instead.
+REQUEST_HELPER = "request"
+
+# The legacy `Input` facade, by the names a project can reach it under. Removed from
+# Laravel in 6.0, so code still calling it has skipped years of upgrades - which is
+# precisely the code most likely to be vulnerable.
+#
+# Matched on the resolved FQN and not on the written text, for the reason the DB facade
+# is: `use App\Support\Input;` is an ordinary import of somebody's own class, and a
+# scanner keying on the five letters "Input" would report every call to it. The bare
+# name is what `\Input::get()` resolves to and what an un-namespaced file resolves to,
+# since Laravel registered a global class alias for it.
+INPUT_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\Input",
+        "Input",
+    }
+)
+
+
+def is_request_helper(name: str, arg_count: int) -> bool:
+    """Is this a `request('key')` call that returns attacker-controlled input?
+
+    An argument is required. Bare `request()` returns the Request *object*, not a value
+    off the wire, and it is already handled as a receiver - treating it as a value here
+    would report the object itself as a tainted string.
+    """
+    return name == REQUEST_HELPER and arg_count > 0
+
+
+def input_facade_kinds(receiver_fqn: str | None, method: str) -> frozenset[TaintKind]:
+    """The kinds `Input::method(...)` returns, empty when this is not the legacy facade.
+
+    `receiver_fqn` is the resolved class rather than the text at the call site, and None
+    when the scope could not be resolved. None yields nothing: an unresolved receiver
+    named `Input` is as likely to be a project's own helper as the facade, and guessing
+    would put a fabricated evidence path in front of a developer.
+
+    The method table is SOURCE_METHODS, because the facade proxied the Request object -
+    `Input::get`, `Input::all` and `Input::only` were the same calls with the same
+    return values, so they carry the same kinds and inherit `only()`'s reduced set.
+    """
+    if receiver_fqn is None or receiver_fqn not in INPUT_FACADE_FQNS:
+        return frozenset()
+    return SOURCE_METHODS.get(method, frozenset())
+
+
 # The kinds a route parameter carries - `/pages/{slug}` arriving as `$slug`, which
 # docs/06-taint-analysis states as a source in its own right: "Route parameters
 # injected into controller signatures are sources".

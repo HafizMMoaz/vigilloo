@@ -6,6 +6,7 @@ applied on only one branch - see docs 05-data-flow-analysis.
 """
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from tree_sitter import Node
@@ -25,6 +26,8 @@ from .laravel.vocabulary import (
     ROUTE_PARAM_KINDS,
     XSS_RULE,
     eloquent_write,
+    input_facade_kinds,
+    is_request_helper,
     is_source,
     is_superglobal,
     route_param_is_source,
@@ -38,6 +41,13 @@ from .models import PathStep, Route, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, node_span, node_text, walk
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
+
+# Resolves a class name as written at a call site to its FQN, or None when the file's
+# imports and namespace do not settle it. Passed in rather than reached for, because
+# expr_kinds is also called from the Blade walk and from property tests that have no
+# Project - and because a source that fired on the *spelling* `Input` would report every
+# project that happens to name a class that.
+ClassResolver = Callable[[str], str | None]
 
 # A template handed tainted data whose original text contains one of these is
 # a gap the walk cannot see past - see _walk_template.
@@ -106,15 +116,29 @@ def _superglobal_read(node: Node, source: bytes) -> tuple[str, str | None] | Non
     return None
 
 
+def _argument_count(call: Node) -> int:
+    """How many arguments a call node was given.
+
+    `request()` and `request('sort')` are different sources: the first returns the
+    Request object and is already handled as a receiver, the second returns a value off
+    the wire.
+    """
+    args = call.child_by_field_name("arguments")
+    if args is None:
+        return 0
+    return sum(1 for child in args.children if child.type == "argument")
+
+
 def _union_of_children(
     node: Node,
     source: bytes,
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str],
+    resolve: ClassResolver | None = None,
 ) -> frozenset[TaintKind]:
     kinds: frozenset[TaintKind] = frozenset()
     for child in node.children:
-        kinds |= expr_kinds(child, source, local, request_vars)
+        kinds |= expr_kinds(child, source, local, request_vars, resolve)
     return kinds
 
 
@@ -123,6 +147,7 @@ def expr_kinds(
     source: bytes,
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str] = frozenset(),
+    resolve: ClassResolver | None = None,
 ) -> frozenset[TaintKind]:
     """Which taint kinds are still live in the value this expression produces.
 
@@ -171,15 +196,33 @@ def expr_kinds(
 
     if node.type == "function_call_expression":
         name = node_text(node.child_by_field_name("function"), source)
+        # `request('sort')`, the function form of `$request->input('sort')`. Decisive,
+        # like the superglobal and magic-property branches: the argument underneath is a
+        # literal key carrying nothing, so falling through would read as clean.
+        if is_request_helper(name, _argument_count(node)):
+            return source_kinds("input")
         cleared = sanitizer_clears(name)
         if cleared:
             args = node.child_by_field_name("arguments")
             inner = (
-                _union_of_children(args, source, local, request_vars)
+                _union_of_children(args, source, local, request_vars, resolve)
                 if args is not None
                 else frozenset()
             )
             return inner - cleared
+
+    # `Input::get('sort')`, the facade Laravel removed in 6.0. Keyed on the resolved
+    # class, so a project's own `Input` is untouched - the same reason the DB facade
+    # sinks require a resolved receiver.
+    if node.type == "scoped_call_expression" and resolve is not None:
+        scope = node.child_by_field_name("scope")
+        name_node = node.child_by_field_name("name")
+        if scope is not None and name_node is not None:
+            entering = input_facade_kinds(
+                resolve(node_text(scope, source)), node_text(name_node, source)
+            )
+            if entering:
+                return entering
 
     if node.type == "cast_expression":
         # cast_type text is "int", without the parentheses.
@@ -187,11 +230,13 @@ def expr_kinds(
         if cast in ("int", "integer", "float", "double"):
             value = node.child_by_field_name("value")
             inner = (
-                expr_kinds(value, source, local, request_vars) if value is not None else frozenset()
+                expr_kinds(value, source, local, request_vars, resolve)
+                if value is not None
+                else frozenset()
             )
             return inner - {TaintKind.SQL, TaintKind.HTML}
 
-    return _union_of_children(node, source, local, request_vars)
+    return _union_of_children(node, source, local, request_vars, resolve)
 
 
 def _request_like_params(project: Project, fqn: str) -> frozenset[str]:
@@ -237,7 +282,12 @@ def _is_request_receiver(call: Node, source: bytes, request_vars: frozenset[str]
     return False
 
 
-def _source_note(node: Node, source: bytes, request_vars: frozenset[str]) -> str | None:
+def _source_note(
+    node: Node,
+    source: bytes,
+    request_vars: frozenset[str],
+    resolve: ClassResolver | None = None,
+) -> str | None:
     """How this expression reads attacker-controlled data, or None if it does not.
 
     The return value is the evidence step's note, so the step names *which* source was
@@ -271,15 +321,34 @@ def _source_note(node: Node, source: bytes, request_vars: frozenset[str]) -> str
         # entire point of this source is that the property form does not look
         # like one.
         return "attacker-controlled request data, read as a magic property"
+    if node.type == "function_call_expression" and is_request_helper(
+        node_text(node.child_by_field_name("function"), source), _argument_count(node)
+    ):
+        # Named for the helper rather than folded into "request data", because the
+        # developer following this path is looking for a function call in a method that
+        # very often has no $request parameter at all.
+        return "attacker-controlled request data, read through the request() helper"
+    if node.type == "scoped_call_expression" and resolve is not None:
+        scope = node.child_by_field_name("scope")
+        name_node = node.child_by_field_name("name")
+        if (
+            scope is not None
+            and name_node is not None
+            and input_facade_kinds(resolve(node_text(scope, source)), node_text(name_node, source))
+        ):
+            return "attacker-controlled request data, read through the legacy Input facade"
     for child in node.children:
-        note = _source_note(child, source, request_vars)
+        note = _source_note(child, source, request_vars, resolve)
         if note is not None:
             return note
     return None
 
 
 def _inline_source_steps(
-    arg: Node, parsed: ParsedFile, request_vars: frozenset[str]
+    arg: Node,
+    parsed: ParsedFile,
+    request_vars: frozenset[str],
+    resolve: ClassResolver | None = None,
 ) -> list[PathStep]:
     """The source step for a sink argument that reads the Request directly.
 
@@ -288,7 +357,7 @@ def _inline_source_steps(
     path jumps from the route to the sink and never says where the data
     entered, which is exactly the gap invariant 2 exists to prevent.
     """
-    note = _source_note(arg, parsed.source, request_vars)
+    note = _source_note(arg, parsed.source, request_vars, resolve)
     if note is None:
         return []
     return [
@@ -330,6 +399,7 @@ def _mass_assign_steps(
     parsed: ParsedFile,
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str],
+    resolve: ClassResolver | None = None,
 ) -> list[PathStep] | None:
     """The model and sink steps for an Eloquent array write, if it is unsafe.
 
@@ -354,7 +424,9 @@ def _mass_assign_steps(
     index, bypasses_protection = write
     if index >= len(args):
         return []
-    if TaintKind.MASS_ASSIGN not in expr_kinds(args[index], parsed.source, local, request_vars):
+    if TaintKind.MASS_ASSIGN not in expr_kinds(
+        args[index], parsed.source, local, request_vars, resolve
+    ):
         return []
     if config.protection is Protection.GUARDED and not bypasses_protection:
         return []
@@ -370,7 +442,7 @@ def _mass_assign_steps(
         model_span = config.reason_span or project.classes[receiver_fqn].span
 
     return [
-        *_inline_source_steps(args[index], parsed, request_vars),
+        *_inline_source_steps(args[index], parsed, request_vars, resolve),
         PathStep(
             role="model",
             span=model_span,
@@ -455,6 +527,7 @@ def _sink_steps(
     parsed: ParsedFile,
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str],
+    resolve: ClassResolver | None = None,
 ) -> list[PathStep]:
     """The evidence steps for a call that reached a sink, or [] if the taint does not reach it.
 
@@ -466,9 +539,9 @@ def _sink_steps(
     index, kind, rule_id = found
     if index >= len(args):
         return []
-    if kind not in expr_kinds(args[index], parsed.source, local, request_vars):
+    if kind not in expr_kinds(args[index], parsed.source, local, request_vars, resolve):
         return []
-    return _inline_source_steps(args[index], parsed, request_vars) + [
+    return _inline_source_steps(args[index], parsed, request_vars, resolve) + [
         PathStep(
             role="sink",
             span=node_span(call, parsed.path),
@@ -492,6 +565,7 @@ def _follow_static(
     depth: int,
     max_depth: int,
     stats: WalkStats | None,
+    resolve: ClassResolver | None = None,
 ) -> list[list[PathStep]]:
     """Walk into `Receiver::method(...)` when it is a method of a class in this project.
 
@@ -525,7 +599,7 @@ def _follow_static(
     passed = {
         i: kinds
         for i, arg in enumerate(args)
-        if (kinds := expr_kinds(arg, parsed.source, local, request_vars))
+        if (kinds := expr_kinds(arg, parsed.source, local, request_vars, resolve))
     }
 
     if receiver_fqn is None:
@@ -660,6 +734,12 @@ def _walk_method(
     paths: list[list[PathStep]] = []
     request_vars = _request_like_params(project, fqn)
 
+    # Bound to this file, because a class name means whatever this file's namespace and
+    # imports say it means. `use App\\Support\\Input;` and Laravel's `Input` facade are
+    # the same five letters and must not be the same source.
+    def resolve(written: str) -> str | None:
+        return project.resolve_class_name(parsed.path, written)
+
     # Variable name -> class FQN, for `$order->update($request->all())`. Seeded
     # from the signature, because a type-hinted parameter is route-model
     # binding, and `$order->update(...)` in an action whose signature binds the
@@ -690,7 +770,7 @@ def _walk_method(
             else:
                 local_types.pop(target, None)
 
-            kinds = expr_kinds(right, source, local, request_vars)
+            kinds = expr_kinds(right, source, local, request_vars, resolve)
             if kinds:
                 local[target] = kinds
             else:
@@ -706,7 +786,7 @@ def _walk_method(
             # cleared every kind, because it costs nothing on a path that then
             # never reaches a sink, and omitting it would drop the source step
             # from a path where only one kind was cleared.
-            entered = _source_note(right, source, request_vars)
+            entered = _source_note(right, source, request_vars, resolve)
             if entered is not None:
                 prefix = prefix + [
                     PathStep(
@@ -732,7 +812,15 @@ def _walk_method(
             )
 
             steps = _mass_assign_steps(
-                project, call, name, args, scoped_receiver_fqn, parsed, local, request_vars
+                project,
+                call,
+                name,
+                args,
+                scoped_receiver_fqn,
+                parsed,
+                local,
+                request_vars,
+                resolve,
             )
             if steps is not None:
                 # Empty means "resolved and safe" - stop here rather than let the
@@ -747,7 +835,9 @@ def _walk_method(
             # is the kind of thing that is invisible until the general one is widened.
             scoped_sink = static_sink(scoped_receiver_fqn, name) or sink(name)
             if scoped_sink is not None:
-                sink_steps = _sink_steps(call, args, scoped_sink, parsed, local, request_vars)
+                sink_steps = _sink_steps(
+                    call, args, scoped_sink, parsed, local, request_vars, resolve
+                )
                 if sink_steps:
                     paths.append(prefix + sink_steps)
                 continue
@@ -766,6 +856,7 @@ def _walk_method(
                     depth,
                     max_depth,
                     stats,
+                    resolve,
                 )
             )
 
@@ -782,6 +873,7 @@ def _walk_method(
                 parsed,
                 local,
                 request_vars,
+                resolve,
             )
             if steps is not None:
                 # Empty means "resolved and safe" - stop here without letting
@@ -792,7 +884,9 @@ def _walk_method(
 
             sink_found = sink(name)
             if sink_found is not None:
-                sink_steps = _sink_steps(call, args, sink_found, parsed, local, request_vars)
+                sink_steps = _sink_steps(
+                    call, args, sink_found, parsed, local, request_vars, resolve
+                )
                 if sink_steps:
                     paths.append(prefix + sink_steps)
                 continue
@@ -806,7 +900,7 @@ def _walk_method(
             passed = {
                 i: kinds
                 for i, arg in enumerate(args)
-                if (kinds := expr_kinds(arg, source, local, request_vars))
+                if (kinds := expr_kinds(arg, source, local, request_vars, resolve))
             }
 
             # `$this->method($tainted)` resolves through the enclosing class,
@@ -868,7 +962,7 @@ def _walk_method(
         for binding in extract_view_bindings(stmt, source):
             bound: dict[str, frozenset[TaintKind]] = {}
             for name, expression in binding.variables:
-                kinds = expr_kinds(expression, source, local, request_vars)
+                kinds = expr_kinds(expression, source, local, request_vars, resolve)
                 if kinds:
                     bound[name] = kinds
             for name in binding.compacted:
