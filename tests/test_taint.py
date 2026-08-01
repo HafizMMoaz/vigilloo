@@ -611,3 +611,112 @@ def test_a_superglobal_read_is_not_counted_as_an_unresolved_call(tmp_path: Path)
     stats = WalkStats()
     find_taint_paths(load_project(project_root), stats=stats)
     assert stats.unresolved == 0
+
+
+def test_a_magic_property_on_the_request_reaches_the_sink(tmp_path: Path) -> None:
+    """$request->sort is __get(), which docs/06-taint-analysis calls commonly missed.
+
+    The walk recognised a Request source only as a method call, so the property form
+    of the same lookup produced nothing. It is not an exotic spelling: it is shorter
+    than input() and reads like an ordinary field, which is exactly why it survives
+    review.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body='        return DB::table("t")->orderByRaw($request->sort);',
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    paths = find_taint_paths(load_project(project_root))
+    assert len(paths) == 1
+    assert paths[0][-1].role == "sink"
+    assert paths[0][-1].rule_id == "php.sql-injection"
+
+
+def test_a_property_on_any_other_object_is_not_a_source(tmp_path: Path) -> None:
+    """The receiver decides, not the syntax.
+
+    Property reads are most of what any codebase does. Tainting them because one of
+    them happens to sit on a Request would report the whole project, which is the
+    noise that gets a scanner switched off rather than fixed.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body=(
+            "        $config = new \\App\\Support\\Thing();\n"
+            '        return DB::table("t")->orderByRaw($config->sort);'
+        ),
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    assert find_taint_paths(load_project(project_root)) == []
+
+
+def test_the_source_step_says_the_read_was_a_magic_property(tmp_path: Path) -> None:
+    """ "request data" sends the reader looking for a call that is not written down.
+
+    The snippet on the step is `$request->sort`, so a note naming only "request data"
+    leaves the developer hunting for an input() that does not exist. The note is the
+    one part of the path that can say why this line is a source at all.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body='        return DB::table("t")->orderByRaw($request->sort);',
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    paths = find_taint_paths(load_project(project_root))
+    source = next(step for step in paths[0] if step.role == "source")
+    assert source.note == "attacker-controlled request data, read as a magic property"
+
+
+def test_a_sanitizer_still_clears_a_magic_property_read(tmp_path: Path) -> None:
+    """A magic read is an ordinary tainted value, not a special case.
+
+    If the branch returned its kinds without the sanitizer table getting a look in,
+    intval() would stop clearing them and the rule would fire on code that is
+    correct - the failure mode kind-based taint exists to avoid.
+    """
+    project_root = _minimal_project(
+        tmp_path,
+        controller_body='        return DB::table("t")->orderByRaw(intval($request->sort));',
+        sink_call='DB::table("t")->orderBy("created_at")',
+    )
+    assert find_taint_paths(load_project(project_root)) == []
+
+
+def test_a_magic_property_carries_mass_assign(tmp_path: Path) -> None:
+    """`?bio[is_admin]=1` makes $request->bio an array whose keys came off the wire.
+
+    The same reasoning $_GET carries. Dropping the kind here would report an Eloquent
+    write fed by a magic read as an injection rather than as the mass assignment it
+    is, which is the finding that actually matters at that call.
+    """
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
+    (tmp_path / "app" / "Models").mkdir(parents=True)
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\n"
+        "use App\\Http\\Controllers\\ThingController;\n"
+        "Route::post('/things', [ThingController::class, 'act']);\n"
+    )
+    (tmp_path / "app" / "Models" / "Account.php").write_text(
+        "<?php\n"
+        "namespace App\\Models;\n"
+        "use Illuminate\\Database\\Eloquent\\Model;\n"
+        "class Account extends Model { protected $guarded = []; }\n"
+    )
+    (tmp_path / "app" / "Http" / "Controllers" / "ThingController.php").write_text(
+        "<?php\n"
+        "namespace App\\Http\\Controllers;\n"
+        "use App\\Models\\Account;\n"
+        "use Illuminate\\Http\\Request;\n"
+        "class ThingController\n"
+        "{\n"
+        "    public function act(Request $request)\n"
+        "    {\n"
+        "        return Account::create($request->payload);\n"
+        "    }\n"
+        "}\n"
+    )
+
+    paths = find_taint_paths(load_project(tmp_path))
+    assert len(paths) == 1
+    assert paths[0][-1].rule_id == "laravel.mass-assignment"

@@ -235,6 +235,26 @@ Ruleset hash: `520914c8731f4c0d`.
   GraphML has no list type, and a key set derived from whichever attribute names a project
   happens to produce would change under the reader between two scans of the same code.
 
+- **Magic property access on a Request is a source** (TASK-027). `$request->bio` is `__get()`,
+  the same lookup as `$request->input('bio')`, and the walk recognised a source only as a method
+  call - so the shorter of the two spellings produced nothing at all. It carries the same kinds
+  as `input()`, `mass_assign` included, for the reason `$_GET` does: `?bio[is_admin]=1` makes the
+  value an array whose keys came off the wire.
+
+  The receiver decides, not the syntax. A property fetch on anything that is not a Request is not
+  a source, because property reads are most of what any codebase does and a rule keyed on the
+  shape of the expression would report the whole project. No property name is excluded and the
+  name is not inspected: `__get()` forwards to the route parameters and then the input bag, so
+  every name a developer can write resolves to request data, and an allowlist would have to
+  decide which halves of one mechanism to believe. Symfony's real public bags -
+  `$request->query`, `->headers`, `->files` - are reached by the same rule, which is correct
+  rather than tolerated, since `$request->query->get('x')` is attacker data and a bag object
+  cannot reach a string sink on its own.
+
+  The source step says `read as a magic property` rather than only "request data": the snippet
+  the developer is shown is a property, and a note naming a call sends them looking for an
+  `input()` that is not written anywhere.
+
 - **PHP superglobals are sources** (TASK-026). `$_GET`, `$_POST`, `$_REQUEST`, `$_COOKIE`,
   `$_FILES` and `$argv` carry every taint kind, `mass_assign` included: the attacker names the
   keys as well as the values, so `Account::create($_POST)` is the same finding as
