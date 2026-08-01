@@ -1017,8 +1017,47 @@ def _walk_method(
                 )
             )
 
+        # 2c. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
+        #     docs/03-parser is explicit about these - "Dynamic dispatch. Mark the
+        #     edge unresolved" - and until now they were not marked at all. There is
+        #     no loop over function_call_expression in this walk, so a tainted value
+        #     handed to a variable callee vanished: no finding, and no give-up either,
+        #     so the resolution rate reported full coverage over a trail it had lost.
+        #     That is precisely the combination invariant 4 exists to prevent.
+        #
+        #     Only a *dynamic* callee counts. A written name - `strlen($x)`,
+        #     `sprintf($x)`, `\strlen($x)` - is skipped, and that exclusion is what
+        #     keeps the number meaningful: every PHP file is full of calls to builtins
+        #     and to project functions, none of which this walk was ever going to
+        #     enter, and counting them would bury the one call that genuinely lost a
+        #     trail under thousands that never had one. `name` and `qualified_name`
+        #     are both literal spellings of a known callee; anything else - a
+        #     variable, a parenthesised expression, an array offset - is a callee
+        #     whose identity is not knowable here.
+        #
+        #     ponytail: the edge is counted, not followed. Following it needs the set
+        #     of closures a variable may hold, which is a data-flow question this
+        #     statement-order walk cannot answer - see docs/05-data-flow-analysis.
+        #     The upgrade trigger is a fixture where a closure assigned in one branch
+        #     reaches a sink, at which point the give-up here becomes a real edge.
+        for call in find_all(stmt, "function_call_expression"):
+            invoked = call.child_by_field_name("function")
+            if invoked is None or invoked.type in ("name", "qualified_name"):
+                continue
+            args_node = call.child_by_field_name("arguments")
+            if args_node is None:
+                continue
+            dynamic_args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+            # Same condition as every other give-up in this walk: a call is only a
+            # lost trail when something was being carried into it. `$fn()` and
+            # `$fn($constant)` lose nothing, and `$fn(...)` is a first-class callable
+            # that has not been invoked yet - nothing is passed to any of them.
+            if any(expr_kinds(arg, source, local, request_vars, resolve) for arg in dynamic_args):
+                _giveup(stats)
+
         # 3. view() hands data to a template, where html taint can reach a
         #    raw echo. A statement can hold more than one view() call, as in a
+
         #    ternary choosing between two templates, so each is walked.
         for binding in extract_view_bindings(stmt, source):
             bound: dict[str, frozenset[TaintKind]] = {}

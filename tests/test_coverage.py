@@ -60,6 +60,90 @@ def test_the_main_fixture_parses_completely() -> None:
     assert result.call_resolution_rate == 1.0
 
 
+def _project_with_body(tmp_path: Path, body: str) -> tuple[object, WalkStats]:
+    """A one-controller project whose action contains `body`, scanned."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "routes" / "api.php").write_text(
+        "<?php\nuse App\\C;\nRoute::post('/a', [C::class, 'a']);\n"
+    )
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "C.php").write_text(
+        "<?php\n"
+        "namespace App;\n"
+        "class C\n"
+        "{\n"
+        "    public function a($request)\n"
+        "    {\n"
+        f"{body}"
+        "    }\n"
+        "}\n"
+    )
+    stats = WalkStats()
+    project = load_project(tmp_path, stats)
+    find_taint_paths(project, stats=stats)
+    return project, stats
+
+
+def test_a_dynamic_invocation_is_counted_as_a_lost_trail(tmp_path: Path) -> None:
+    """TASK-030: `$fn($sort)` loses the trail, so it must say so.
+
+    This was silent in both directions at once, which is the worst case invariant 4
+    describes. The walk had no loop over function_call_expression, so the tainted value
+    handed to a variable callee simply vanished - no finding - and because the call site
+    was never visited, no give-up was recorded either. The report then claimed full
+    resolution over a trail it had lost.
+
+    docs/03-parser is explicit that dynamic dispatch is marked unresolved rather than
+    followed. Following it needs the set of closures a variable may hold, which this
+    statement-order walk cannot answer.
+    """
+    _, stats = _project_with_body(
+        tmp_path,
+        "        $sort = $request->input('sort');\n"
+        "        $fn = 'strlen';\n"
+        "\n"
+        "        return $fn($sort);\n",
+    )
+
+    assert stats.unresolved == 1
+
+
+def test_a_named_function_call_is_not_a_lost_trail(tmp_path: Path) -> None:
+    """The exclusion that keeps the resolution rate meaningful.
+
+    `strlen($sort)` names its callee, so it is a known target the walk was never going
+    to enter - the same boundary that keeps `Carbon::parse($x)` uncounted. Counting
+    these would subtract from the rate in proportion to how much standard library a
+    project uses, burying the one call that genuinely lost a trail under thousands that
+    never had one, and a number that cannot reach 100% on real code stops being read.
+    """
+    _, stats = _project_with_body(
+        tmp_path,
+        "        $sort = $request->input('sort');\n\n        return strlen($sort);\n",
+    )
+
+    assert stats.unresolved == 0
+
+
+def test_a_first_class_callable_is_not_an_invocation(tmp_path: Path) -> None:
+    """`$fn = strlen(...)` passes nothing, so nothing can be lost.
+
+    PHP 8.1 spells "make a closure from this function" with a literal `...`, which the
+    grammar gives a `variadic_placeholder` node rather than an `argument`. It is not a
+    call: no value is passed and the function has not run. Counting it would report a
+    lost trail on a line that carries no data at all.
+    """
+    _, stats = _project_with_body(
+        tmp_path,
+        "        $sort = $request->input('sort');\n"
+        "        $fn = strlen(...);\n"
+        "\n"
+        "        return $fn;\n",
+    )
+
+    assert stats.unresolved == 0
+
+
 def test_a_lost_trail_drops_the_resolution_rate(tmp_path: Path) -> None:
     """The walk gives up on `$unknown->handle($sort)`, so the rate must move.
 
