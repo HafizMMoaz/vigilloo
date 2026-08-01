@@ -3,6 +3,7 @@
 
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\LegacyController;
+use App\Http\Controllers\MagicController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ReceiptController;
 use App\Http\Controllers\ReportController;
@@ -66,3 +67,11 @@ Route::get('/legacy/search', [LegacyController::class, 'search']);
 Route::get('/legacy/host', [LegacyController::class, 'host']);
 Route::get('/legacy/root', [LegacyController::class, 'documentRoot']);
 Route::get('/legacy/local', [LegacyController::class, 'localArray']);
+
+// Magic property access on the Request. $request->sort is __get() and returns
+// the same value $request->input('sort') would, so the two forms are one
+// finding twice over - and only one of them was visible before TASK-027.
+Route::get('/magic/sort', [MagicController::class, 'sort']);
+Route::get('/magic/search', [MagicController::class, 'search']);
+Route::get('/magic/token/{token}', [MagicController::class, 'fromToken']);
+Route::get('/magic/escaped', [MagicController::class, 'escaped']);

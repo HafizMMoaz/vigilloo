@@ -19,6 +19,7 @@ from .graph import Project
 from .laravel.models import Protection, model_config
 from .laravel.views import extract_view_bindings, template_path
 from .laravel.vocabulary import (
+    MAGIC_PROPERTY_KINDS,
     MASS_ASSIGNMENT_RULE,
     XSS_RULE,
     eloquent_write,
@@ -157,6 +158,14 @@ def expr_kinds(
         if entering and _is_request_receiver(node, source, request_vars):
             return entering
 
+    # `$request->bio`, the magic property form of `$request->input('bio')`. Decisive
+    # like the superglobal branch above, and for the same reason: falling through to the
+    # union over children would reach the bare `$request` underneath, which carries
+    # nothing, so the read would look clean. The receiver check is what stops this
+    # tainting every property fetch in the project.
+    if node.type == "member_access_expression" and _is_request_receiver(node, source, request_vars):
+        return MAGIC_PROPERTY_KINDS
+
     if node.type == "function_call_expression":
         name = node_text(node.child_by_field_name("function"), source)
         cleared = sanitizer_clears(name)
@@ -253,6 +262,12 @@ def _source_note(node: Node, source: bytes, request_vars: frozenset[str]) -> str
         and _is_request_receiver(node, source, request_vars)
     ):
         return "attacker-controlled request data"
+    if node.type == "member_access_expression" and _is_request_receiver(node, source, request_vars):
+        # Named apart from the method form deliberately. A developer sent to
+        # "request data" goes looking for a call and finds a property, and the
+        # entire point of this source is that the property form does not look
+        # like one.
+        return "attacker-controlled request data, read as a magic property"
     for child in node.children:
         note = _source_note(child, source, request_vars)
         if note is not None:

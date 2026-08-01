@@ -46,6 +46,18 @@ request('x')                Input::get('x')           // helper + legacy facade
 $request->x                 // magic property access - commonly missed
 ```
 
+**A magic property read carries the same kinds as `input()`.** `Request` implements
+`__get()`, so `$request->bio` and `$request->input('bio')` are one lookup written two ways and
+there is no basis for grading the danger by spelling. `mass_assign` is included for the reason
+`$_GET` carries it: `?bio[is_admin]=1` makes the value an array whose keys came off the wire.
+No property name is excluded and the name is not inspected. `__get()` forwards to the route
+parameters and then the input bag, so every name a developer can write resolves to request
+data. Symfony's real public bags - `$request->query`, `->headers`, `->files` - are reached by
+the same rule, which is correct: `$request->query->get('x')` is attacker data, and a bag object
+cannot reach a string sink on its own. **The receiver decides, not the syntax**: a property
+fetch on anything other than a Request is not a source, or the rule would report every
+property read in the project.
+
 Route parameters injected into controller signatures are sources:
 `public function show(Request $r, string $slug)` - `$slug` is attacker-controlled.
 

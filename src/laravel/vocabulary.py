@@ -46,6 +46,26 @@ SOURCE_METHODS: dict[str, frozenset[TaintKind]] = {
     for name in ("only", "validated", "safe")
 }
 
+# The kinds a magic property read on a Request carries - `$request->bio`, which
+# docs/06-taint-analysis lists in the same source table as `input()` and calls
+# "commonly missed". Laravel's Request implements __get(), so the property form and
+# `$request->input('bio')` are the same lookup written two ways, and there is no
+# argument for giving them different kinds.
+#
+# No property name is excluded, and the name is not inspected at all. __get() forwards
+# to the route parameters and then the input bag, so every name a developer can write
+# resolves to request data; an allowlist would have to decide which halves of one
+# mechanism to believe. Symfony's real public bags - `$request->query`, `->headers`,
+# `->files` - are reached by this rule too, and that is correct rather than tolerated:
+# `$request->query->get('x')` is attacker data, and a bag object cannot reach a string
+# sink on its own because PHP raises before it gets there.
+#
+# mass_assign is included for the same reason $_GET carries it: the attacker names the
+# keys as well as the values, and `?bio[is_admin]=1` makes `$request->bio` an array that
+# came off the wire. Dropping the kind would report an Eloquent write fed by a magic read
+# as an injection rather than as the mass assignment it is.
+MAGIC_PROPERTY_KINDS: frozenset[TaintKind] = ALL_KINDS
+
 # PHP superglobals whose every key the attacker chooses, per docs/06-taint-analysis
 # section "PHP native". $_SERVER is deliberately absent: it is half request and half
 # server configuration, and it gets the per-key rule below.

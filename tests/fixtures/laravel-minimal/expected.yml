@@ -19,7 +19,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 28
+        line: 29
         symbol: 'GET|HEAD /invoices/{invoice}'
         note: 'authenticated by: auth'
       - role: binding
@@ -42,7 +42,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 29
+        line: 30
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Receipt $receipt'
@@ -58,7 +58,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 37
+        line: 38
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Invoice $invoice'
@@ -76,7 +76,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 52
+        line: 53
         symbol: '/invoices/{invoice}/grouped'
         note: 'authenticated by: auth'
       - role: binding
@@ -95,7 +95,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 16
+        line: 17
         symbol: 'POST /users'
       - role: source
         symbol: '$request->all()'
@@ -116,7 +116,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 18
+        line: 19
       - role: source
         symbol: '$request->all()'
       - role: model
@@ -136,7 +136,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 22
+        line: 23
       - role: source
         line: 45
         symbol: "Post::find($request->input('id'))"
@@ -158,7 +158,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 23
+        line: 24
         symbol: 'PUT /users/{user}'
       - role: source
         symbol: '$request->all()'
@@ -178,7 +178,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 12
+        line: 13
         symbol: 'POST /orders/search'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -200,7 +200,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 14
+        line: 15
         symbol: 'GET|HEAD /orders/display'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -223,7 +223,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 56
+        line: 57
         symbol: 'GET|HEAD /reports/status'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -242,7 +242,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 57
+        line: 58
         symbol: 'GET|HEAD /reports/totals'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -261,7 +261,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 58
+        line: 59
         symbol: 'POST /reports/purge'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -284,7 +284,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 65
+        line: 66
         symbol: 'GET|HEAD /legacy/search'
       - role: source
         line: 23
@@ -303,7 +303,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 66
+        line: 67
         symbol: 'GET|HEAD /legacy/host'
       - role: source
         line: 30
@@ -312,6 +312,43 @@ findings:
       - role: sink
         line: 32
         symbol: 'DB::raw("select * from sites where host'
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.sql-injection through magic property access (TASK-027) --------------------
+  # $request->sort is __get(), the same lookup as $request->input('sort') and invisible to
+  # the walk until TASK-027. Read straight into the sink argument here, so the source step
+  # is the argument itself rather than an assignment.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/MagicController.php
+    line: 25
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 74
+        symbol: 'GET|HEAD /magic/sort'
+      - role: source
+        symbol: '$request->sort'
+        note: 'attacker-controlled request data, read as a magic property'
+      - role: sink
+        note: 'unparameterised SQL fragment'
+
+  # The same read stored in a variable first, so the source step is emitted by the
+  # assignment instead. Both places the walk can recognise a source have to handle the
+  # property form, and a test of one would not catch a bug in the other.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/MagicController.php
+    line: 34
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 75
+        symbol: 'GET|HEAD /magic/search'
+      - role: source
+        symbol: '$column = $request->column'
+        note: 'attacker-controlled request data, read as a magic property'
+      - role: sink
         note: 'unparameterised SQL fragment'
 
 must_not_find:
@@ -418,3 +455,16 @@ must_not_find:
     file: app/Http/Controllers/LegacyController.php
     line: 50
     reason: 'an ordinary local array subscript - reading $config[key] is not reading a superglobal'
+
+  # ---- magic properties: the two reads that must stay silent ---------------------------
+  # The receiver is what makes a property fetch a source, not the syntax. Property reads
+  # are most of what any codebase does, so a rule keyed on the shape of the expression
+  # would report the entire project.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/MagicController.php
+    line: 43
+    reason: '$token->value is a property on an ordinary object, not on a Request'
+  - rule: php.sql-injection
+    file: app/Http/Controllers/MagicController.php
+    line: 51
+    reason: 'intval($request->column) - a magic read is an ordinary tainted value, so the sanitizer table still applies'

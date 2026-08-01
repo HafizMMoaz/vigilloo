@@ -1,4 +1,5 @@
 from vigilloo.laravel.vocabulary import (
+    MAGIC_PROPERTY_KINDS,
     SQL_INJECTION_RULE,
     is_source,
     is_superglobal,
@@ -125,3 +126,24 @@ def test_an_ordinary_variable_is_not_a_superglobal() -> None:
     assert superglobal_kinds("config", "sort") == frozenset()
     assert is_superglobal("_GET")
     assert is_superglobal("_SERVER")
+
+
+def test_a_magic_property_read_carries_the_same_kinds_as_input() -> None:
+    """$request->bio and $request->input('bio') are one lookup written two ways.
+
+    Laravel's Request implements __get(), so both forms return the same value out of
+    the same bag. Giving the property form fewer kinds would make the danger depend on
+    which spelling the developer happened to pick.
+    """
+    assert MAGIC_PROPERTY_KINDS == source_kinds("input")
+    assert MAGIC_PROPERTY_KINDS == ALL_KINDS
+
+
+def test_a_magic_property_read_carries_mass_assign() -> None:
+    """`?bio[is_admin]=1` makes $request->bio an array whose keys came off the wire.
+
+    The same property that puts mass_assign on $_GET. Without it, an Eloquent write fed
+    by a magic read is reported as an injection rather than as the mass assignment that
+    is the finding worth having there.
+    """
+    assert TaintKind.MASS_ASSIGN in MAGIC_PROPERTY_KINDS
