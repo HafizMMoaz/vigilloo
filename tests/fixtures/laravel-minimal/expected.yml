@@ -19,7 +19,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 30
+        line: 31
         symbol: 'GET|HEAD /invoices/{invoice}'
         note: 'authenticated by: auth'
       - role: binding
@@ -42,7 +42,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 31
+        line: 32
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Receipt $receipt'
@@ -58,7 +58,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 39
+        line: 40
         note: 'authenticated by: auth'
       - role: binding
         symbol: 'Invoice $invoice'
@@ -76,7 +76,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 54
+        line: 55
         symbol: '/invoices/{invoice}/grouped'
         note: 'authenticated by: auth'
       - role: binding
@@ -95,7 +95,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 18
+        line: 19
         symbol: 'POST /users'
       - role: source
         symbol: '$request->all()'
@@ -116,7 +116,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 20
+        line: 21
       - role: source
         symbol: '$request->all()'
       - role: model
@@ -136,7 +136,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 24
+        line: 25
       - role: source
         line: 45
         symbol: "Post::find($request->input('id'))"
@@ -158,7 +158,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 25
+        line: 26
         symbol: 'PUT /users/{user}'
       - role: source
         symbol: '$request->all()'
@@ -178,7 +178,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 14
+        line: 15
         symbol: 'POST /orders/search'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -200,7 +200,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 16
+        line: 17
         symbol: 'GET|HEAD /orders/display'
       - role: source
         file: app/Http/Controllers/OrderController.php
@@ -223,7 +223,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 58
+        line: 59
         symbol: 'GET|HEAD /reports/status'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -242,7 +242,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 59
+        line: 60
         symbol: 'GET|HEAD /reports/totals'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -261,7 +261,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 60
+        line: 61
         symbol: 'POST /reports/purge'
       - role: propagator
         file: app/Http/Controllers/ReportController.php
@@ -284,7 +284,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 67
+        line: 68
         symbol: 'GET|HEAD /legacy/search'
       - role: source
         line: 23
@@ -303,7 +303,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 68
+        line: 69
         symbol: 'GET|HEAD /legacy/host'
       - role: source
         line: 30
@@ -325,7 +325,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 75
+        line: 76
         symbol: 'GET|HEAD /magic/sort'
       - role: source
         symbol: '$request->sort'
@@ -343,7 +343,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 76
+        line: 77
         symbol: 'GET|HEAD /magic/search'
       - role: source
         symbol: '$column = $request->column'
@@ -362,7 +362,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 83
+        line: 84
         symbol: 'GET|HEAD /pages/{slug}'
       - role: source
         file: app/Http/Controllers/SlugController.php
@@ -383,7 +383,7 @@ findings:
     path:
       - role: entry
         file: routes/api.php
-        line: 84
+        line: 85
         symbol: 'GET|HEAD /pages/{column}/ordered'
       - role: source
         line: 31
@@ -392,6 +392,66 @@ findings:
       - role: sink
         line: 35
         symbol: 'DB::raw("select * from pages order by {$order}")'
+        note: 'unparameterised SQL fragment'
+
+  # ---- php.sql-injection through the request() helper and Input facade (TASK-029) -----
+  # Neither form reaches the Request through a parameter, so the receiver check that
+  # recognises $request->input('x') cannot see either. The notes name which of the two it
+  # was: a developer sent to "request data" in a method with no $request would have
+  # nothing to look for.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/HelperController.php
+    line: 24
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 95
+        symbol: 'GET|HEAD /helper/sort'
+      - role: source
+        line: 24
+        note: 'attacker-controlled request data, read through the request() helper'
+      - role: sink
+        line: 24
+        symbol: "DB::raw('select * from orders order by ' . request('sort'))"
+        note: 'unparameterised SQL fragment'
+
+  # The legacy facade, resolved through `use Input;` rather than matched on the five
+  # letters - a project's own Input class must not inherit this.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/HelperController.php
+    line: 32
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 96
+        symbol: 'GET|HEAD /helper/legacy'
+      - role: source
+        line: 32
+        note: 'attacker-controlled request data, read through the legacy Input facade'
+      - role: sink
+        line: 32
+        symbol: "DB::raw('select * from orders order by ' . Input::get('sort'))"
+        note: 'unparameterised SQL fragment'
+
+  # Assigned before use, so the source step lands on the assignment.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/HelperController.php
+    line: 40
+    severity: critical
+    path:
+      - role: entry
+        file: routes/api.php
+        line: 97
+        symbol: 'GET|HEAD /helper/assigned'
+      - role: source
+        line: 38
+        symbol: "$column = request('column')"
+        note: 'attacker-controlled request data, read through the request() helper'
+      - role: sink
+        line: 40
+        symbol: 'DB::raw("select * from orders order by {$column}")'
         note: 'unparameterised SQL fragment'
 
 must_not_find:
@@ -528,3 +588,15 @@ must_not_find:
     file: app/Http/Controllers/SlugController.php
     line: 60
     reason: 'the route declares no {filter} segment, so nothing binds $filter from the URL'
+
+  # ---- the helper: the two reads that must stay silent ---------------------------------
+  # The function *name* is what identifies this source. A rule matching any call with a
+  # string argument would fire on most lines in any codebase.
+  - rule: php.sql-injection
+    file: app/Http/Controllers/HelperController.php
+    line: 48
+    reason: 'intval(request(...)) - a helper read is an ordinary tainted value, so the sanitizer table still applies'
+  - rule: php.sql-injection
+    file: app/Http/Controllers/HelperController.php
+    line: 56
+    reason: "config('orders.default_sort') is not the request() helper - it reads the application's own config"

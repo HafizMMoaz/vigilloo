@@ -25,6 +25,16 @@ Ruleset hash: `520914c8731f4c0d`.
 
 ### Added
 
+- **The `request()` helper and the legacy `Input` facade are taint sources** (TASK-029), both
+  listed in [docs/06-taint-analysis](docs/06-taint-analysis/README.md) section "Laravel HTTP".
+  Neither reaches the Request through a parameter, so the receiver check that recognises
+  `$request->input('x')` could not see either. `Input` is matched on the resolved class and not
+  on the written name, so `use App\Support\Input;` is untouched - the same rule the `DB` facade
+  sinks already follow. Bare `request()` is unchanged: it returns the Request object and was
+  already handled as a receiver, so only the `request('key')` form is a value off the wire. The
+  evidence path names which of the two forms it was, because a developer sent to "request data"
+  in a method with no `$request` has nothing to look for. No new rule ID.
+
 - **Route parameters are taint sources** (TASK-028). A URI segment bound into a controller
   signature - `Route::get('/pages/{slug}', ...)` arriving as `public function show(Request $r,
   string $slug)` - is attacker-controlled, per
