@@ -1231,6 +1231,27 @@ def find_taint_paths(
             )
         )
 
+    for ep in project.entrypoints:
+        _followed(stats)
+        entry = PathStep(
+            role="entry",
+            span=ep.span,
+            snippet=f"[{ep.kind}] {ep.fqn}",
+            note=f"{ep.kind.capitalize()} entry point",
+        )
+        # Entry points start with $this properties assumed to be attacker-controlled.
+        # This is because jobs/commands receive arbitrary payloads via their constructor
+        # which are typically saved to properties.
+        from .models import ALL_KINDS
+        seeded = {"this": ALL_KINDS}
+        
+        paths.extend(
+            _walk_method(
+                project, ep.fqn, seeded, [entry], 0, max_depth, stats
+            )
+        )
+
+
     # Walking nested statements can reach the same call twice, so collapse
     # paths that are step-for-step identical before returning.
     unique: dict[tuple[tuple[str, str, int], ...], list[PathStep]] = {}

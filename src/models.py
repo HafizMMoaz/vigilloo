@@ -71,6 +71,15 @@ class Route:
 
 
 @dataclass(frozen=True)
+class EntryPoint:
+    """A framework-invoked entry point (e.g., job, command, listener)."""
+
+    fqn: str
+    kind: str
+    span: Span
+
+
+@dataclass(frozen=True)
 class NodeRow:
     """One graph node, ready to store.
 

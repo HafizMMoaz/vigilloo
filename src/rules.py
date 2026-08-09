@@ -108,24 +108,54 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
     same shape and both name their rule on the final step, so the dispatch below
     does not need to know which produced what.
     """
-    findings = []
+    # Group paths by (rule_id, sink_span) to determine console-only reachability
+    from collections import defaultdict
+    paths_by_sink = defaultdict(list)
     for path in find_taint_paths(project, stats=stats) + find_structural_paths(project):
-        # The walk names the rule on the sink step. A path whose sink names a
-        # rule this module does not define is dropped rather than guessed at:
-        # emitting it under the wrong ID would put a finding in users'
-        # baselines under an identity that never matches again.
-        rule = _BY_ID.get(path[-1].rule_id)
+        if not path:
+            continue
+        rule_id = path[-1].rule_id
+        sink_span = path[-1].span
+        paths_by_sink[(rule_id, sink_span)].append(path)
+
+    _SEVERITY_DOWN = {
+        "critical": "high",
+        "high": "medium",
+        "medium": "low",
+        "low": "info",
+        "info": "info",
+    }
+
+    findings = []
+    for (rule_id, sink_span), group_paths in paths_by_sink.items():
+        rule = _BY_ID.get(rule_id)
         if rule is None:
             continue
-        findings.append(
-            Finding(
-                rule_id=rule.id,
-                severity=rule.severity,
-                title=rule.title,
-                cwe=rule.cwe,
-                span=path[-1].span,
-                evidence_path=tuple(path),
-                remediation=rule.remediation,
-            )
+            
+        # If no path in the group has an HTTP entry point (but does have an entry point), it's console-only
+        has_entry = any(
+            path[0].role == "entry" and str(path[0].note).endswith("entry point") 
+            for path in group_paths
         )
+        has_http_entry = any(
+            path[0].note == "HTTP entry point" for path in group_paths
+        )
+        
+        severity = rule.severity
+        if has_entry and not has_http_entry:
+            severity = _SEVERITY_DOWN.get(severity, severity)
+
+        for path in group_paths:
+            findings.append(
+                Finding(
+                    rule_id=rule.id,
+                    severity=severity,
+                    title=rule.title,
+                    cwe=rule.cwe,
+                    span=path[-1].span,
+                    evidence_path=tuple(path),
+                    remediation=rule.remediation,
+                )
+            )
+
     return sorted(findings, key=lambda f: (str(f.span.file), f.span.start_line, f.rule_id))

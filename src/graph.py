@@ -16,7 +16,7 @@ from .ids import node_id
 from .laravel.blade import to_php
 from .laravel.detect import Autoload, read_autoload
 from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
-from .models import Coverage, EdgeRow, NodeRow, ParseFailure, Route, Span, Symbol, WalkStats
+from .models import Coverage, EdgeRow, EntryPoint, NodeRow, ParseFailure, Route, Span, Symbol, WalkStats
 from .parser import (
     ParsedFile,
     error_constructs,
@@ -40,6 +40,7 @@ class Project:
     classes: dict[str, ClassInfo] = field(default_factory=dict)
     traits: dict[str, ClassInfo] = field(default_factory=dict)
     routes: list[Route] = field(default_factory=list)
+    entrypoints: list[EntryPoint] = field(default_factory=list)
     bindings: dict[str, list[str]] = field(default_factory=dict)
     blade: dict[Path, ParsedFile] = field(default_factory=dict)
     blade_lines: dict[Path, list[str]] = field(default_factory=dict)
@@ -283,6 +284,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     # first symbol table is built. `Workspace.at` rather than `.open` because loading a
     # project reads and must not create `.vigilloo/` in a tree nobody asked to scan.
     from .laravel.container import extract_bindings
+    from .laravel.entrypoints import find_entrypoints
 
     autoload = read_autoload(Workspace.at(root))
     autoload_roots = autoload.prefixes
@@ -358,6 +360,9 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         project.blade_lines[rel_path] = text.splitlines()
 
     project.routes.sort(key=lambda r: (str(r.span.file), r.span.start_line))
+    project.entrypoints.extend(find_entrypoints(project))
+    project.entrypoints.sort(key=lambda ep: (str(ep.span.file), ep.span.start_line))
+
     return project
 
 
