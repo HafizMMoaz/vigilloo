@@ -707,40 +707,41 @@ class _RowBuilder:
 
         for kind in _CALL_NODES:
             for node in find_all(method, kind):
-                resolved = self._call_target(node, parsed, class_fqn)
-                if resolved is None:
+                resolved = self._call_targets(node, parsed, class_fqn)
+                if not resolved:
                     self.unresolved_calls += 1
                     continue
-                target_fqn, resolution = resolved
-                self.edges.append(
-                    EdgeRow(
-                        src_id,
-                        self._id(_KIND_METHOD, target_fqn),
-                        "CALLS",
-                        resolution=resolution,
+                for target_fqn, resolution, confidence in resolved:
+                    self.edges.append(
+                        EdgeRow(
+                            src_id,
+                            self._id(_KIND_METHOD, target_fqn),
+                            "CALLS",
+                            confidence=confidence,
+                            resolution=resolution,
+                        )
                     )
-                )
 
-    def _call_target(
+    def _call_targets(
         self, call: Node, parsed: ParsedFile, class_fqn: str
-    ) -> tuple[str, str] | None:
-        """The method a call reaches and how it was resolved, or None if it did not resolve.
+    ) -> list[tuple[str, str, float]]:
+        """The methods a call reaches, how it was resolved, and its confidence.
 
-        Every case here reads a name the source states outright - `$this`, `self`, `parent`, a
-        class name, or a typed property. Nothing is inferred from a return type or a variable's
-        history, so an edge that exists is one the code really has. Missing edges are the
-        accepted cost and `unresolved_calls` is where they are counted.
+        Returns an empty list if it could not be resolved.
         """
         name_node = call.child_by_field_name("name")
         if name_node is None:
-            return None
+            return []
         method_name = node_text(name_node, parsed.source)
 
-        receiver: str | None
+        receiver: str | None = None
+        how: str = ""
+        confidence = 1.0
+
         if call.type == "scoped_call_expression":
             scope = call.child_by_field_name("scope")
             if scope is None:
-                return None
+                return []
             written = node_text(scope, parsed.source)
             if written in ("self", "static"):
                 receiver, how = class_fqn, "self"
@@ -750,12 +751,10 @@ class _RowBuilder:
             elif scope.type in ("name", "qualified_name"):
                 receiver = self.project.resolve_class_name(parsed.path, written)
                 how = "static"
-            else:
-                return None
         else:
             obj = call.child_by_field_name("object")
             if obj is None:
-                return None
+                return []
             if obj.type == "variable_name" and node_text(obj, parsed.source) == "$this":
                 receiver, how = class_fqn, "self"
             elif obj.type == "member_access_expression":
@@ -764,23 +763,41 @@ class _RowBuilder:
                 # would need to know what an expression evaluates to, which this layer does not.
                 inner = obj.child_by_field_name("object")
                 prop = obj.child_by_field_name("name")
-                if inner is None or prop is None:
-                    return None
-                if node_text(inner, parsed.source) != "$this":
-                    return None
-                receiver = self.project.resolve_property_type(
-                    class_fqn, node_text(prop, parsed.source)
-                )
-                how = "property_type"
-            else:
-                return None
+                if inner is not None and prop is not None and node_text(inner, parsed.source) == "$this":
+                    receiver = self.project.resolve_property_type(
+                        class_fqn, node_text(prop, parsed.source)
+                    )
+                    how = "property_type"
+                    confidence = 0.95
 
-        if receiver is None:
-            return None
-        target = self.project.method(f"{receiver}::{method_name}")
-        if target is None:
-            return None
-        return target.fqn, how
+        if receiver is not None:
+            candidates = self.project.bindings.get(receiver, [receiver])
+            if receiver in self.project.bindings:
+                confidence = 0.9 if len(candidates) == 1 else 0.6 / len(candidates)
+            
+            results = []
+            for candidate in candidates:
+                target = self.project.method(f"{candidate}::{method_name}")
+                if target is not None:
+                    results.append((target.fqn, how, confidence))
+            return results
+
+        # Duck typing fallback
+        candidates = []
+        for cls_fqn in self.project.classes:
+            if self.project.method(f"{cls_fqn}::{method_name}") is not None:
+                candidates.append(cls_fqn)
+                
+        if not candidates:
+            return []
+            
+        confidence = 0.4 if len(candidates) == 1 else 0.4 / len(candidates)
+        results = []
+        for candidate in candidates:
+            target = self.project.method(f"{candidate}::{method_name}")
+            if target is not None:
+                results.append((target.fqn, "duck_type", confidence))
+        return results
 
     def _declares(self, parent_id: str, child_id: str) -> None:
         self.edges.append(EdgeRow(parent_id, child_id, "DECLARES"))

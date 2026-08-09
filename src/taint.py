@@ -1030,15 +1030,27 @@ def _walk_method(
                 prop = obj.removeprefix("$this->")
                 target_class = project.resolve_property_type(runtime_class, prop)
             else:
-                if passed:
-                    _giveup(stats)
-                continue
-            if target_class is None:
-                if passed:
-                    _giveup(stats)
-                continue
+                target_class = None
 
-            candidates = project.bindings.get(target_class, [target_class])
+            candidates = []
+            confidence = 1.0
+
+            if target_class is None:
+                for cls_fqn in project.classes:
+                    if project.method(f"{cls_fqn}::{name}") is not None:
+                        candidates.append(cls_fqn)
+                if not candidates:
+                    if passed:
+                        _giveup(stats)
+                    continue
+                confidence = 0.4 if len(candidates) == 1 else 0.4 / len(candidates)
+            else:
+                candidates = project.bindings.get(target_class, [target_class])
+                if target_class in project.bindings:
+                    confidence = 0.9 if len(candidates) == 1 else 0.6 / len(candidates)
+                else:
+                    confidence = 1.0 if obj == "$this" else 0.95
+
             found_callee = False
 
             for candidate in candidates:
@@ -1063,6 +1075,7 @@ def _walk_method(
                     span=node_span(call, parsed.path),
                     snippet=node_text(call, source).strip(),
                     note=f"argument {min(passed)} into {callee.fqn}",
+                    confidence=confidence,
                 )
                 paths.extend(
                     _walk_method(

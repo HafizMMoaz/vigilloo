@@ -146,10 +146,14 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
             severity = _SEVERITY_DOWN.get(severity, severity)
 
         for path in group_paths:
+            path_severity = severity
+            if any(getattr(step, "confidence", 1.0) < 0.5 for step in path):
+                path_severity = _SEVERITY_DOWN.get(path_severity, path_severity)
+
             findings.append(
                 Finding(
                     rule_id=rule.id,
-                    severity=severity,
+                    severity=path_severity,
                     title=rule.title,
                     cwe=rule.cwe,
                     span=path[-1].span,

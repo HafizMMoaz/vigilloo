@@ -272,6 +272,7 @@ SINKS: dict[str, tuple[int, TaintKind, str]] = {
 # still in every upgrade-in-progress codebase.
 DB_FACADE_FQNS = frozenset(
     {
+        "Illuminate\\Database\\DatabaseManager",
         "Illuminate\\Support\\Facades\\DB",
         "DB",
     }

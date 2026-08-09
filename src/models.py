@@ -146,6 +146,7 @@ class PathStep:
     snippet: str
     note: str = ""
     rule_id: str = ""
+    confidence: float = 1.0
 
 
 @dataclass(frozen=True)
