@@ -399,7 +399,48 @@ def _constructed_class(node: Node, source: bytes, project: Project, file: Path) 
     if node.type == "scoped_call_expression":
         scope = node.child_by_field_name("scope")
         if scope is not None and scope.type in ("name", "qualified_name"):
-            return project.resolve_class_name(file, node_text(scope, source))
+            scope_name = node_text(scope, source)
+            # `App::make(...)`
+            if scope_name == "App":
+                name_node = node.child_by_field_name("name")
+                if name_node and node_text(name_node, source) == "make":
+                    args = node.child_by_field_name("arguments")
+                    if args:
+                        first_arg = next(
+                            (c for c in args.named_children if c.type == "argument"), None
+                        )
+                        if first_arg and first_arg.children:
+                            expr = first_arg.children[0]
+                            if expr.type == "class_constant_access_expression":
+                                cls_node = expr.children[0]
+                                if cls_node:
+                                    return project.resolve_class_name(
+                                        file, node_text(cls_node, source)
+                                    )
+            return project.resolve_class_name(file, scope_name)
+    if node.type == "function_call_expression":
+        # `app(...)` or `resolve(...)`
+        name_node = node.child_by_field_name("function")
+        if name_node and node_text(name_node, source) in ("app", "resolve"):
+            args = node.child_by_field_name("arguments")
+            if args:
+                first_arg = next((c for c in args.named_children if c.type == "argument"), None)
+                if first_arg and first_arg.children:
+                    expr = first_arg.children[0]
+                    if expr.type == "class_constant_access_expression":
+                        cls_node = expr.children[0]
+                        if cls_node:
+                            return project.resolve_class_name(file, node_text(cls_node, source))
+                    elif expr.type == "string":
+                        val = node_text(expr, source)
+                        if val.startswith("'") and val.endswith("'"):
+                            val = val[1:-1].replace("\\\\", "\\")
+                        elif val.startswith('"') and val.endswith('"'):
+                            val = val[1:-1].replace("\\\\", "\\")
+                        # Return string binding (could be an FQN or just an alias like 'reports')
+                        if val:
+                            return val
+
     return None
 
 
@@ -996,41 +1037,48 @@ def _walk_method(
                 if passed:
                     _giveup(stats)
                 continue
-            callee_fqn = f"{target_class}::{name}"
-            callee = project.method(callee_fqn)
-            if callee is None:
-                if passed:
-                    _giveup(stats)
-                continue
 
-            if not passed:
-                continue
+            candidates = project.bindings.get(target_class, [target_class])
+            found_callee = False
 
-            _followed(stats)
-            callee_tainted = {
-                callee.params[i]: kinds for i, kinds in passed.items() if i < len(callee.params)
-            }
-            if not callee_tainted:
-                continue
+            for candidate in candidates:
+                callee_fqn = f"{candidate}::{name}"
+                callee = project.method(callee_fqn)
+                if callee is None:
+                    continue
 
-            step = PathStep(
-                role="propagator",
-                span=node_span(call, parsed.path),
-                snippet=node_text(call, source).strip(),
-                note=f"argument {min(passed)} into {callee.fqn}",
-            )
-            paths.extend(
-                _walk_method(
-                    project,
-                    callee_fqn,
-                    callee_tainted,
-                    prefix + [step],
-                    depth + 1,
-                    max_depth,
-                    stats,
-                    target_class,
+                found_callee = True
+                if not passed:
+                    continue
+
+                _followed(stats)
+                callee_tainted = {
+                    callee.params[i]: kinds for i, kinds in passed.items() if i < len(callee.params)
+                }
+                if not callee_tainted:
+                    continue
+
+                step = PathStep(
+                    role="propagator",
+                    span=node_span(call, parsed.path),
+                    snippet=node_text(call, source).strip(),
+                    note=f"argument {min(passed)} into {callee.fqn}",
                 )
-            )
+                paths.extend(
+                    _walk_method(
+                        project,
+                        callee_fqn,
+                        callee_tainted,
+                        prefix + [step],
+                        depth + 1,
+                        max_depth,
+                        stats,
+                        candidate,
+                    )
+                )
+
+            if not found_callee and passed:
+                _giveup(stats)
 
         # 2c. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
         #     docs/03-parser is explicit about these - "Dynamic dispatch. Mark the

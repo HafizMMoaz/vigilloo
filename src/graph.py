@@ -40,6 +40,7 @@ class Project:
     classes: dict[str, ClassInfo] = field(default_factory=dict)
     traits: dict[str, ClassInfo] = field(default_factory=dict)
     routes: list[Route] = field(default_factory=list)
+    bindings: dict[str, list[str]] = field(default_factory=dict)
     blade: dict[Path, ParsedFile] = field(default_factory=dict)
     blade_lines: dict[Path, list[str]] = field(default_factory=dict)
     failed: list[Path] = field(default_factory=list)
@@ -281,6 +282,8 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     # which written names are already fully qualified, so it has to exist before the
     # first symbol table is built. `Workspace.at` rather than `.open` because loading a
     # project reads and must not create `.vigilloo/` in a tree nobody asked to scan.
+    from .laravel.container import extract_bindings
+
     autoload = read_autoload(Workspace.at(root))
     autoload_roots = autoload.prefixes
     project = Project(root=root, autoload=autoload)
@@ -326,6 +329,10 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         # scanned.
         if rel_path.parent.name == "routes":
             project.routes.extend(extract_routes(parsed, syms, stats))
+
+        file_bindings = extract_bindings(parsed, syms, autoload_roots)
+        for interface, implementations in file_bindings.items():
+            project.bindings.setdefault(interface, []).extend(implementations)
 
     for path in _blade_files(root):
         try:
@@ -632,6 +639,26 @@ class _RowBuilder:
         self, method: Node, parsed: ParsedFile, class_fqn: str, caller_fqn: str
     ) -> None:
         src_id = self._id(_KIND_METHOD, caller_fqn)
+
+        # Constructor injection resolution
+        if caller_fqn.endswith("::__construct"):
+            symbol = self.project.method(caller_fqn)
+            if symbol is not None:
+                for param_type in symbol.param_types:
+                    if param_type in self.project.bindings:
+                        candidates = self.project.bindings[param_type]
+                        confidence = 0.9 if len(candidates) == 1 else 0.6 / len(candidates)
+                        for candidate in candidates:
+                            self.edges.append(
+                                EdgeRow(
+                                    src_id,
+                                    self._id(_KIND_CLASS, candidate),
+                                    "RESOLVES_TO",
+                                    confidence=confidence,
+                                    resolution="container",
+                                )
+                            )
+
         for node in find_all(method, "object_creation_expression"):
             target = _resolved_class(self.project, parsed, node)
             if target is None:
@@ -640,6 +667,39 @@ class _RowBuilder:
             self.edges.append(
                 EdgeRow(src_id, self._id(_KIND_CLASS, target), "INSTANTIATES", resolution="static")
             )
+
+        for node in find_all(method, "function_call_expression"):
+            target = _container_resolved_class(self.project, parsed, node)
+            if target and target in self.project.bindings:
+                candidates = self.project.bindings[target]
+                confidence = 0.9 if len(candidates) == 1 else 0.6 / len(candidates)
+                for candidate in candidates:
+                    self.edges.append(
+                        EdgeRow(
+                            src_id,
+                            self._id(_KIND_CLASS, candidate),
+                            "RESOLVES_TO",
+                            confidence=confidence,
+                            resolution="container",
+                        )
+                    )
+
+        for node in find_all(method, "scoped_call_expression"):
+            target = _container_resolved_class(self.project, parsed, node)
+            if target and target in self.project.bindings:
+                candidates = self.project.bindings[target]
+                confidence = 0.9 if len(candidates) == 1 else 0.6 / len(candidates)
+                for candidate in candidates:
+                    self.edges.append(
+                        EdgeRow(
+                            src_id,
+                            self._id(_KIND_CLASS, candidate),
+                            "RESOLVES_TO",
+                            confidence=confidence,
+                            resolution="container",
+                        )
+                    )
+
         for kind in _CALL_NODES:
             for node in find_all(method, kind):
                 resolved = self._call_target(node, parsed, class_fqn)
@@ -793,6 +853,47 @@ def _resolved_class(project: Project, parsed: ParsedFile, creation: Node) -> str
         if child.type in ("name", "qualified_name"):
             resolved = project.resolve_class_name(parsed.path, node_text(child, parsed.source))
             return resolved if resolved in project.classes else None
+    return None
+
+
+def _container_resolved_class(project: Project, parsed: ParsedFile, node: Node) -> str | None:
+    source = parsed.source
+    if node.type == "function_call_expression":
+        name_node = node.child_by_field_name("function")
+        if name_node and node_text(name_node, source) in ("app", "resolve"):
+            args = node.child_by_field_name("arguments")
+            if args:
+                first_arg = next((c for c in args.named_children if c.type == "argument"), None)
+                if first_arg and first_arg.children:
+                    expr = first_arg.children[0]
+                    if expr.type == "class_constant_access_expression":
+                        cls_node = expr.children[0]
+                        if cls_node:
+                            return project.resolve_class_name(
+                                parsed.path, node_text(cls_node, source)
+                            )
+                    elif expr.type == "string":
+                        val = node_text(expr, source)
+                        if val.startswith("'") and val.endswith("'"):
+                            return val[1:-1].replace("\\\\", "\\")
+                        elif val.startswith('"') and val.endswith('"'):
+                            return val[1:-1].replace("\\\\", "\\")
+    elif node.type == "scoped_call_expression":
+        scope = node.child_by_field_name("scope")
+        if scope and scope.type in ("name", "qualified_name") and node_text(scope, source) == "App":
+            name_node = node.child_by_field_name("name")
+            if name_node and node_text(name_node, source) == "make":
+                args = node.child_by_field_name("arguments")
+                if args:
+                    first_arg = next((c for c in args.named_children if c.type == "argument"), None)
+                    if first_arg and first_arg.children:
+                        expr = first_arg.children[0]
+                        if expr.type == "class_constant_access_expression":
+                            cls_node = expr.children[0]
+                            if cls_node:
+                                return project.resolve_class_name(
+                                    parsed.path, node_text(cls_node, source)
+                                )
     return None
 
 
