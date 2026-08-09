@@ -17,6 +17,7 @@ from tree_sitter import Node
 # ->orderByRaw(...)` are where the interesting calls actually live. A walk
 # over expression_statement alone finds nothing in a typical repository.
 from .graph import Project
+from .laravel.facades import resolve_facade
 from .laravel.models import Protection, model_config
 from .laravel.routes import uri_params
 from .laravel.views import extract_view_bindings, template_path
@@ -529,7 +530,19 @@ def _scoped_receiver(
         owner = lexical_fqn if lexical_fqn in project.classes else runtime_fqn
         info = project.classes.get(owner)
         return info.parent if info else None
-    return project.resolve_class_name(file, written)
+
+    fqn = project.resolve_class_name(file, written)
+    if fqn:
+        facade_concrete = resolve_facade(fqn, project)
+        if facade_concrete:
+            return facade_concrete
+
+        # An unknown built-in facade cannot be traced and has no known concrete class.
+        # Returning None forces `stats.unresolved += 1` in `_walk_method`.
+        if fqn.startswith("Illuminate\\Support\\Facades\\"):
+            return None
+
+    return fqn
 
 
 def _argument_name(arg: Node, source: bytes) -> str | None:
@@ -659,6 +672,8 @@ def _follow_static(
     }
 
     if receiver_fqn is None:
+        if passed:
+            _giveup(stats)
         return []
 
     callee_fqn = f"{receiver_fqn}::{name}"
