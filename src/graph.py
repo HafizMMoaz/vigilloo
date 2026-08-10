@@ -337,19 +337,19 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         project.classes.update(syms.classes)
         project.traits.update(syms.traits)
 
-        # ponytail: routes are recognised only by living in a directory
-        # literally named "routes" (Laravel's default routes/api.php,
-        # routes/web.php). A Laravel 10+ split like routes/api/v1.php is
-        # invisible to this rule. Deliberately not broadened for this slice;
-        # cli.py's "no HTTP entry points discovered" warning is what keeps
-        # that gap from being silent instead of a green report with nothing
-        # scanned.
-        if rel_path.parent.name == "routes":
-            project.routes.extend(extract_routes(parsed, syms, stats))
-
         file_bindings = extract_bindings(parsed, syms, autoload_roots)
         for interface, implementations in file_bindings.items():
             project.bindings.setdefault(interface, []).extend(implementations)
+
+    from .laravel.routes import discover_route_files
+
+    route_paths = discover_route_files(project.files)
+    for rel_path in route_paths:
+        parsed = project.files.get(rel_path)
+        if parsed:
+            syms = project.symbols.get(rel_path)
+            if syms is not None:
+                project.routes.extend(extract_routes(parsed, syms, stats))
 
     for path in _blade_files(root):
         try:
