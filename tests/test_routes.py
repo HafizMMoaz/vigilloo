@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from vigilloo.laravel.routes import extract_routes
+from vigilloo.laravel.routes import discover_route_files, extract_routes
 from vigilloo.parser import parse_php, parse_source
 from vigilloo.symbols import extract_symbols
 
@@ -74,3 +74,21 @@ def test_routes_are_returned_in_deterministic_order() -> None:
     parsed = parse_php(FIXTURE / "routes/api.php")
     symbols = extract_symbols(parsed)
     assert extract_routes(parsed, symbols) == extract_routes(parsed, symbols)
+
+
+def test_discover_route_files() -> None:
+    fixture_path = Path("tests/fixtures/task-038-routes")
+    files = {}
+    for php_file in fixture_path.rglob("*.php"):
+        rel_path = php_file.relative_to(fixture_path)
+        parsed = parse_source(rel_path, php_file.read_bytes())
+        files[rel_path] = parsed
+
+    discovered = discover_route_files(files)
+
+    assert Path("routes/api/v1.php") in discovered
+    assert Path("routes/web.php") in discovered
+    assert Path("custom/routes.php") in discovered
+    assert Path("routes/console.php") in discovered
+    assert Path("routes/channels.php") in discovered
+    assert Path("routes/api.php") in discovered

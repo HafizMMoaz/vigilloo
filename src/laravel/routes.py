@@ -1,6 +1,7 @@
 """Extract the Laravel route table, the application's attack surface inventory."""
 
 import re
+from pathlib import Path
 
 from tree_sitter import Node
 
@@ -184,3 +185,32 @@ def extract_routes(
         )
 
     return sorted(routes, key=lambda r: (r.span.start_line, r.uri))
+
+
+def discover_route_files(files: dict[Path, ParsedFile]) -> set[Path]:
+    """Find files that define routes.
+
+    Includes standard paths unconditionally, plus any file explicitly registered in a
+    RouteServiceProvider via base_path(...).
+    """
+    paths = {
+        Path("routes/web.php"),
+        Path("routes/api.php"),
+        Path("routes/console.php"),
+        Path("routes/channels.php"),
+    }
+
+    for path, parsed in files.items():
+        if path.name == "RouteServiceProvider.php" and "Providers" in path.parts:
+            for call in find_all(parsed.tree.root_node, "function_call_expression"):
+                name = call.child_by_field_name("function")
+                if name and node_text(name, parsed.source) == "base_path":
+                    args = call.child_by_field_name("arguments")
+                    if args:
+                        for arg in args.children:
+                            if arg.type == "argument":
+                                inner = arg.children[0] if arg.children else None
+                                if inner and inner.type in ("string", "encapsed_string"):
+                                    paths.add(Path(_string_literal(inner, parsed.source)))
+
+    return paths
