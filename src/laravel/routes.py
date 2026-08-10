@@ -1,6 +1,7 @@
 """Extract the Laravel route table, the application's attack surface inventory."""
 
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from tree_sitter import Node
@@ -12,13 +13,8 @@ from ..symbols import FileSymbols, array_literal
 # {order} and Laravel's optional {order?}.
 _URI_PARAM = re.compile(r"\{(\w+)\??\}")
 
-# Middleware this module could not read as a string literal. Recorded rather
-# than dropped: an authorization rule that silently discards `->middleware($m)`
-# turns "I cannot tell what guards this route" into "nothing guards this
-# route", which is a fabricated finding. Callers must treat it as unknown.
 UNRESOLVED_MIDDLEWARE = "?"
 
-# Route::get/post/... verb methods and the verbs they register.
 _VERB_METHODS: dict[str, tuple[str, ...]] = {
     "get": ("GET", "HEAD"),
     "post": ("POST",),
@@ -31,14 +27,6 @@ _VERB_METHODS: dict[str, tuple[str, ...]] = {
 
 
 def uri_params(uri: str) -> list[str]:
-    """The parameter names a route URI declares, in the order they appear.
-
-    `/invoices/{invoice}/lines/{line?}` yields ["invoice", "line"]. Public and
-    shared: both the authorization rule and the taint walk need it, and Laravel
-    binds a URI segment to an action parameter *by name*, so a second copy of
-    this pattern that drifted would silently change which parameters are
-    considered attacker-controlled.
-    """
     return _URI_PARAM.findall(uri)
 
 
@@ -47,12 +35,14 @@ def _string_literal(node: Node, source: bytes) -> str:
 
 
 def _action_fqn(node: Node, source: bytes, symbols: FileSymbols) -> str:
-    """Resolve [Controller::class, 'method'] or 'Controller@method' to an FQN."""
     text = node_text(node, source)
 
     if "::class" in text:
         short = text.split("::class")[0].strip().lstrip("[").strip()
-        method = text.rsplit(",", 1)[-1].strip().rstrip("]").strip("'\" ")
+        if "," in text:
+            method = text.rsplit(",", 1)[-1].strip().rstrip("]").strip("'\" ")
+        else:
+            method = "__invoke"  # Single action controller
         cls = symbols.imports.get(short, short)
         return f"{cls}::{method}"
 
@@ -60,131 +50,294 @@ def _action_fqn(node: Node, source: bytes, symbols: FileSymbols) -> str:
     if "@" in literal:
         short, method = literal.split("@", 1)
         return f"{symbols.imports.get(short, short)}::{method}"
+    elif literal.isalnum():
+        return f"{symbols.imports.get(literal, literal)}::__invoke"
 
     return ""
 
 
-def _middleware_args(call: Node, source: bytes) -> list[str]:
-    """The middleware names one ->middleware(...) call adds."""
-    args_node = call.child_by_field_name("arguments")
-    if args_node is None:
-        return [UNRESOLVED_MIDDLEWARE]
-
-    names: list[str] = []
-    for arg in args_node.children:
-        if arg.type != "argument":
+def _parse_array_dict(node: Node, source: bytes) -> dict[str, list[str]]:
+    """Parse ['prefix' => 'admin', 'middleware' => ['auth', 'can:manage']] into a dict."""
+    result: dict[str, list[str]] = {}
+    for element in node.children:
+        if element.type != "array_element_initializer":
             continue
-        inner = arg.children[0] if arg.children else None
-        if inner is None:
-            names.append(UNRESOLVED_MIDDLEWARE)
-        elif inner.type in ("string", "encapsed_string"):
-            names.append(_string_literal(inner, source))
-        elif inner.type == "array_creation_expression":
-            values = array_literal(inner, source)
-            names.extend(values if values is not None else [UNRESOLVED_MIDDLEWARE])
+
+        if len(element.children) >= 3 and element.children[1].type == "=>":
+            key_node = element.children[0]
+            val_node = element.children[2]
+            key = node_text(key_node, source).strip("'\"")
+
+            if val_node.type in ("string", "encapsed_string"):
+                result[key] = [node_text(val_node, source).strip("'\"")]
+            elif val_node.type == "array_creation_expression":
+                vals: list[str] = []
+                for val_elem in val_node.children:
+                    if val_elem.type == "array_element_initializer":
+                        if len(val_elem.children) == 1 and val_elem.children[0].type in (
+                            "string",
+                            "encapsed_string",
+                        ):
+                            vals.append(node_text(val_elem.children[0], source).strip("'\""))
+                result[key] = vals
+    return result
+
+
+def _unroll_chain(node: Node, source: bytes) -> list[tuple[str, Node]]:
+    """Unroll A()->B()->C() into a list of calls."""
+    calls: list[tuple[str, Node]] = []
+    curr: Node | None = node
+    while curr is not None:
+        if curr.type == "member_call_expression":
+            name = node_text(curr.child_by_field_name("name"), source)
+            calls.append((name, curr))
+            curr = curr.child_by_field_name("object")
+        elif curr.type == "scoped_call_expression":
+            name = node_text(curr.child_by_field_name("name"), source)
+            scope = node_text(curr.child_by_field_name("scope"), source)
+            calls.append((f"{scope}::{name}", curr))
+            break
         else:
-            names.append(UNRESOLVED_MIDDLEWARE)
-    return names
+            break
+
+    if not calls or not calls[-1][0].startswith("Route::"):
+        return []
+
+    return list(reversed(calls))
 
 
-def _middleware(call: Node, source: bytes) -> tuple[str, ...]:
-    """Every middleware applied to a route registration.
+@dataclass
+class GroupContext:
+    prefix: str = ""
+    name: str = ""
+    middleware: list[str] = field(default_factory=list)
 
-    `Route::get(...)` is a scoped_call_expression and the `->middleware(...)`
-    chained onto it is a member_call_expression whose *object* is that scoped
-    call, so middleware is found by walking up from the registration rather than
-    by reading its arguments. The group form -
 
-        Route::middleware(['auth'])->group(function () { Route::get(...); });
+class RouteWalker:
+    def __init__(self, parsed: ParsedFile, symbols: FileSymbols, stats: WalkStats | None):
+        self.parsed = parsed
+        self.source = parsed.source
+        self.symbols = symbols
+        self.stats = stats
+        self.routes: list[Route] = []
+        self.group_stack: list[GroupContext] = [GroupContext()]
 
-    - is reached by the same walk continuing out through the closure to the
-    enclosing ->group(...) call, then down its own receiver chain. Group
-    middleware is how real route files are written; handling only the inline
-    chain would report nothing on a typical routes/api.php.
+    @property
+    def current_context(self) -> GroupContext:
+        ctx = GroupContext()
+        for g in self.group_stack:
+            if g.prefix:
+                ctx.prefix = f"{ctx.prefix}/{g.prefix}".strip("/")
+            if g.name:
+                ctx.name = f"{ctx.name}{g.name}"
+            ctx.middleware.extend(g.middleware)
+        return ctx
 
-    ponytail: middleware *groups* ('web', 'api') are not expanded into their
-    member lists - that needs Kernel.php / bootstrap/app.php. An unexpanded
-    group reads as "not authenticated", which costs findings and never
-    fabricates one.
-    """
-    # Keyed by extent so a chain reached twice by the upward walk is collected
-    # once, and so the result is ordered by position in the file. The *end*
-    # byte is what distinguishes the links: every call in `a()->b()->c()`
-    # starts where `a` does, so keying on the start alone silently collapses a
-    # doubled ->middleware(...)->middleware(...) into one.
-    found: dict[tuple[int, int], Node] = {}
-    node: Node | None = call
-    while node is not None:
-        chain: Node | None = node
-        while chain is not None and chain.type in (
-            "member_call_expression",
-            "scoped_call_expression",
-        ):
-            if node_text(chain.child_by_field_name("name"), source) == "middleware":
-                found[(chain.start_byte, chain.end_byte)] = chain
-            chain = chain.child_by_field_name("object")
-        node = node.parent
+    def get_closure(self, call: Node) -> Node | None:
+        args_node = call.child_by_field_name("arguments")
+        if not args_node:
+            return None
+        for arg in args_node.children:
+            if arg.type == "argument":
+                inner = arg.children[0] if arg.children else None
+                if inner and inner.type == "anonymous_function":
+                    return inner
+        return None
 
-    names: list[str] = []
-    for _, mw_call in sorted(found.items()):
-        names.extend(_middleware_args(mw_call, source))
-    return tuple(names)
+    def _parse_chain_properties(self, chain: list[tuple[str, Node]]) -> GroupContext:
+        ctx = GroupContext()
+        for name, call in chain:
+            if name.split("::")[-1] == "prefix":
+                args_node = call.child_by_field_name("arguments")
+                if args_node and len(args_node.children) >= 2:
+                    arg = args_node.children[1]  # [0] is '(', [1] is argument
+                    inner = arg.children[0] if arg.children else None
+                    if inner and inner.type in ("string", "encapsed_string"):
+                        ctx.prefix = _string_literal(inner, self.source)
+            elif name.split("::")[-1] == "name":
+                args_node = call.child_by_field_name("arguments")
+                if args_node and len(args_node.children) >= 2:
+                    arg = args_node.children[1]
+                    inner = arg.children[0] if arg.children else None
+                    if inner and inner.type in ("string", "encapsed_string"):
+                        ctx.name = _string_literal(inner, self.source)
+            elif name.split("::")[-1] == "middleware":
+                args_node = call.child_by_field_name("arguments")
+                if args_node and len(args_node.children) >= 2:
+                    arg = args_node.children[1]
+                    inner = arg.children[0] if arg.children else None
+                    if inner and inner.type in ("string", "encapsed_string"):
+                        ctx.middleware.append(_string_literal(inner, self.source))
+                    elif inner and inner.type == "array_creation_expression":
+                        vals = array_literal(inner, self.source)
+                        if vals:
+                            ctx.middleware.extend(vals)
+                        else:
+                            ctx.middleware.append(UNRESOLVED_MIDDLEWARE)
+                    else:
+                        ctx.middleware.append(UNRESOLVED_MIDDLEWARE)
+        return ctx
+
+    def _parse_group_array(self, call: Node) -> GroupContext:
+        ctx = GroupContext()
+        args_node = call.child_by_field_name("arguments")
+        if not args_node or len(args_node.children) < 2:
+            return ctx
+
+        arg = args_node.children[1]
+        inner = arg.children[0] if arg.children else None
+        if inner and inner.type == "array_creation_expression":
+            props = _parse_array_dict(inner, self.source)
+            if "prefix" in props and props["prefix"]:
+                ctx.prefix = props["prefix"][0]
+            if "as" in props and props["as"]:
+                ctx.name = props["as"][0]
+            if "middleware" in props:
+                ctx.middleware.extend(props["middleware"])
+        return ctx
+
+    def walk(self, node: Node) -> None:
+        if node.type in ("member_call_expression", "scoped_call_expression"):
+            chain = _unroll_chain(node, self.source)
+            if chain:
+                last_name, last_call = chain[-1]
+                if last_name in ("group", "Route::group"):
+                    ctx1 = self._parse_chain_properties(chain[:-1])
+                    ctx2 = self._parse_group_array(last_call)
+
+                    # Merge properties from both styles
+                    merged = GroupContext(
+                        prefix=ctx2.prefix if ctx2.prefix else ctx1.prefix,
+                        name=ctx2.name if ctx2.name else ctx1.name,
+                        middleware=ctx1.middleware + ctx2.middleware,
+                    )
+
+                    self.group_stack.append(merged)
+                    closure = self.get_closure(last_call)
+                    if closure:
+                        self.walk(closure)
+                    self.group_stack.pop()
+                    return
+
+                verb_method = chain[0][0].split("::")[1]
+                if verb_method in _VERB_METHODS:
+                    self.extract_route(chain, _VERB_METHODS[verb_method])
+                    return
+                elif verb_method in ("resource", "apiResource"):
+                    self.extract_resource(chain, api_only=(verb_method == "apiResource"))
+                    return
+
+        for child in node.children:
+            self.walk(child)
+
+    def extract_route(self, chain: list[tuple[str, Node]], verbs: tuple[str, ...]) -> None:
+        first_call = chain[0][1]
+        args_node = first_call.child_by_field_name("arguments")
+        if not args_node:
+            if self.stats:
+                self.stats.unresolved += 1
+            return
+
+        args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+        if len(args) < 2:
+            if self.stats:
+                self.stats.unresolved += 1
+            return
+
+        if self.stats:
+            self.stats.resolved += 1
+
+        ctx1 = self._parse_chain_properties(chain[1:])
+        curr = self.current_context
+
+        uri = _string_literal(args[0], self.source)
+        full_uri = f"{curr.prefix}/{uri}".strip("/") if curr.prefix else uri.strip("/")
+        full_uri = re.sub(r"/+", "/", "/" + full_uri)
+
+        action_fqn = _action_fqn(args[1], self.source, self.symbols)
+        mw = tuple(curr.middleware + ctx1.middleware)
+
+        self.routes.append(
+            Route(
+                uri=full_uri,
+                verbs=verbs,
+                action_fqn=action_fqn,
+                middleware=mw,
+                span=node_span(first_call, self.parsed.path),
+            )
+        )
+
+    def extract_resource(self, chain: list[tuple[str, Node]], api_only: bool) -> None:
+        first_call = chain[0][1]
+        args_node = first_call.child_by_field_name("arguments")
+        if not args_node:
+            if self.stats:
+                self.stats.unresolved += 1
+            return
+
+        args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+        if len(args) < 2:
+            if self.stats:
+                self.stats.unresolved += 1
+            return
+
+        if self.stats:
+            self.stats.resolved += 1
+
+        ctx1 = self._parse_chain_properties(chain[1:])
+        curr = self.current_context
+
+        base_uri = _string_literal(args[0], self.source).strip("/")
+        controller = _action_fqn(args[1], self.source, self.symbols)
+        # If action_fqn parser thinks it is a method call due to string/class, it adds ::__invoke.
+        # But resource passes controller class. _action_fqn returns `Controller::__invoke`.
+        # Actually _action_fqn for `Controller::class` (no method) returns `Controller::__invoke`.
+        # We need to strip ::__invoke to get the base controller name.
+        if controller.endswith("::__invoke"):
+            controller = controller[:-10]
+
+        mw = tuple(curr.middleware + ctx1.middleware)
+
+        # Determine parameter name, e.g. 'posts' -> 'post' (Laravel uses singular).
+        # We'll just use a generic 'id' or strip 's' for simplicity unless requested.
+        # Laravel strips the last 's' for the param name.
+        param_name = base_uri.split("/")[-1]
+        if param_name.endswith("s"):
+            param_name = param_name[:-1]
+
+        actions = [
+            ("index", ("GET", "HEAD"), f"/{base_uri}"),
+            ("store", ("POST",), f"/{base_uri}"),
+            ("show", ("GET", "HEAD"), f"/{base_uri}/{{{param_name}}}"),
+            ("update", ("PUT", "PATCH"), f"/{base_uri}/{{{param_name}}}"),
+            ("destroy", ("DELETE",), f"/{base_uri}/{{{param_name}}}"),
+        ]
+        if not api_only:
+            actions.insert(1, ("create", ("GET", "HEAD"), f"/{base_uri}/create"))
+            actions.insert(5, ("edit", ("GET", "HEAD"), f"/{base_uri}/{{{param_name}}}/edit"))
+
+        for method, verbs, route_uri in actions:
+            full_uri = f"{curr.prefix}{route_uri}" if curr.prefix else route_uri
+            full_uri = re.sub(r"/+", "/", "/" + full_uri)
+
+            self.routes.append(
+                Route(
+                    uri=full_uri,
+                    verbs=verbs,
+                    action_fqn=f"{controller}::{method}",
+                    middleware=mw,
+                    span=node_span(first_call, self.parsed.path),
+                )
+            )
 
 
 def extract_routes(
     parsed: ParsedFile, symbols: FileSymbols, stats: WalkStats | None = None
 ) -> list[Route]:
-    """Find Route::verb(uri, action) calls.
-
-    ponytail: no prefix/resource expansion yet. The fixture registers flat
-    routes, and routes inside a middleware group are found because the search is
-    over the whole file rather than statement by statement. Add expansion when a
-    fixture needs it - see docs 08-framework-adapters.
-    """
-    routes: list[Route] = []
-    source = parsed.source
-
-    for call in find_all(parsed.tree.root_node, "scoped_call_expression"):
-        scope = node_text(call.child_by_field_name("scope"), source)
-        if scope.rsplit("\\", 1)[-1] != "Route":
-            continue
-
-        method = node_text(call.child_by_field_name("name"), source)
-        verbs = _VERB_METHODS.get(method)
-        if verbs is None:
-            continue
-
-        # Recognised as a verb-registering Route call, but the argument shape
-        # did not match what a route registration looks like.
-        args_node = call.child_by_field_name("arguments")
-        if args_node is None:
-            if stats is not None:
-                stats.unresolved += 1
-            continue
-        args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
-        if len(args) < 2:
-            if stats is not None:
-                stats.unresolved += 1
-            continue
-
-        # The opposite branch of the two give-ups above: a Route::verb call
-        # whose shape the adapter did understand. Without it the unresolved
-        # count has no denominator and the rate in the report would have to be
-        # estimated (docs/22-testing, section "Metrics gated in CI").
-        if stats is not None:
-            stats.resolved += 1
-
-        routes.append(
-            Route(
-                uri=_string_literal(args[0], source),
-                verbs=verbs,
-                action_fqn=_action_fqn(args[1], source, symbols),
-                middleware=_middleware(call, source),
-                span=node_span(call, parsed.path),
-            )
-        )
-
-    return sorted(routes, key=lambda r: (r.span.start_line, r.uri))
+    """Find Route::verb(uri, action) calls."""
+    walker = RouteWalker(parsed, symbols, stats)
+    walker.walk(parsed.tree.root_node)
+    return sorted(walker.routes, key=lambda r: (r.span.start_line, r.uri))
 
 
 def discover_route_files(files: dict[Path, ParsedFile]) -> set[Path]:

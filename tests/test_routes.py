@@ -92,3 +92,44 @@ def test_discover_route_files() -> None:
     assert Path("routes/console.php") in discovered
     assert Path("routes/channels.php") in discovered
     assert Path("routes/api.php") in discovered
+
+
+def test_groups_and_resources() -> None:
+    p = Path("tests/fixtures/task-039-routes/routes/web.php")
+    parsed = parse_source(p, p.read_bytes())
+    symbols = extract_symbols(parsed)
+    routes = extract_routes(parsed, symbols)
+
+    # Let's verify the extracted routes.
+    # 1. /home
+    # 2. /admin/dashboard
+    # 3. /admin/users/create
+    # 4. /admin/users/{user}
+    # 5-11. /posts (resource, 7 routes)
+    # 12-16. /items (apiResource, 5 routes)
+    assert len(routes) == 16
+
+    # 2. admin dashboard
+    r = next(r for r in routes if r.uri == "/admin/dashboard")
+    assert r.middleware == ("auth", "verified")
+
+    # 4. admin user show
+    r = next(r for r in routes if r.uri == "/admin/users/{user}")
+    assert r.middleware == ("auth", "verified", "can:manage-users", "throttle:60,1")
+
+    # 5-11. resource: posts index
+    r = next(r for r in routes if r.uri == "/posts" and "GET" in r.verbs)
+    assert r.middleware == ("api",)
+    assert r.action_fqn == "App\\Http\\Controllers\\PostController::index"
+
+    # resource: posts store
+    r = next(r for r in routes if r.uri == "/posts" and "POST" in r.verbs)
+    assert r.action_fqn == "App\\Http\\Controllers\\PostController::store"
+
+    # resource: posts show
+    r = next(r for r in routes if r.uri == "/posts/{post}" and "GET" in r.verbs)
+    assert r.action_fqn == "App\\Http\\Controllers\\PostController::show"
+
+    # resource: posts update
+    r = next(r for r in routes if r.uri == "/posts/{post}" and "PUT" in r.verbs)
+    assert r.action_fqn == "App\\Http\\Controllers\\PostController::update"
