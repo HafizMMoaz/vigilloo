@@ -343,7 +343,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
 
     from .laravel.middleware import extract_middleware_groups
     from .laravel.routes import discover_route_files
-    
+
     middleware_groups = {}
     for rel_path, parsed in project.files.items():
         path_str = str(rel_path).replace("\\\\", "/")
