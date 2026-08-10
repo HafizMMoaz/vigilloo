@@ -806,38 +806,25 @@ def _walk_template(
     bound: dict[str, frozenset[TaintKind]],
     prefix: list[PathStep],
     stats: WalkStats | None = None,
+    visited: set[Path] | None = None,
 ) -> list[list[PathStep]]:
-    """Every raw echo in this template that still carries html taint.
-
-    The html sink is scoped to Blade-derived files on purpose. `echo` in a
-    plain PHP script is not usefully a finding, and flagging every one is how a
-    tool teaches people to ignore it.
-
-    ponytail: Response bodies and non-Blade templates when a fixture needs them.
-    """
+    """Every raw echo in this template (or included/extended templates) carrying html taint."""
     parsed = project.blade.get(template)
     if parsed is None:
         return []
 
-    # @foreach and friends are left as inert text by the Blade rewriter (see
-    # laravel/blade.py), so a loop variable like $row is never aliased to the
-    # kinds carried by the collection it iterates. `bound` is only non-empty
-    # here because the caller already confirmed this template was handed
-    # tainted data, so a loop directive in its text is a real, silent gap.
-    # Counted once per template, not once per directive or echo, so the
-    # counter still means "one lost trail" and not "how many loops". It is the
-    # one give-up with no _followed counterpart: resolving the template already
-    # counted as a success at the view() call, and this is the walk failing to
-    # follow the data one step further inside it.
-    #
-    # ponytail: loop variables are not aliased to the collection's kinds.
-    # Upgrade path is a small alias pass in _walk_template once a fixture
-    # needs foreach precision - see docs/06-taint-analysis.
+    visited_set = visited if visited is not None else set()
+    if template in visited_set:
+        return []
+    visited_set = visited_set | {template}
+
     text = "\n".join(project.blade_lines.get(template, []))
     if _LOOP_DIRECTIVE.search(text):
         _giveup(stats)
 
     paths: list[list[PathStep]] = []
+
+    # 1. Direct raw echos in this template
     for stmt in find_all(parsed.tree.root_node, "echo_statement"):
         if TaintKind.HTML not in expr_kinds(stmt, parsed.source, bound):
             continue
@@ -854,6 +841,43 @@ def _walk_template(
                 )
             ]
         )
+
+    # 2. Includes, extends, components inside this template
+    for stmt in find_all(parsed.tree.root_node, "expression_statement"):
+        for binding in extract_view_bindings(stmt, parsed.source):
+            if binding.template is None:
+                continue
+            sub_template = template_path(binding.template)
+            if sub_template is None or sub_template not in project.blade:
+                continue
+
+            child_bound = dict(bound)
+            for name, expression in binding.variables:
+                kinds = expr_kinds(expression, parsed.source, bound)
+                if kinds:
+                    child_bound[name] = kinds
+            for name in binding.compacted:
+                kinds = bound.get(name, frozenset())
+                if kinds:
+                    child_bound[name] = kinds
+
+            step = PathStep(
+                role="propagator",
+                span=node_span(stmt, parsed.path),
+                snippet=project.blade_line(parsed.path, stmt.start_point[0] + 1),
+                note=f"view data into {sub_template}",
+            )
+            paths.extend(
+                _walk_template(
+                    project,
+                    sub_template,
+                    child_bound,
+                    prefix + [step],
+                    stats=stats,
+                    visited=visited_set,
+                )
+            )
+
     return paths
 
 

@@ -3,10 +3,6 @@
 Taint has to cross the view() call or an XSS finding cannot have a complete
 evidence path, and a finding without a path is not a finding - see
 docs/08-framework-adapters.
-
-ponytail: the three common call forms only. @include, @extends and components
-do not carry taint across template files in this slice, so taint stops at the
-template it was handed to.
 """
 
 import re
@@ -56,6 +52,11 @@ def template_path(name: str) -> Path | None:
     if not all(_SEGMENT.fullmatch(segment) for segment in segments):
         return None
     return _VIEW_ROOT.joinpath(*segments[:-1], segments[-1] + ".blade.php")
+
+
+def component_template_path(name: str) -> Path | None:
+    """'alert' -> resources/views/components/alert.blade.php."""
+    return template_path(f"components.{name}")
 
 
 def _literal(node: Node, source: bytes) -> str | None:
