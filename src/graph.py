@@ -15,6 +15,7 @@ from tree_sitter import Node
 
 from .ids import node_id
 from .laravel.blade import to_php
+from .laravel.config import ProjectConfig, extract_project_config
 from .laravel.detect import Autoload, read_autoload
 from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
 from .models import (
@@ -80,6 +81,7 @@ class Project:
     autoload: Autoload = field(default_factory=Autoload)
     summaries: dict[str, "FunctionSummary"] = field(default_factory=dict)
     schema: dict[str, set[str]] = field(default_factory=dict)
+    config: ProjectConfig = field(default_factory=ProjectConfig)
 
     def method(self, fqn: str) -> Symbol | None:
         """The method a call to `fqn` actually executes, or None if none does.
@@ -393,6 +395,8 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     project.routes.sort(key=lambda r: (str(r.span.file), r.span.start_line))
     project.entrypoints.extend(find_entrypoints(project))
     project.entrypoints.sort(key=lambda ep: (str(ep.span.file), ep.span.start_line))
+
+    project = replace(project, config=extract_project_config(root, project.files))
 
     return project
 
