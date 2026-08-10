@@ -142,16 +142,27 @@ def _argument_count(call: Node) -> int:
     return sum(1 for child in args.children if child.type == "argument")
 
 
+def _get_first_string_arg(args_node: Node | None, source: bytes) -> str | None:
+    if args_node is None:
+        return None
+    real_args = [c for c in args_node.children if c.type not in ("(", ")", ",")]
+    if real_args:
+        text = node_text(real_args[0], source).strip()
+        return text.strip("'\"")
+    return None
+
+
 def _union_of_children(
     node: Node,
     source: bytes,
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
+    validated_fields: dict[str, frozenset[TaintKind]] | None = None,
 ) -> frozenset[TaintKind]:
     kinds: frozenset[TaintKind] = frozenset()
     for child in node.children:
-        kinds |= expr_kinds(child, source, local, request_vars, resolve)
+        kinds |= expr_kinds(child, source, local, request_vars, resolve, validated_fields)
     return kinds
 
 
@@ -161,6 +172,7 @@ def expr_kinds(
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str] = frozenset(),
     resolve: ClassResolver | None = None,
+    validated_fields: dict[str, frozenset[TaintKind]] | None = None,
 ) -> frozenset[TaintKind]:
     """Which taint kinds are still live in the value this expression produces.
 
@@ -197,6 +209,11 @@ def expr_kinds(
         name = node_text(node.child_by_field_name("name"), source)
         entering = source_kinds(name)
         if entering and _is_request_receiver(node, source, request_vars):
+            if validated_fields and name in ("input", "get", "query", "post", "string"):
+                args = node.child_by_field_name("arguments")
+                field_name = _get_first_string_arg(args, source)
+                if field_name and field_name in validated_fields:
+                    return entering - validated_fields[field_name]
             return entering
 
     # `$request->bio`, the magic property form of `$request->input('bio')`. Decisive
@@ -205,7 +222,21 @@ def expr_kinds(
     # nothing, so the read would look clean. The receiver check is what stops this
     # tainting every property fetch in the project.
     if node.type in _MEMBER_ACCESSES and _is_request_receiver(node, source, request_vars):
+        prop_name = node_text(node.child_by_field_name("name"), source)
+        if validated_fields and prop_name in validated_fields:
+            return MAGIC_PROPERTY_KINDS - validated_fields[prop_name]
         return MAGIC_PROPERTY_KINDS
+
+    if node.type == "subscript_expression":
+        index_node = node.child_by_field_name("index")
+        if index_node is not None and validated_fields:
+            field_name = node_text(index_node, source).strip("'\"")
+            if field_name in validated_fields:
+                cleared = validated_fields[field_name]
+                inner = _union_of_children(
+                    node, source, local, request_vars, resolve, validated_fields
+                )
+                return inner - cleared
 
     if node.type == "function_call_expression":
         name = node_text(node.child_by_field_name("function"), source)
@@ -213,12 +244,18 @@ def expr_kinds(
         # like the superglobal and magic-property branches: the argument underneath is a
         # literal key carrying nothing, so falling through would read as clean.
         if is_request_helper(name, _argument_count(node)):
-            return source_kinds("input")
+            entering = source_kinds("input")
+            if validated_fields:
+                args = node.child_by_field_name("arguments")
+                field_name = _get_first_string_arg(args, source)
+                if field_name and field_name in validated_fields:
+                    return entering - validated_fields[field_name]
+            return entering
         cleared = sanitizer_clears(name)
         if cleared:
             args = node.child_by_field_name("arguments")
             inner = (
-                _union_of_children(args, source, local, request_vars, resolve)
+                _union_of_children(args, source, local, request_vars, resolve, validated_fields)
                 if args is not None
                 else frozenset()
             )
@@ -235,6 +272,11 @@ def expr_kinds(
                 resolve(node_text(scope, source)), node_text(name_node, source)
             )
             if entering:
+                if validated_fields:
+                    args = node.child_by_field_name("arguments")
+                    field_name = _get_first_string_arg(args, source)
+                    if field_name and field_name in validated_fields:
+                        return entering - validated_fields[field_name]
                 return entering
 
     if node.type == "cast_expression":
@@ -243,13 +285,13 @@ def expr_kinds(
         if cast in ("int", "integer", "float", "double"):
             value = node.child_by_field_name("value")
             inner = (
-                expr_kinds(value, source, local, request_vars, resolve)
+                expr_kinds(value, source, local, request_vars, resolve, validated_fields)
                 if value is not None
                 else frozenset()
             )
             return inner - {TaintKind.SQL, TaintKind.HTML}
 
-    return _union_of_children(node, source, local, request_vars, resolve)
+    return _union_of_children(node, source, local, request_vars, resolve, validated_fields)
 
 
 def _request_like_params(project: Project, fqn: str) -> frozenset[str]:
@@ -637,6 +679,7 @@ def _sink_steps(
     local: dict[str, frozenset[TaintKind]],
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
+    validated_fields: dict[str, frozenset[TaintKind]] | None = None,
 ) -> list[PathStep]:
     """The evidence steps for a call that reached a sink, or [] if the taint does not reach it.
 
@@ -649,7 +692,9 @@ def _sink_steps(
     argument = _sink_argument(args, index, sink_arg_name(method), parsed.source)
     if argument is None:
         return []
-    if kind not in expr_kinds(argument, parsed.source, local, request_vars, resolve):
+    if kind not in expr_kinds(
+        argument, parsed.source, local, request_vars, resolve, validated_fields
+    ):
         return []
     return _inline_source_steps(argument, parsed, request_vars, resolve) + [
         PathStep(
@@ -912,6 +957,10 @@ def _walk_method_ast(
             if param_type:
                 local_types[param_name] = param_type
 
+    from .laravel.validation import extract_validation_cleared
+
+    validated_fields = extract_validation_cleared(method_node, source, parsed)
+
     statements = [n for n in walk(method_node) if n.type in _STATEMENT_TYPES]
 
     for stmt in statements:
@@ -932,7 +981,7 @@ def _walk_method_ast(
             else:
                 local_types.pop(target, None)
 
-            kinds = expr_kinds(right, source, local, request_vars, resolve)
+            kinds = expr_kinds(right, source, local, request_vars, resolve, validated_fields)
             if kinds:
                 local[target] = kinds
             else:
@@ -998,7 +1047,15 @@ def _walk_method_ast(
             scoped_sink = static_sink(scoped_receiver_fqn, name) or sink(name)
             if scoped_sink is not None:
                 sink_steps = _sink_steps(
-                    call, args, scoped_sink, parsed, name, local, request_vars, resolve
+                    call,
+                    args,
+                    scoped_sink,
+                    parsed,
+                    name,
+                    local,
+                    request_vars,
+                    resolve,
+                    validated_fields,
                 )
 
                 if sink_steps:
@@ -1052,7 +1109,15 @@ def _walk_method_ast(
             sink_found = sink(name)
             if sink_found is not None:
                 sink_steps = _sink_steps(
-                    call, args, sink_found, parsed, name, local, request_vars, resolve
+                    call,
+                    args,
+                    sink_found,
+                    parsed,
+                    name,
+                    local,
+                    request_vars,
+                    resolve,
+                    validated_fields,
                 )
 
                 if sink_steps:
