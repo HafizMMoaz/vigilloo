@@ -95,14 +95,30 @@ def privileged_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(c for c in columns if _PRIVILEGED_COLUMN.match(c))
 
 
-def model_config(classes: dict[str, ClassInfo], fqn: str) -> ModelConfig | None:
+def model_config(
+    classes: dict[str, ClassInfo],
+    fqn: str,
+    schema: dict[str, set[str]] | None = None,
+) -> ModelConfig | None:
     """How this model is protected, or None if it is not a model at all."""
     info = classes.get(fqn)
     if info is None or not is_model(classes, fqn):
         return None
 
+    table_name = info.properties.get("table", "").strip("'\"")
+    if not table_name:
+        short_name = fqn.rsplit("\\", 1)[-1]
+        table_name = short_name.lower() + "s"
+
+    table_columns = schema.get(table_name) if schema is not None else None
+
     guarded = info.array_props.get("guarded")
     if guarded == ():
+        if table_columns is not None:
+            has_privileged = any(_PRIVILEGED_COLUMN.match(c) for c in table_columns)
+            if not has_privileged:
+                return ModelConfig(fqn=fqn, protection=Protection.GUARDED)
+
         return ModelConfig(
             fqn=fqn,
             protection=Protection.OPEN,
@@ -114,13 +130,17 @@ def model_config(classes: dict[str, ClassInfo], fqn: str) -> ModelConfig | None:
     if fillable:
         offending = privileged_columns(fillable)
         if offending:
-            return ModelConfig(
-                fqn=fqn,
-                protection=Protection.PRIVILEGED_FILLABLE,
-                reason_prop="fillable",
-                reason_span=info.array_prop_spans.get("fillable"),
-                privileged_column=offending[0],
+            real_offending = tuple(
+                c for c in offending if table_columns is None or c in table_columns
             )
+            if real_offending:
+                return ModelConfig(
+                    fqn=fqn,
+                    protection=Protection.PRIVILEGED_FILLABLE,
+                    reason_prop="fillable",
+                    reason_span=info.array_prop_spans.get("fillable"),
+                    privileged_column=real_offending[0],
+                )
 
     # Includes a model that declares neither property, and that is correct
     # rather than merely cautious: Eloquent's own $guarded defaults to ['*'],
