@@ -5,7 +5,6 @@ controller code is the common case; add a CFG when a fixture needs a sanitizer
 applied on only one branch - see docs 05-data-flow-analysis.
 """
 
-import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -64,7 +63,6 @@ ClassResolver = Callable[[str], str | None]
 
 # A template handed tainted data whose original text contains one of these is
 # a gap the walk cannot see past - see _walk_template.
-_LOOP_DIRECTIVE = re.compile(r"@(?:foreach|forelse|for|while)\b")
 
 
 def _giveup(stats: WalkStats | None) -> None:
@@ -800,6 +798,29 @@ def _follow_static(
     return [prefix + [step] + p for p in inner_paths]
 
 
+def _extract_foreach_vars(stmt: Node, source: bytes) -> tuple[Node | None, list[str]]:
+    """(collection_expr_node, [loop_var_names]) for a foreach_statement."""
+    children = [c for c in stmt.children if c.type not in ("(", ")", "foreach")]
+    as_idx = -1
+    for i, c in enumerate(children):
+        if c.type == "as" or node_text(c, source) == "as":
+            as_idx = i
+            break
+    if as_idx <= 0:
+        return None, []
+
+    collection_node = children[as_idx - 1]
+    loop_vars: list[str] = []
+    for c in children[as_idx + 1 :]:
+        if c.type in (":", ";", "compound_statement", "colon"):
+            break
+        for var_node in find_all(c, "variable_name"):
+            v_name = _var_name(var_node, source)
+            if v_name:
+                loop_vars.append(v_name)
+    return collection_node, loop_vars
+
+
 def _walk_template(
     project: Project,
     template: Path,
@@ -818,15 +839,20 @@ def _walk_template(
         return []
     visited_set = visited_set | {template}
 
-    text = "\n".join(project.blade_lines.get(template, []))
-    if _LOOP_DIRECTIVE.search(text):
-        _giveup(stats)
+    local_bound = dict(bound)
+    for foreach_stmt in find_all(parsed.tree.root_node, "foreach_statement"):
+        collection_node, loop_vars = _extract_foreach_vars(foreach_stmt, parsed.source)
+        if collection_node is not None:
+            kinds = expr_kinds(collection_node, parsed.source, local_bound)
+            if kinds:
+                for var_name in loop_vars:
+                    local_bound[var_name] = kinds
 
     paths: list[list[PathStep]] = []
 
     # 1. Direct raw echos in this template
     for stmt in find_all(parsed.tree.root_node, "echo_statement"):
-        if TaintKind.HTML not in expr_kinds(stmt, parsed.source, bound):
+        if TaintKind.HTML not in expr_kinds(stmt, parsed.source, local_bound):
             continue
         line = stmt.start_point[0] + 1
         paths.append(
@@ -851,13 +877,13 @@ def _walk_template(
             if sub_template is None or sub_template not in project.blade:
                 continue
 
-            child_bound = dict(bound)
+            child_bound = dict(local_bound)
             for name, expression in binding.variables:
-                kinds = expr_kinds(expression, parsed.source, bound)
+                kinds = expr_kinds(expression, parsed.source, local_bound)
                 if kinds:
                     child_bound[name] = kinds
             for name in binding.compacted:
-                kinds = bound.get(name, frozenset())
+                kinds = local_bound.get(name, frozenset())
                 if kinds:
                     child_bound[name] = kinds
 

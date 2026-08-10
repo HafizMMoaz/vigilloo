@@ -365,10 +365,8 @@ def test_request_receiver_still_produces_a_finding(tmp_path: Path) -> None:
     assert len(find_taint_paths(load_project(tmp_path))) == 1
 
 
-def test_tainted_data_into_a_blade_loop_is_an_honest_gap(tmp_path: Path) -> None:
-    """@foreach is inert text to the Blade rewriter, so $row inside the loop
-    is never aliased to $rows's taint. Silence would be a false negative;
-    the walk must at least say it gave up (finding 3)."""
+def test_tainted_data_into_a_blade_loop_is_aliased(tmp_path: Path) -> None:
+    """@foreach ($rows as $row) aliases $row to $rows's taint."""
     (tmp_path / "routes").mkdir()
     (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
     (tmp_path / "resources" / "views" / "orders").mkdir(parents=True)
@@ -397,8 +395,9 @@ def test_tainted_data_into_a_blade_loop_is_an_honest_gap(tmp_path: Path) -> None
         "@foreach ($rows as $row)\n  <li>{!! $row !!}</li>\n@endforeach\n"
     )
     stats = WalkStats()
-    find_taint_paths(load_project(tmp_path), stats=stats)
-    assert stats.unresolved == 1
+    paths = find_taint_paths(load_project(tmp_path), stats=stats)
+    assert len(paths) == 1
+    assert stats.unresolved == 0
 
 
 def test_numeric_coercion_defeats_the_sql_sink(tmp_path: Path) -> None:
