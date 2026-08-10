@@ -1,9 +1,8 @@
-import textwrap
 from pathlib import Path
 
 from vigilloo.graph import load_project
-from vigilloo.models import Finding
 from vigilloo.rules import scan_project
+
 
 def _write_files(base_dir: Path, files: dict[str, str]) -> None:
     for rel_path, content in files.items():
@@ -36,22 +35,23 @@ def test_job_entrypoint_severity_deduction(tmp_path: Path) -> None:
         }
         """
     }
-    
+
     _write_files(tmp_path, files)
     project = load_project(tmp_path)
-    
+
     # Assert entrypoint was found
     assert len(project.entrypoints) == 1
     assert project.entrypoints[0].kind == "job"
     assert project.entrypoints[0].fqn == "App\\Jobs\\ProcessOrder::handle"
-    
+
     findings = scan_project(project)
-    
+
     # Assert the finding is reported
     assert len(findings) == 1
     finding = findings[0]
-    
-    # SQL_INJECTION is normally 'critical', but should be lowered to 'high' because it's console-only
+
+    # SQL_INJECTION is normally 'critical', but should be lowered to 'high'
+    # because it's console-only
     assert finding.rule_id == "php.sql-injection"
     assert finding.severity == "high"
     assert finding.evidence_path[0].role == "entry"

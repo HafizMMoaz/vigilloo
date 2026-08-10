@@ -676,6 +676,7 @@ def _follow_static(
     max_depth: int,
     stats: WalkStats | None,
     resolve: ClassResolver | None = None,
+    visited: frozenset[tuple[str, frozenset[tuple[str, frozenset[TaintKind]]]]] | None = None,
 ) -> list[list[PathStep]]:
     """Walk into `Receiver::method(...)` when it is a method of a class in this project.
 
@@ -740,16 +741,18 @@ def _follow_static(
         snippet=node_text(call, parsed.source).strip(),
         note=f"argument {min(passed)} into {callee.fqn}",
     )
-    return _walk_method(
+    inner_paths = _walk_method(
         project,
         callee_fqn,
         callee_tainted,
-        prefix + [step],
+        [],
         depth + 1,
         max_depth,
         stats,
         receiver_fqn,
+        visited=visited,
     )
+    return [prefix + [step] + p for p in inner_paths]
 
 
 def _walk_template(
@@ -818,6 +821,53 @@ def _walk_method(
     max_depth: int,
     stats: WalkStats | None = None,
     receiver_fqn: str | None = None,
+    visited: frozenset[tuple[str, frozenset[tuple[str, frozenset[TaintKind]]]]] | None = None,
+) -> list[list[PathStep]]:
+    if depth > max_depth:
+        return []
+        
+    if visited is None:
+        visited = frozenset()
+        
+    cache_key = frozenset(tainted.items())
+    call_key = (fqn, cache_key)
+    
+    if call_key in visited:
+        summary = project.summaries.get(fqn)
+        if summary:
+            return [prefix + p for p in summary.paths_by_taint.get(cache_key, [])]
+        return []
+        
+    new_visited = visited | {call_key}
+    
+    if fqn not in project.summaries:
+        from .summaries import FunctionSummary
+        project.summaries[fqn] = FunctionSummary(fqn=fqn)
+    summary = project.summaries[fqn]
+    
+    if cache_key not in summary.paths_by_taint:
+        summary.paths_by_taint[cache_key] = []
+        
+        while True:
+            inner_paths = _walk_method_ast(
+                project, fqn, tainted, depth, max_depth, stats, receiver_fqn, new_visited
+            )
+            if len(inner_paths) == len(summary.paths_by_taint[cache_key]):
+                break
+            summary.paths_by_taint[cache_key] = inner_paths
+            
+    return [prefix + p for p in summary.paths_by_taint[cache_key]]
+
+
+def _walk_method_ast(
+    project: Project,
+    fqn: str,
+    tainted: dict[str, frozenset[TaintKind]],
+    depth: int,
+    max_depth: int,
+    stats: WalkStats | None = None,
+    receiver_fqn: str | None = None,
+    visited: frozenset[tuple[str, frozenset[tuple[str, frozenset[TaintKind]]]]] | None = None,
 ) -> list[list[PathStep]]:
     """Walk one method body, returning every completed source-to-sink path.
 
@@ -829,8 +879,7 @@ def _walk_method(
     Collapsing them would either lose a consumer's override or bind a trait's
     `self::` to the wrong type.
     """
-    if depth > max_depth:
-        return []
+    prefix: list[PathStep] = []
     found = project.method_node(fqn)
     if found is None:
         return []
@@ -970,6 +1019,7 @@ def _walk_method(
                     max_depth,
                     stats,
                     resolve,
+                    visited=visited,
                 )
             )
 
@@ -1078,27 +1128,20 @@ def _walk_method(
                     confidence=confidence,
                 )
                 cache_key = frozenset(callee_tainted.items())
-                
-                if callee_fqn not in project.summaries:
-                    from .summaries import FunctionSummary
-                    project.summaries[callee_fqn] = FunctionSummary(fqn=callee_fqn)
-                
-                summary = project.summaries[callee_fqn]
-                
-                if cache_key not in summary.paths_by_taint:
-                    inner_paths = _walk_method(
-                        project,
-                        callee_fqn,
-                        callee_tainted,
-                        [],
-                        depth + 1,
-                        max_depth,
-                        stats,
-                        candidate,
-                    )
-                    summary.paths_by_taint[cache_key] = inner_paths
-                
-                for inner_path in summary.paths_by_taint[cache_key]:
+
+                inner_paths = _walk_method(
+                    project,
+                    callee_fqn,
+                    callee_tainted,
+                    [],
+                    depth + 1,
+                    max_depth,
+                    stats,
+                    candidate,
+                    visited=visited,
+                )
+
+                for inner_path in inner_paths:
                     paths.append(prefix + [step] + inner_path)
 
             if not found_callee and passed:
@@ -1267,14 +1310,10 @@ def find_taint_paths(
         # This is because jobs/commands receive arbitrary payloads via their constructor
         # which are typically saved to properties.
         from .models import ALL_KINDS
-        seeded = {"this": ALL_KINDS}
-        
-        paths.extend(
-            _walk_method(
-                project, ep.fqn, seeded, [entry], 0, max_depth, stats
-            )
-        )
 
+        seeded = {"this": ALL_KINDS}
+
+        paths.extend(_walk_method(project, ep.fqn, seeded, [entry], 0, max_depth, stats))
 
     # Walking nested statements can reach the same call twice, so collapse
     # paths that are step-for-step identical before returning.

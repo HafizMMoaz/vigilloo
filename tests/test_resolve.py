@@ -1,5 +1,8 @@
 from pathlib import Path
+
 from vigilloo.graph import load_project
+
+
 def test_resolve(tmp_path: Path):
     path = tmp_path / "app/Jobs/ProcessOrder.php"
     path.parent.mkdir(parents=True, exist_ok=True)

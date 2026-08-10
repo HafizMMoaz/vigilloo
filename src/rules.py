@@ -110,6 +110,7 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
     """
     # Group paths by (rule_id, sink_span) to determine console-only reachability
     from collections import defaultdict
+
     paths_by_sink = defaultdict(list)
     for path in find_taint_paths(project, stats=stats) + find_structural_paths(project):
         if not path:
@@ -127,20 +128,19 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
     }
 
     findings = []
-    for (rule_id, sink_span), group_paths in paths_by_sink.items():
+    for (rule_id, _), group_paths in paths_by_sink.items():
         rule = _BY_ID.get(rule_id)
         if rule is None:
             continue
-            
-        # If no path in the group has an HTTP entry point (but does have an entry point), it's console-only
+
+        # If no path in the group has an HTTP entry point (but does have an entry point),
+        # it's console-only
         has_entry = any(
-            path[0].role == "entry" and str(path[0].note).endswith("entry point") 
+            path[0].role == "entry" and str(path[0].note).endswith("entry point")
             for path in group_paths
         )
-        has_http_entry = any(
-            path[0].note == "HTTP entry point" for path in group_paths
-        )
-        
+        has_http_entry = any(path[0].note == "HTTP entry point" for path in group_paths)
+
         severity = rule.severity
         if has_entry and not has_http_entry:
             severity = _SEVERITY_DOWN.get(severity, severity)

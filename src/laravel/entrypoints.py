@@ -5,9 +5,8 @@ might invoke outside of an HTTP request.
 """
 
 from typing import TYPE_CHECKING
-from collections.abc import Iterable
 
-from ..models import EntryPoint, Span
+from ..models import EntryPoint
 from ..symbols import ClassInfo
 
 if TYPE_CHECKING:
@@ -61,12 +60,12 @@ def find_entrypoints(project: "Project") -> list[EntryPoint]:
             # For jobs, commands, and listeners, `handle` is the entry point
             if kind in ("job", "command", "listener") and method_name != "handle":
                 continue
-                
+
             # For notifications, methods like `toMail`, `toArray`
             if kind == "notification" and not method_name.startswith("to"):
                 continue
-                
-            # Observers have lifecycle events, we assume any public method is an entry point, 
+
+            # Observers have lifecycle events, we assume any public method is an entry point,
             # but currently we don't track visibility. Exclude magic methods.
             if kind == "observer" and method_name.startswith("__"):
                 continue
@@ -78,7 +77,7 @@ def find_entrypoints(project: "Project") -> list[EntryPoint]:
                     span=method_span.span,
                 )
             )
-            
+
     # Add scheduled tasks? In a real Laravel app, they are in app/Console/Kernel.php -> schedule()
     # Let's see if we have an app/Console/Kernel.php
     for fqn, cls in project.classes.items():
