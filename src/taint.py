@@ -1077,18 +1077,29 @@ def _walk_method(
                     note=f"argument {min(passed)} into {callee.fqn}",
                     confidence=confidence,
                 )
-                paths.extend(
-                    _walk_method(
+                cache_key = frozenset(callee_tainted.items())
+                
+                if callee_fqn not in project.summaries:
+                    from .summaries import FunctionSummary
+                    project.summaries[callee_fqn] = FunctionSummary(fqn=callee_fqn)
+                
+                summary = project.summaries[callee_fqn]
+                
+                if cache_key not in summary.paths_by_taint:
+                    inner_paths = _walk_method(
                         project,
                         callee_fqn,
                         callee_tainted,
-                        prefix + [step],
+                        [],
                         depth + 1,
                         max_depth,
                         stats,
                         candidate,
                     )
-                )
+                    summary.paths_by_taint[cache_key] = inner_paths
+                
+                for inner_path in summary.paths_by_taint[cache_key]:
+                    paths.append(prefix + [step] + inner_path)
 
             if not found_callee and passed:
                 _giveup(stats)

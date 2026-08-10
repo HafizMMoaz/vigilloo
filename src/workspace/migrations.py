@@ -126,6 +126,18 @@ ALTER TABLE evidence_paths_v2 RENAME TO evidence_paths;
         # already has the index would be caught by CREATE INDEX rather than corrupt anything.
         sql="CREATE INDEX idx_scans_project ON scans(project_id, id);",
     ),
+    Migration(
+        to_version=4,
+        summary="add the summary_cache table for interprocedural analysis memoization",
+        sql="""
+CREATE TABLE summary_cache (
+    fqn TEXT NOT NULL,
+    file_sha TEXT NOT NULL,
+    summary BLOB NOT NULL,
+    PRIMARY KEY (fqn, file_sha)
+);
+""",
+    ),
 )
 
 # Derived, never written down twice. The top of the ladder is by definition the version this

@@ -17,6 +17,9 @@ from .laravel.blade import to_php
 from .laravel.detect import Autoload, read_autoload
 from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
 from .models import Coverage, EdgeRow, EntryPoint, NodeRow, ParseFailure, Route, Span, Symbol, WalkStats
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .summaries import FunctionSummary
 from .parser import (
     ParsedFile,
     error_constructs,
@@ -63,6 +66,7 @@ class Project:
     # it at different times: name resolution while files are being read, and the CLI's
     # coverage caveats after they all have been.
     autoload: Autoload = field(default_factory=Autoload)
+    summaries: dict[str, "FunctionSummary"] = field(default_factory=dict)
 
     def method(self, fqn: str) -> Symbol | None:
         """The method a call to `fqn` actually executes, or None if none does.
