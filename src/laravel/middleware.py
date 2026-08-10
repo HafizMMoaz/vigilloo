@@ -1,5 +1,6 @@
 from tree_sitter import Node
 
+from ..models import Route, TaintKind
 from ..parser import ParsedFile
 
 
@@ -169,3 +170,58 @@ def _explore_closure_for_groups(
 
     for child in node.children:
         _explore_closure_for_groups(child, source, groups)
+
+
+_AUTH_MIDDLEWARE = frozenset({"auth", "password.confirm", "auth.basic", "auth:sanctum", "auth:api"})
+
+
+def authenticated_by(route: Route) -> str | None:
+    for name in route.middleware:
+        if name.split(":", 1)[0] in _AUTH_MIDDLEWARE or name in _AUTH_MIDDLEWARE:
+            return name
+    return None
+
+
+def is_authenticated(route: Route) -> bool:
+    return authenticated_by(route) is not None
+
+
+def is_guest(route: Route) -> bool:
+    return any(name.split(":", 1)[0] == "guest" for name in route.middleware)
+
+
+def is_verified(route: Route) -> bool:
+    return any(name.split(":", 1)[0] == "verified" for name in route.middleware)
+
+
+def is_signed(route: Route) -> bool:
+    return any(name.split(":", 1)[0] == "signed" for name in route.middleware)
+
+
+def is_rate_limited(route: Route) -> bool:
+    return any(name.split(":", 1)[0] == "throttle" for name in route.middleware)
+
+
+def is_gated(route: Route) -> bool:
+    for name in route.middleware:
+        if name == "?" or name.startswith("can:"):
+            return True
+    return False
+
+
+def is_password_confirmed(route: Route) -> bool:
+    return any(name.split(":", 1)[0] == "password.confirm" for name in route.middleware)
+
+
+def middleware_sanitizes(name: str) -> frozenset[TaintKind]:
+    """Which taint kinds this middleware globally sanitizes."""
+    # TrimStrings and ConvertEmptyStringsToNull explicitly do not sanitize anything.
+    if name in (
+        "TrimStrings",
+        "Illuminate\\Foundation\\Http\\Middleware\\TrimStrings",
+        "ConvertEmptyStringsToNull",
+        "Illuminate\\Foundation\\Http\\Middleware\\ConvertEmptyStringsToNull",
+    ):
+        return frozenset()
+
+    return frozenset()
