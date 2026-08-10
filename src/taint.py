@@ -471,7 +471,7 @@ def _mass_assign_steps(
     write = eloquent_write(method)
     if write is None or receiver_fqn is None:
         return None
-    config = model_config(project.classes, receiver_fqn)
+    config = model_config(project.classes, receiver_fqn, schema=getattr(project, "schema", None))
     if config is None:
         return None
 

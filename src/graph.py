@@ -78,6 +78,7 @@ class Project:
     # coverage caveats after they all have been.
     autoload: Autoload = field(default_factory=Autoload)
     summaries: dict[str, "FunctionSummary"] = field(default_factory=dict)
+    schema: dict[str, set[str]] = field(default_factory=dict)
 
     def method(self, fqn: str) -> Symbol | None:
         """The method a call to `fqn` actually executes, or None if none does.
@@ -342,7 +343,10 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             project.bindings.setdefault(interface, []).extend(implementations)
 
     from .laravel.middleware import extract_middleware_groups
+    from .laravel.migrations import extract_schema
     from .laravel.routes import discover_route_files
+
+    project.schema.update(extract_schema(project.files))
 
     middleware_groups = {}
     for rel_path, parsed in project.files.items():
