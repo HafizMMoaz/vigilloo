@@ -825,29 +825,30 @@ def _walk_method(
 ) -> list[list[PathStep]]:
     if depth > max_depth:
         return []
-        
+
     if visited is None:
         visited = frozenset()
-        
+
     cache_key = frozenset(tainted.items())
     call_key = (fqn, cache_key)
-    
+
     if call_key in visited:
         summary = project.summaries.get(fqn)
         if summary:
             return [prefix + p for p in summary.paths_by_taint.get(cache_key, [])]
         return []
-        
+
     new_visited = visited | {call_key}
-    
+
     if fqn not in project.summaries:
         from .summaries import FunctionSummary
+
         project.summaries[fqn] = FunctionSummary(fqn=fqn)
     summary = project.summaries[fqn]
-    
+
     if cache_key not in summary.paths_by_taint:
         summary.paths_by_taint[cache_key] = []
-        
+
         while True:
             inner_paths = _walk_method_ast(
                 project, fqn, tainted, depth, max_depth, stats, receiver_fqn, new_visited
@@ -855,7 +856,7 @@ def _walk_method(
             if len(inner_paths) == len(summary.paths_by_taint[cache_key]):
                 break
             summary.paths_by_taint[cache_key] = inner_paths
-            
+
     return [prefix + p for p in summary.paths_by_taint[cache_key]]
 
 
@@ -1127,7 +1128,6 @@ def _walk_method_ast(
                     note=f"argument {min(passed)} into {callee.fqn}",
                     confidence=confidence,
                 )
-                cache_key = frozenset(callee_tainted.items())
 
                 inner_paths = _walk_method(
                     project,

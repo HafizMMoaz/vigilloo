@@ -1,9 +1,12 @@
 from pathlib import Path
+
 from vigilloo.graph import parse_php
 
 tmp_path = Path("scratch/tmp")
 config_dir = tmp_path / "config"
 parsed = parse_php(config_dir / "app.php")
+
+
 def print_fields(node):
     if node.type == "class_constant_access_expression":
         cursor = node.walk()
@@ -14,4 +17,6 @@ def print_fields(node):
                     break
     for child in node.children:
         print_fields(child)
+
+
 print_fields(parsed.tree.root_node)

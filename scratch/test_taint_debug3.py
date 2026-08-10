@@ -1,6 +1,8 @@
+from pathlib import Path
+
 from vigilloo.graph import load_project
 from vigilloo.taint import WalkStats, find_taint_paths
-from pathlib import Path
+
 tmp_path = Path("scratch/tmp3")
 tmp_path.mkdir(exist_ok=True)
 (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True, exist_ok=True)

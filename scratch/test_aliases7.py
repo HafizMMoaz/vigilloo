@@ -1,5 +1,7 @@
 from pathlib import Path
-from vigilloo.graph import parse_php, node_text, find_all
+
+from vigilloo.graph import find_all, node_text, parse_php
+
 tmp_path = Path("scratch/tmp6")
 parsed = parse_php(tmp_path / "config" / "app.php")
 aliases = {}

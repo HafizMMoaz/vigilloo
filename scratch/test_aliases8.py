@@ -1,5 +1,7 @@
 from pathlib import Path
-from vigilloo.graph import parse_php, find_all
+
+from vigilloo.graph import find_all, parse_php
+
 tmp_path = Path("scratch/tmp6")
 parsed = parse_php(tmp_path / "config" / "app.php")
 for el in find_all(parsed.tree.root_node, "array_element_initializer"):

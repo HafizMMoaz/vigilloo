@@ -1,5 +1,5 @@
-import sys
 from pathlib import Path
+
 from vigilloo.graph import load_project
 from vigilloo.parser import find_all, node_text
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from vigilloo.graph import load_project
 from vigilloo.taint import WalkStats, find_taint_paths
 
