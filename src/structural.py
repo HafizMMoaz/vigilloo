@@ -15,16 +15,13 @@ import re
 from tree_sitter import Node
 
 from .graph import Project
+from .laravel.middleware import authenticated_by, is_gated
 from .laravel.models import is_model
 from .laravel.policies import find_policy
-from .laravel.routes import UNRESOLVED_MIDDLEWARE, uri_params
+from .laravel.routes import uri_params
 from .laravel.vocabulary import MISSING_AUTHORIZATION_RULE
 from .models import PathStep, Route
 from .parser import ParsedFile, find_all, node_text
-
-# Middleware that establishes *who* the caller is. The rule fires only behind
-# one of these - see the module note on _binding for why.
-_AUTH_MIDDLEWARE = frozenset({"auth", "password.confirm", "auth.basic"})
 
 # Called on $this in a controller action.
 _AUTHORIZE_METHODS = frozenset(
@@ -49,29 +46,6 @@ _GATE_METHODS = frozenset({"allows", "denies", "authorize", "check", "any", "non
 # stub Laravel's make:request generates, and treating it as a control is the
 # first of the two Laravel traps in docs/08-framework-adapters.
 _RETURNS_TRUE = re.compile(r"^\{\s*return\s+true\s*;?\s*\}$")
-
-
-def _authenticated_by(route: Route) -> str | None:
-    """The middleware that authenticates this route, if any.
-
-    `auth:sanctum` and `auth:api` are the same middleware with a guard
-    argument, so the name is compared up to the colon.
-    """
-    for name in route.middleware:
-        if name.split(":", 1)[0] in _AUTH_MIDDLEWARE:
-            return name
-    return None
-
-
-def _middleware_authorizes(route: Route) -> bool:
-    for name in route.middleware:
-        # The unresolved marker deliberately counts as authorization present.
-        # This rule claims something is *absent*, and it may only make that
-        # claim over middleware it could actually read - otherwise "I cannot
-        # tell" is reported as "there is no protection here".
-        if name == UNRESOLVED_MIDDLEWARE or name.startswith("can:"):
-            return True
-    return False
 
 
 def _calls_authorization(node: Node, source: bytes) -> bool:
@@ -164,8 +138,8 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
     if not route.action_fqn:
         return None
 
-    authenticated_by = _authenticated_by(route)
-    if authenticated_by is None or _middleware_authorizes(route):
+    auth_middleware = authenticated_by(route)
+    if auth_middleware is None or is_gated(route):
         return None
 
     bound = _binding(project, route, route.action_fqn)
@@ -195,7 +169,7 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
             role="entry",
             span=route.span,
             snippet=f"{'|'.join(route.verbs)} {route.uri} -> {route.action_fqn}",
-            note=f"authenticated by: {authenticated_by}",
+            note=f"authenticated by: {auth_middleware}",
         ),
         PathStep(
             role="binding",
