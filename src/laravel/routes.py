@@ -113,7 +113,7 @@ def _unroll_chain(node: Node, source: bytes) -> list[tuple[str, Node]]:
         else:
             break
 
-    if not calls or not calls[-1][0].startswith("Route::"):
+    if not calls or not any(c[0].startswith("Route::") for c in calls):
         return []
 
     return list(reversed(calls))
@@ -239,13 +239,14 @@ class RouteWalker:
                     self.group_stack.pop()
                     return
 
-                verb_method = chain[0][0].split("::")[1]
-                if verb_method in _VERB_METHODS:
-                    self.extract_route(chain, _VERB_METHODS[verb_method])
-                    return
-                elif verb_method in ("resource", "apiResource"):
-                    self.extract_resource(chain, api_only=(verb_method == "apiResource"))
-                    return
+                for name, _call in chain:
+                    verb_method = name.split("::")[-1]
+                    if verb_method in _VERB_METHODS:
+                        self.extract_route(chain, _VERB_METHODS[verb_method])
+                        return
+                    elif verb_method in ("resource", "apiResource"):
+                        self.extract_resource(chain, api_only=(verb_method == "apiResource"))
+                        return
 
         for child in node.children:
             self.walk(child)
@@ -264,8 +265,22 @@ class RouteWalker:
         return tuple(expanded)
 
     def extract_route(self, chain: list[tuple[str, Node]], verbs: tuple[str, ...]) -> None:
-        first_call = chain[0][1]
-        args_node = first_call.child_by_field_name("arguments")
+        verb_entry = None
+        other_chain: list[tuple[str, Node]] = []
+        for name, call in chain:
+            m_name = name.split("::")[-1]
+            if m_name in _VERB_METHODS and verb_entry is None:
+                verb_entry = (name, call)
+            else:
+                other_chain.append((name, call))
+
+        if verb_entry is None:
+            if self.stats:
+                self.stats.unresolved += 1
+            return
+
+        verb_call = verb_entry[1]
+        args_node = verb_call.child_by_field_name("arguments")
         if not args_node:
             if self.stats:
                 self.stats.unresolved += 1
@@ -280,10 +295,10 @@ class RouteWalker:
         if self.stats:
             self.stats.resolved += 1
 
-        ctx1 = self._parse_chain_properties(chain[1:])
+        ctx1 = self._parse_chain_properties(other_chain)
         curr = self.current_context
 
-        is_dyn = _is_dynamic(args[0], first_call)
+        is_dyn = _is_dynamic(args[0], verb_call)
         if is_dyn:
             uri = "{dynamic}"
             confidence = 0.5
@@ -299,11 +314,11 @@ class RouteWalker:
 
         self.routes.append(
             Route(
-                uri=full_uri,
                 verbs=verbs,
+                uri=full_uri,
                 action_fqn=action_fqn,
                 middleware=mw,
-                span=node_span(first_call, self.parsed.path),
+                span=node_span(verb_call, self.parsed.path),
                 confidence=confidence,
             )
         )
