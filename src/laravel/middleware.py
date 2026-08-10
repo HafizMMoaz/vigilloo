@@ -1,5 +1,6 @@
 from tree_sitter import Node
 
+from ..graph import Project
 from ..models import Route, TaintKind
 from ..parser import ParsedFile
 
@@ -202,10 +203,49 @@ def is_rate_limited(route: Route) -> bool:
     return any(name.split(":", 1)[0] == "throttle" for name in route.middleware)
 
 
-def is_gated(route: Route) -> bool:
+def _calls_abort_or_redirect(node: Node | None, source: bytes) -> bool:
+    if node is None:
+        return False
+    if node.type == "function_call_expression":
+        name_node = node.child_by_field_name("function")
+        if name_node:
+            name = source[name_node.start_byte : name_node.end_byte].decode("utf-8")
+            if name == "abort":
+                args_node = node.child_by_field_name("arguments")
+                if args_node and len(args_node.children) >= 1:
+                    first_arg = args_node.children[1]  # argument list has ( arg )
+                    if first_arg.type == "argument":
+                        if (
+                            source[first_arg.start_byte : first_arg.end_byte].decode("utf-8")
+                            == "403"
+                        ):
+                            return True
+            elif name == "redirect":
+                return True
+    elif node.type == "member_call_expression":
+        name_node = node.child_by_field_name("name")
+        if name_node:
+            name = source[name_node.start_byte : name_node.end_byte].decode("utf-8")
+            if name in ("redirect", "redirectTo"):
+                return True
+
+    for child in node.children:
+        if _calls_abort_or_redirect(child, source):
+            return True
+    return False
+
+
+def is_gated(project: Project, route: Route) -> bool:
     for name in route.middleware:
         if name == "?" or name.startswith("can:"):
             return True
+        else:
+            # Check if it's a custom middleware that gates
+            found = project.method_node(f"{name}::handle")
+            if found:
+                method, parsed = found
+                if _calls_abort_or_redirect(method, parsed.source):
+                    return True
     return False
 
 

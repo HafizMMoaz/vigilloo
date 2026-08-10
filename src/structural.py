@@ -139,7 +139,7 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
         return None
 
     auth_middleware = authenticated_by(route)
-    if auth_middleware is None or is_gated(route):
+    if auth_middleware is None or is_gated(project, route):
         return None
 
     bound = _binding(project, route, route.action_fqn)
