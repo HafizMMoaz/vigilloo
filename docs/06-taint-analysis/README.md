@@ -231,6 +231,19 @@ header("Location: $x")
 `addslashes()`, `mysql_real_escape_string`, `strip_tags()`, `str_replace("'", "", $x)`,
 `stripslashes`, blacklist regexes, and `htmlspecialchars` applied to a value used in SQL.
 
+### Validation rules
+
+Validation rules map to specific cleared taint kinds:
+
+| Rule Pattern | Cleared Kinds | Notes |
+| --- | --- | --- |
+| `integer`, `int`, `numeric`, `digits`, `digits_between`, `decimal`, `boolean`, `bool` | `sql` | Numeric/boolean rules clear `sql` taint; raw HTML echo (`{!! $x !!}`) remains tainted |
+| `uuid`, `ulid` | `sql` | UUID/ULID formats constrain alphabet and clear `sql` taint |
+| `exists`, `exists:table,col` | `sql` | Database existence check clears `sql` taint |
+| `alpha`, `alpha_num`, `alpha_dash` | `sql` | Character set restriction clears `sql` taint |
+| `in:a,b,c`, `Rule::in(...)` | `sql`, `html`, `mass_assign` (all kinds) | Explicit developer allowlists clear all taint kinds |
+| `string`, `required`, `nullable`, `array`, `email`, etc. | none | Generic or unrecognised rules clear nothing |
+
 ## Propagation rules
 
 Assignment, interpolation, concatenation, array read/write, object property read/write,
