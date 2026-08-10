@@ -352,11 +352,13 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
 
     route_paths = discover_route_files(project.files)
     for rel_path in route_paths:
-        parsed = project.files.get(rel_path)
-        if parsed:
-            syms = project.symbols.get(rel_path)
-            if syms is not None:
-                project.routes.extend(extract_routes(parsed, syms, stats, middleware_groups))
+        route_parsed = project.files.get(rel_path)
+        if route_parsed is not None:
+            route_syms = project.symbols.get(rel_path)
+            if route_syms is not None:
+                project.routes.extend(
+                    extract_routes(route_parsed, route_syms, stats, middleware_groups)
+                )
 
     for path in _blade_files(root):
         try:

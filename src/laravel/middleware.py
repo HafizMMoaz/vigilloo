@@ -1,20 +1,24 @@
+from tree_sitter import Node
+
 from ..parser import ParsedFile
-from ..symbols import node_text
 
 
-def _extract_string(node, source: bytes) -> str | None:
+def _extract_string(node: Node, source: bytes) -> str | None:
     """Extracts a string from a string literal node, or returns None."""
     if node.type in ("string", "encapsed_string"):
         # Very basic string extraction, removing quotes
-        return node_text(node, source).strip("'\"")
+        return source[node.start_byte : node.end_byte].decode("utf-8").strip("'\"")
     elif node.type == "class_constant_access_expression":
         # Extract the fully qualified name
         if len(node.children) >= 3:
             name_node = node.children[-1]
-            if name_node.type == "name" and node_text(name_node, source) == "class":
+            if (
+                name_node.type == "name"
+                and source[name_node.start_byte : name_node.end_byte].decode("utf-8") == "class"
+            ):
                 qname = node.children[0]
                 if qname.type in ("qualified_name", "name", "identifier"):
-                    qname_str = node_text(qname, source)
+                    qname_str = source[qname.start_byte : qname.end_byte].decode("utf-8")
                     if qname_str.startswith("\\"):
                         qname_str = qname_str[1:]
                     return qname_str
@@ -37,7 +41,7 @@ def extract_middleware_groups(parsed: ParsedFile) -> dict[str, list[str]]:
     return groups
 
 
-def _parse_kernel_groups(node, source: bytes) -> dict[str, list[str]]:
+def _parse_kernel_groups(node: Node | None, source: bytes) -> dict[str, list[str]]:
     """
     Looks for:
     protected $middlewareGroups = [
@@ -45,7 +49,7 @@ def _parse_kernel_groups(node, source: bytes) -> dict[str, list[str]]:
         'api' => [ ... ],
     ];
     """
-    groups = {}
+    groups: dict[str, list[str]] = {}
     prop_node = _find_property_declaration(node, "$middlewareGroups", source)
     if not prop_node:
         return groups
@@ -72,12 +76,18 @@ def _parse_kernel_groups(node, source: bytes) -> dict[str, list[str]]:
     return groups
 
 
-def _find_property_declaration(node, prop_name: str, source: bytes):
+def _find_property_declaration(node: Node | None, prop_name: str, source: bytes) -> Node | None:
+    if node is None:
+        return None
     if node.type == "property_declaration":
         for child in node.children:
             if child.type == "property_element":
                 name_node = child.child_by_field_name("name")
-                if name_node and node_text(name_node, source) == prop_name:
+                if (
+                    name_node
+                    and source[name_node.start_byte : name_node.end_byte].decode("utf-8")
+                    == prop_name
+                ):
                     return child.child_by_field_name("default_value")
     for child in node.children:
         res = _find_property_declaration(child, prop_name, source)
@@ -86,7 +96,7 @@ def _find_property_declaration(node, prop_name: str, source: bytes):
     return None
 
 
-def _parse_app_groups(node, source: bytes) -> dict[str, list[str]]:
+def _parse_app_groups(node: Node | None, source: bytes) -> dict[str, list[str]]:
     """
     Looks for:
     ->withMiddleware(function (Middleware $middleware) {
@@ -94,7 +104,7 @@ def _parse_app_groups(node, source: bytes) -> dict[str, list[str]]:
         $middleware->web(append: [...]);
     })
     """
-    groups = {"api": [], "web": []}
+    groups: dict[str, list[str]] = {"api": [], "web": []}
     with_middleware_node = _find_method_call(node, "withMiddleware", source)
     if not with_middleware_node:
         return {}
@@ -106,10 +116,15 @@ def _parse_app_groups(node, source: bytes) -> dict[str, list[str]]:
     return {k: v for k, v in groups.items() if v}
 
 
-def _find_method_call(node, method_name: str, source: bytes):
+def _find_method_call(node: Node | None, method_name: str, source: bytes) -> Node | None:
+    if node is None:
+        return None
     if node.type in ("method_invocation", "member_call_expression"):
         name_node = node.child_by_field_name("name")
-        if name_node and node_text(name_node, source) == method_name:
+        if (
+            name_node
+            and source[name_node.start_byte : name_node.end_byte].decode("utf-8") == method_name
+        ):
             return node
     for child in node.children:
         res = _find_method_call(child, method_name, source)
@@ -118,12 +133,16 @@ def _find_method_call(node, method_name: str, source: bytes):
     return None
 
 
-def _explore_closure_for_groups(node, source: bytes, groups: dict[str, list[str]]):
+def _explore_closure_for_groups(
+    node: Node | None, source: bytes, groups: dict[str, list[str]]
+) -> None:
+    if node is None:
+        return
     # Find $middleware->api(...) or $middleware->web(...) calls
     if node.type == "member_call_expression":
         name_node = node.child_by_field_name("name")
         if name_node:
-            name = node_text(name_node, source)
+            name = source[name_node.start_byte : name_node.end_byte].decode("utf-8")
             if name in ("api", "web"):
                 args_node = node.child_by_field_name("arguments")
                 if args_node:
