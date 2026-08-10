@@ -23,24 +23,27 @@ from .laravel.vocabulary import MISSING_AUTHORIZATION_RULE
 from .models import PathStep, Route
 from .parser import ParsedFile, find_all, node_text
 
-# Called on $this in a controller action.
 _AUTHORIZE_METHODS = frozenset(
     {
         "authorize",
         "authorizeForUser",
-        # ->can()/->cannot() on any receiver: $request->user()->can(...),
+        "authorizeResource",
+        # ->can()/->cannot()/->cant() on any receiver: $request->user()->can(...),
         # $user->cannot(...), auth()->user()->can(...). The receiver is not
         # checked, because every plausible receiver of a method with this name
         # is an authorization check, and demanding a resolved receiver would
         # turn a guarded action into a reported one.
         "can",
         "cannot",
+        "cant",
         "canAny",
     }
 )
 
 # Gate::allows(...) and friends.
-_GATE_METHODS = frozenset({"allows", "denies", "authorize", "check", "any", "none"})
+_GATE_METHODS = frozenset(
+    {"allows", "denies", "authorize", "check", "any", "none", "inspect", "forUser"}
+)
 
 # A FormRequest::authorize() that does this is not authorization. It is the
 # stub Laravel's make:request generates, and treating it as a control is the
@@ -64,10 +67,9 @@ def _calls_authorization(node: Node, source: bytes) -> bool:
 def _form_request_authorizes(project: Project, param_type: str) -> bool:
     """Does a parameter of this type carry a real authorize() check?
 
-    ponytail: identified by having an authorize() method rather than by walking
-    the parent chain to FormRequest. Laravel's base class lives in vendor/ and
-    is not scanned, and a request-shaped class with an authorize() method is a
-    FormRequest for every purpose this rule has.
+    Identified by having an authorize() method. Laravel's base class lives in
+    vendor/ and is not scanned, and a request-shaped class with an authorize()
+    method is a FormRequest for every purpose this rule has.
     """
     found = project.method_node(f"{param_type}::authorize")
     if found is None:
@@ -110,9 +112,13 @@ def _binding(project: Project, route: Route, fqn: str) -> tuple[str, str] | None
         return None
     params = uri_params(route.uri)
     for name, declared in zip(symbol.params, symbol.param_types, strict=True):
-        if name in params and declared and declared in project.classes:
-            if is_model(project.classes, declared):
-                return name, declared
+        if not declared:
+            continue
+        resolved = project.resolve_class_name(symbol.span.file, declared)
+        target = resolved if (resolved and resolved in project.classes) else declared
+        if name in params and target and target in project.classes:
+            if is_model(project.classes, target):
+                return name, target
     return None
 
 
@@ -185,7 +191,7 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
     # and the faster one to act on. When there is no policy class the step is
     # omitted entirely and the gap step carries the fact instead: a step that
     # says "nothing here" is worse than no step.
-    policy_fqn = find_policy(project.classes, model_fqn)
+    policy_fqn = find_policy(project.classes, model_fqn, project.policies)
     if policy_fqn is not None:
         steps.append(
             PathStep(

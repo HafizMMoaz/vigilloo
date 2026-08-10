@@ -56,6 +56,7 @@ class Project:
     routes: list[Route] = field(default_factory=list)
     entrypoints: list[EntryPoint] = field(default_factory=list)
     bindings: dict[str, list[str]] = field(default_factory=dict)
+    policies: dict[str, str] = field(default_factory=dict)
     blade: dict[Path, ParsedFile] = field(default_factory=dict)
     blade_lines: dict[Path, list[str]] = field(default_factory=dict)
     failed: list[Path] = field(default_factory=list)
@@ -344,9 +345,11 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
 
     from .laravel.middleware import extract_middleware_groups
     from .laravel.migrations import extract_schema
+    from .laravel.policies import extract_explicit_policies
     from .laravel.routes import discover_route_files
 
     project.schema.update(extract_schema(project.files))
+    project.policies.update(extract_explicit_policies(project.files, project.resolve_class_name))
 
     middleware_groups = {}
     for rel_path, parsed in project.files.items():
