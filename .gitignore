@@ -22,3 +22,4 @@ TEMP/
 # Claude Code session state, including the throwaway worktrees dispatched agents run in.
 # Machine-local and never part of the project.
 .claude/
+scratch/

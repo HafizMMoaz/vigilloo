@@ -1,9 +1,0 @@
-from pathlib import Path
-
-from vigilloo.graph import load_project
-from vigilloo.taint import WalkStats, find_taint_paths
-
-project = load_project(Path("scratch/tmp2"))
-stats = WalkStats()
-find_taint_paths(project, stats=stats)
-print("Unresolved:", stats.unresolved)
