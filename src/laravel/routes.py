@@ -34,6 +34,19 @@ def _string_literal(node: Node, source: bytes) -> str:
     return node_text(node, source).strip("'\"")
 
 
+def _is_dynamic(uri_node: Node, call_node: Node) -> bool:
+    inner = uri_node.children[0] if uri_node.type == "argument" and uri_node.children else uri_node
+    if inner.type not in ("string", "encapsed_string"):
+        return True
+    
+    curr: Node | None = call_node.parent
+    while curr:
+        if curr.type in ("foreach_statement", "for_statement", "while_statement", "do_statement"):
+            return True
+        curr = curr.parent
+    return False
+
+
 def _action_fqn(node: Node, source: bytes, symbols: FileSymbols) -> str:
     text = node_text(node, source)
 
@@ -270,7 +283,14 @@ class RouteWalker:
         ctx1 = self._parse_chain_properties(chain[1:])
         curr = self.current_context
 
-        uri = _string_literal(args[0], self.source)
+        is_dyn = _is_dynamic(args[0], first_call)
+        if is_dyn:
+            uri = "{dynamic}"
+            confidence = 0.5
+        else:
+            uri = _string_literal(args[0], self.source)
+            confidence = 1.0
+
         full_uri = f"{curr.prefix}/{uri}".strip("/") if curr.prefix else uri.strip("/")
         full_uri = re.sub(r"/+", "/", "/" + full_uri)
 
@@ -284,6 +304,7 @@ class RouteWalker:
                 action_fqn=action_fqn,
                 middleware=mw,
                 span=node_span(first_call, self.parsed.path),
+                confidence=confidence,
             )
         )
 
@@ -307,7 +328,14 @@ class RouteWalker:
         ctx1 = self._parse_chain_properties(chain[1:])
         curr = self.current_context
 
-        base_uri = _string_literal(args[0], self.source).strip("/")
+        is_dyn = _is_dynamic(args[0], first_call)
+        if is_dyn:
+            base_uri = "{dynamic}"
+            confidence = 0.5
+        else:
+            base_uri = _string_literal(args[0], self.source).strip("/")
+            confidence = 1.0
+
         controller = _action_fqn(args[1], self.source, self.symbols)
         # If action_fqn parser thinks it is a method call due to string/class, it adds ::__invoke.
         # But resource passes controller class. _action_fqn returns `Controller::__invoke`.
@@ -347,6 +375,7 @@ class RouteWalker:
                     action_fqn=f"{controller}::{method}",
                     middleware=mw,
                     span=node_span(first_call, self.parsed.path),
+                    confidence=confidence,
                 )
             )
 

@@ -591,7 +591,14 @@ class _RowBuilder:
 
             action = self.project.method(route.action_fqn)
             if action is not None:
-                self.edges.append(EdgeRow(route_id, self._id(_KIND_METHOD, action.fqn), "HANDLES"))
+                self.edges.append(
+                    EdgeRow(
+                        route_id,
+                        self._id(_KIND_METHOD, action.fqn),
+                        "HANDLES",
+                        confidence=route.confidence,
+                    )
+                )
 
             for name in named:
                 mw_id = self._id(_KIND_MIDDLEWARE, name)

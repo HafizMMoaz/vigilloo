@@ -68,6 +68,7 @@ class Route:
     action_fqn: str
     middleware: tuple[str, ...]
     span: Span
+    confidence: float = 1.0
 
 
 @dataclass(frozen=True)
