@@ -38,7 +38,7 @@ def _is_dynamic(uri_node: Node, call_node: Node) -> bool:
     inner = uri_node.children[0] if uri_node.type == "argument" and uri_node.children else uri_node
     if inner.type not in ("string", "encapsed_string"):
         return True
-    
+
     curr: Node | None = call_node.parent
     while curr:
         if curr.type in ("foreach_statement", "for_statement", "while_statement", "do_statement"):
