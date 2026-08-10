@@ -7,11 +7,14 @@ scopes) arrive with the rules that read them.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
+from tree_sitter import Node
+
 from ..models import Span
-from ..symbols import ClassInfo
+from ..parser import ParsedFile, find_all, node_text
+from ..symbols import ClassInfo, FileSymbols
 
 # Base classes a user's model extends. The chain is walked upward, but Laravel
 # itself lives in vendor/ and is excluded from the scan, so in practice the
@@ -124,3 +127,170 @@ def model_config(classes: dict[str, ClassInfo], fqn: str) -> ModelConfig | None:
     # so a model configuring nothing is not mass-assignable at all. Reading
     # "unconfigured" as "open" would fire on almost every model ever written.
     return ModelConfig(fqn=fqn, protection=Protection.GUARDED)
+
+
+_RELATIONSHIP_METHODS = frozenset(
+    {
+        "hasOne",
+        "belongsTo",
+        "hasMany",
+        "belongsToMany",
+        "hasManyThrough",
+        "hasOneThrough",
+        "morphTo",
+        "morphOne",
+        "morphMany",
+        "morphToMany",
+        "morphedByMany",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ModelMetadata:
+    fqn: str
+    table: str = ""
+    fillable: tuple[str, ...] = ()
+    guarded: tuple[str, ...] = ()
+    hidden: tuple[str, ...] = ()
+    casts: dict[str, str] = field(default_factory=dict)
+    appends: tuple[str, ...] = ()
+    timestamps: bool = True
+    soft_deletes: bool = False
+    traits: tuple[str, ...] = ()
+    relationships: dict[str, tuple[str, str]] = field(default_factory=dict)
+    scopes: tuple[str, ...] = ()
+    accessors: tuple[str, ...] = ()
+    mutators: tuple[str, ...] = ()
+
+
+def _parse_dict_array(node: Node, source: bytes) -> dict[str, str]:
+    res: dict[str, str] = {}
+    for element in node.children:
+        if element.type != "array_element_initializer":
+            continue
+        if len(element.children) >= 3 and element.children[1].type == "=>":
+            k = node_text(element.children[0], source).strip("'\"")
+            v = node_text(element.children[2], source).strip("'\"")
+            res[k] = v
+    return res
+
+
+def extract_model_metadata(
+    parsed: ParsedFile,
+    symbols: FileSymbols,
+    fqn: str,
+) -> ModelMetadata | None:
+    """Extract complete Eloquent model metadata for a given class FQN."""
+    classes = symbols.classes
+    info = classes.get(fqn)
+    if info is None or not is_model(classes, fqn):
+        return None
+
+    class_node: Node | None = None
+    for node in find_all(parsed.tree.root_node, "class_declaration"):
+        name_node = node.child_by_field_name("name")
+        if name_node is not None:
+            short_name = node_text(name_node, parsed.source)
+            candidate_fqn = f"{symbols.namespace}\\{short_name}".strip("\\")
+            if candidate_fqn == fqn or short_name == fqn.rsplit("\\", 1)[-1]:
+                class_node = node
+                break
+
+    if class_node is None:
+        return None
+
+    source = parsed.source
+    table = ""
+    timestamps = True
+    fillable = info.array_props.get("fillable", ())
+    guarded = info.array_props.get("guarded", ())
+    hidden = info.array_props.get("hidden", ())
+    appends = info.array_props.get("appends", ())
+    casts: dict[str, str] = {}
+
+    body = class_node.child_by_field_name("body")
+    if body is not None:
+        for member in body.children:
+            if member.type == "property_declaration":
+                for elem in member.children:
+                    if elem.type == "property_element":
+                        p_name_node = elem.child_by_field_name("name")
+                        if p_name_node is None:
+                            continue
+                        p_name = node_text(p_name_node, source).lstrip("$")
+                        val_node = elem.child_by_field_name("default_value")
+
+                        if p_name == "table" and val_node is not None:
+                            table = node_text(val_node, source).strip("'\"")
+                        elif p_name == "timestamps" and val_node is not None:
+                            val_text = node_text(val_node, source).lower()
+                            if val_text == "false":
+                                timestamps = False
+                        elif p_name == "casts" and val_node is not None:
+                            if val_node.type == "array_creation_expression":
+                                casts = _parse_dict_array(val_node, source)
+
+    soft_deletes = any(
+        t.endswith("SoftDeletes") or t == "Illuminate\\Database\\Eloquent\\SoftDeletes"
+        for t in info.traits
+    )
+
+    relationships: dict[str, tuple[str, str]] = {}
+    scopes: list[str] = []
+    accessors: list[str] = []
+    mutators: list[str] = []
+
+    for method_node in find_all(class_node, "method_declaration"):
+        name_node = method_node.child_by_field_name("name")
+        if name_node is None:
+            continue
+        method_name = node_text(name_node, source)
+
+        if method_name.startswith("scope") and len(method_name) > 5:
+            scopes.append(method_name)
+
+        if method_name.startswith("get") and method_name.endswith("Attribute"):
+            accessors.append(method_name)
+        elif method_name.startswith("set") and method_name.endswith("Attribute"):
+            mutators.append(method_name)
+        else:
+            return_type = method_node.child_by_field_name("return_type")
+            if return_type is not None and "Attribute" in node_text(return_type, source):
+                accessors.append(method_name)
+                mutators.append(method_name)
+
+        for call_node in find_all(method_node, "member_call_expression"):
+            obj = call_node.child_by_field_name("object")
+            name = call_node.child_by_field_name("name")
+            if obj is not None and node_text(obj, source) == "$this" and name is not None:
+                rel_type = node_text(name, source)
+                if rel_type in _RELATIONSHIP_METHODS:
+                    args_node = call_node.child_by_field_name("arguments")
+                    target_fqn = ""
+                    if args_node is not None and len(args_node.children) >= 2:
+                        first_arg = args_node.children[1]
+                        arg_text = node_text(first_arg, source).strip()
+                        if "::class" in arg_text:
+                            short_cls = arg_text.rsplit("::class", 1)[0].strip()
+                            target_fqn = symbols.imports.get(short_cls, short_cls)
+                        else:
+                            target_fqn = arg_text.strip("'\"")
+                    relationships[method_name] = (rel_type, target_fqn)
+
+    return ModelMetadata(
+        fqn=fqn,
+        table=table,
+        fillable=fillable,
+        guarded=guarded,
+        hidden=hidden,
+        casts=casts,
+        appends=appends,
+        timestamps=timestamps,
+        soft_deletes=soft_deletes,
+        traits=info.traits,
+        relationships=relationships,
+        scopes=tuple(scopes),
+        accessors=tuple(accessors),
+        mutators=tuple(mutators),
+    )
