@@ -9,6 +9,7 @@ identity from the same Project would be a second place for the two to drift apar
 import hashlib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tree_sitter import Node
 
@@ -16,8 +17,18 @@ from .ids import node_id
 from .laravel.blade import to_php
 from .laravel.detect import Autoload, read_autoload
 from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
-from .models import Coverage, EdgeRow, EntryPoint, NodeRow, ParseFailure, Route, Span, Symbol, WalkStats
-from typing import TYPE_CHECKING
+from .models import (
+    Coverage,
+    EdgeRow,
+    EntryPoint,
+    NodeRow,
+    ParseFailure,
+    Route,
+    Span,
+    Symbol,
+    WalkStats,
+)
+
 if TYPE_CHECKING:
     from .summaries import FunctionSummary
 from .parser import (
@@ -767,7 +778,11 @@ class _RowBuilder:
                 # would need to know what an expression evaluates to, which this layer does not.
                 inner = obj.child_by_field_name("object")
                 prop = obj.child_by_field_name("name")
-                if inner is not None and prop is not None and node_text(inner, parsed.source) == "$this":
+                if (
+                    inner is not None
+                    and prop is not None
+                    and node_text(inner, parsed.source) == "$this"
+                ):
                     receiver = self.project.resolve_property_type(
                         class_fqn, node_text(prop, parsed.source)
                     )
@@ -778,7 +793,7 @@ class _RowBuilder:
             candidates = self.project.bindings.get(receiver, [receiver])
             if receiver in self.project.bindings:
                 confidence = 0.9 if len(candidates) == 1 else 0.6 / len(candidates)
-            
+
             results = []
             for candidate in candidates:
                 target = self.project.method(f"{candidate}::{method_name}")
@@ -791,10 +806,10 @@ class _RowBuilder:
         for cls_fqn in self.project.classes:
             if self.project.method(f"{cls_fqn}::{method_name}") is not None:
                 candidates.append(cls_fqn)
-                
+
         if not candidates:
             return []
-            
+
         confidence = 0.4 if len(candidates) == 1 else 0.4 / len(candidates)
         results = []
         for candidate in candidates:

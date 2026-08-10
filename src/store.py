@@ -18,12 +18,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .graph import GraphRows, NodeLocator, Project, graph_rows
 from .models import EdgeRow, Finding, NodeRow
 from .workspace import Workspace
 from .workspace.migrations import SCHEMA_VERSION, migrate
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .summaries import FunctionSummary
@@ -815,19 +815,23 @@ def _first_seen_scan(
 
 def load_summary(conn: sqlite3.Connection, fqn: str, file_sha: str) -> "FunctionSummary | None":
     import pickle
+
     row = conn.execute(
-        "SELECT summary FROM summary_cache WHERE fqn = ? AND file_sha = ?",
-        (fqn, file_sha)
+        "SELECT summary FROM summary_cache WHERE fqn = ? AND file_sha = ?", (fqn, file_sha)
     ).fetchone()
     if row:
         return pickle.loads(row[0])
     return None
 
-def save_summary(conn: sqlite3.Connection, fqn: str, file_sha: str, summary: "FunctionSummary") -> None:
+
+def save_summary(
+    conn: sqlite3.Connection, fqn: str, file_sha: str, summary: "FunctionSummary"
+) -> None:
     import pickle
+
     blob = pickle.dumps(summary)
     conn.execute(
         "INSERT INTO summary_cache (fqn, file_sha, summary) VALUES (?, ?, ?) "
         "ON CONFLICT(fqn, file_sha) DO UPDATE SET summary=excluded.summary",
-        (fqn, file_sha, blob)
+        (fqn, file_sha, blob),
     )

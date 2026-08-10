@@ -5,6 +5,7 @@ Extracts container bindings from `app()->bind()`, `singleton()`, and service pro
 """
 
 from tree_sitter import Node
+
 from ..parser import ParsedFile, find_all, node_text
 from ..symbols import FileSymbols, resolve_type_name
 
