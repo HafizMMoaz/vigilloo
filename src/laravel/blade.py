@@ -36,6 +36,16 @@ _EXTENDS = re.compile(r"@extends\s*\((.*?)\)", re.S)
 _COMPONENT_DIRECTIVE = re.compile(r"@component\s*\((.*?)\)", re.S)
 _COMPONENT_TAG = re.compile(r"<x-([a-zA-Z0-9_\.-]+)(\s+[^/>]*)?(?:/>|>(.*?)</x-\1>)", re.S)
 
+_FOREACH = re.compile(r"@foreach\s*\((.*?)\)", re.S)
+_ENDFOREACH = re.compile(r"@endforeach", re.S)
+_FORELSE = re.compile(r"@forelse\s*\((.*?)\)", re.S)
+_EMPTY = re.compile(r"@empty", re.S)
+_ENDFORELSE = re.compile(r"@endforelse", re.S)
+_FOR = re.compile(r"@for\s*\((.*?)\)", re.S)
+_ENDFOR = re.compile(r"@endfor", re.S)
+_WHILE = re.compile(r"@while\s*\((.*?)\)", re.S)
+_ENDWHILE = re.compile(r"@endwhile", re.S)
+
 _LITERAL_PLACEHOLDER = "\x00vigilloo-blade-literal\x00"
 
 
@@ -96,6 +106,16 @@ def to_php(text: str) -> str:
         lambda m: _keep_lines(f"<?php view({m.group(1)}); ?>", m.group(0)), text
     )
     text = _COMPONENT_TAG.sub(_rewrite_component_tag, text)
+
+    text = _FOREACH.sub(lambda m: _keep_lines(f"<?php foreach({m.group(1)}): ?>", m.group(0)), text)
+    text = _ENDFOREACH.sub(lambda m: _keep_lines("<?php endforeach; ?>", m.group(0)), text)
+    text = _FORELSE.sub(lambda m: _keep_lines(f"<?php foreach({m.group(1)}): ?>", m.group(0)), text)
+    text = _EMPTY.sub(lambda m: _keep_lines("<?php endforeach; ?>", m.group(0)), text)
+    text = _ENDFORELSE.sub(lambda m: _keep_lines("<?php ; ?>", m.group(0)), text)
+    text = _FOR.sub(lambda m: _keep_lines(f"<?php for({m.group(1)}): ?>", m.group(0)), text)
+    text = _ENDFOR.sub(lambda m: _keep_lines("<?php endfor; ?>", m.group(0)), text)
+    text = _WHILE.sub(lambda m: _keep_lines(f"<?php while({m.group(1)}): ?>", m.group(0)), text)
+    text = _ENDWHILE.sub(lambda m: _keep_lines("<?php endwhile; ?>", m.group(0)), text)
 
     for literal in literals:
         text = text.replace(_LITERAL_PLACEHOLDER, literal, 1)

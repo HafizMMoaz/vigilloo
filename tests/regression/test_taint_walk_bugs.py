@@ -180,19 +180,14 @@ def test_a_genuine_request_receiver_is_still_reported(tmp_path: Path) -> None:
     assert [finding.rule_id for finding in findings] == ["php.xss"]
 
 
-def test_tainted_data_into_a_blade_loop_is_reported_as_a_gap(tmp_path: Path) -> None:
-    """Fixed in b9d7ff2, "count lost taint trails through Blade loop directives".
+def test_tainted_data_into_a_blade_loop_is_reported_as_a_finding(
+    tmp_path: Path,
+) -> None:
+    """Implemented in TASK-050: Blade collection aliasing in loops.
 
-    The Blade rewriter leaves `@foreach` as inert text, so `@foreach ($rows as $row)` never
-    aliases `$row` to the kinds `$rows` carries. The walk therefore saw a raw echo of a
-    variable it had never heard of, and before the fix this project scanned as: no findings,
-    `1/1 call sites resolved (100.0%)`. Tainted data reaching `{!! $row !!}` through the most
-    ordinary loop in Laravel, reported as a fully resolved clean scan.
-
-    Loop-variable aliasing is still not implemented, so there is still no finding here and
-    the assertion below is not waiting for one. What the fix bought is that the walk now
-    admits it stopped. If aliasing ever lands, this test fails - correctly - and becomes a
-    test that asserts the finding instead.
+    Blade loop variables are now aliased to the collection's taint, so
+    @foreach ($rows as $row) {!! $row !!} propagates taint to $row and generates
+    an XSS finding.
     """
     root = _project(
         tmp_path,
@@ -220,9 +215,9 @@ def test_tainted_data_into_a_blade_loop_is_reported_as_a_gap(tmp_path: Path) -> 
 
     findings, result = _scan(root)
 
-    assert findings == []
-    assert result.calls_unresolved == 1
-    assert result.call_resolution_rate < 1.0
+    assert len(findings) == 1
+    assert findings[0].rule_id == "php.xss"
+    assert result.calls_unresolved == 0
 
 
 def test_correct_code_reports_no_gaps_at_all(tmp_path: Path) -> None:
