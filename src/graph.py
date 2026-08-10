@@ -341,15 +341,24 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         for interface, implementations in file_bindings.items():
             project.bindings.setdefault(interface, []).extend(implementations)
 
+    from .laravel.middleware import extract_middleware_groups
     from .laravel.routes import discover_route_files
+
+    middleware_groups = {}
+    for rel_path, parsed in project.files.items():
+        path_str = str(rel_path).replace("\\\\", "/")
+        if path_str.endswith("app/Http/Kernel.php") or path_str.endswith("bootstrap/app.php"):
+            middleware_groups.update(extract_middleware_groups(parsed))
 
     route_paths = discover_route_files(project.files)
     for rel_path in route_paths:
-        parsed = project.files.get(rel_path)
-        if parsed:
-            syms = project.symbols.get(rel_path)
-            if syms is not None:
-                project.routes.extend(extract_routes(parsed, syms, stats))
+        route_parsed = project.files.get(rel_path)
+        if route_parsed is not None:
+            route_syms = project.symbols.get(rel_path)
+            if route_syms is not None:
+                project.routes.extend(
+                    extract_routes(route_parsed, route_syms, stats, middleware_groups)
+                )
 
     for path in _blade_files(root):
         try:

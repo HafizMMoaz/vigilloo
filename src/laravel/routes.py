@@ -114,13 +114,20 @@ class GroupContext:
 
 
 class RouteWalker:
-    def __init__(self, parsed: ParsedFile, symbols: FileSymbols, stats: WalkStats | None):
+    def __init__(
+        self,
+        parsed: ParsedFile,
+        symbols: FileSymbols,
+        stats: WalkStats | None,
+        middleware_groups: dict[str, list[str]],
+    ):
         self.parsed = parsed
         self.source = parsed.source
         self.symbols = symbols
         self.stats = stats
         self.routes: list[Route] = []
         self.group_stack: list[GroupContext] = [GroupContext()]
+        self.middleware_groups = middleware_groups
 
     @property
     def current_context(self) -> GroupContext:
@@ -230,6 +237,19 @@ class RouteWalker:
         for child in node.children:
             self.walk(child)
 
+    def _expand_middleware(self, mw_list: list[str]) -> tuple[str, ...]:
+        expanded = []
+        for m in mw_list:
+            if (
+                hasattr(self, "middleware_groups")
+                and self.middleware_groups
+                and m in self.middleware_groups
+            ):
+                expanded.extend(self.middleware_groups[m])
+            else:
+                expanded.append(m)
+        return tuple(expanded)
+
     def extract_route(self, chain: list[tuple[str, Node]], verbs: tuple[str, ...]) -> None:
         first_call = chain[0][1]
         args_node = first_call.child_by_field_name("arguments")
@@ -255,7 +275,7 @@ class RouteWalker:
         full_uri = re.sub(r"/+", "/", "/" + full_uri)
 
         action_fqn = _action_fqn(args[1], self.source, self.symbols)
-        mw = tuple(curr.middleware + ctx1.middleware)
+        mw = self._expand_middleware(curr.middleware + ctx1.middleware)
 
         self.routes.append(
             Route(
@@ -296,7 +316,7 @@ class RouteWalker:
         if controller.endswith("::__invoke"):
             controller = controller[:-10]
 
-        mw = tuple(curr.middleware + ctx1.middleware)
+        mw = self._expand_middleware(curr.middleware + ctx1.middleware)
 
         # Determine parameter name, e.g. 'posts' -> 'post' (Laravel uses singular).
         # We'll just use a generic 'id' or strip 's' for simplicity unless requested.
@@ -332,10 +352,13 @@ class RouteWalker:
 
 
 def extract_routes(
-    parsed: ParsedFile, symbols: FileSymbols, stats: WalkStats | None = None
+    parsed: ParsedFile,
+    symbols: FileSymbols,
+    stats: WalkStats | None = None,
+    middleware_groups: dict[str, list[str]] | None = None,
 ) -> list[Route]:
     """Find Route::verb(uri, action) calls."""
-    walker = RouteWalker(parsed, symbols, stats)
+    walker = RouteWalker(parsed, symbols, stats, middleware_groups or {})
     walker.walk(parsed.tree.root_node)
     return sorted(walker.routes, key=lambda r: (r.span.start_line, r.uri))
 
