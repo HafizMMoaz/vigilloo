@@ -31,6 +31,11 @@ _RAW_ECHO = re.compile(r"\{!!(.*?)!!\}", re.S)
 _ESCAPED_ECHO = re.compile(r"\{\{(.*?)\}\}", re.S)
 _PHP_BLOCK = re.compile(r"@php(.*?)@endphp", re.S)
 
+_INCLUDE = re.compile(r"@include(?:If|When|Unless)?\s*\((.*?)\)", re.S)
+_EXTENDS = re.compile(r"@extends\s*\((.*?)\)", re.S)
+_COMPONENT_DIRECTIVE = re.compile(r"@component\s*\((.*?)\)", re.S)
+_COMPONENT_TAG = re.compile(r"<x-([a-zA-Z0-9_\.-]+)(\s+[^/>]*)?(?:/>|>(.*?)</x-\1>)", re.S)
+
 _LITERAL_PLACEHOLDER = "\x00vigilloo-blade-literal\x00"
 
 
@@ -46,6 +51,32 @@ def _keep_lines(replacement: str, matched: str) -> str:
     return replacement + "\n" * max(deficit, 0)
 
 
+def _parse_component_attrs(attrs_text: str) -> str:
+    if not attrs_text:
+        return ""
+    pairs: list[str] = []
+    pattern = re.compile(r'(:?)([a-zA-Z0-9_-]+)=(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
+    for m in pattern.finditer(attrs_text):
+        is_bound, name, v_double, v_single, v_raw = m.groups()
+        val = v_double if v_double is not None else (v_single if v_single is not None else v_raw)
+        if is_bound:
+            pairs.append(f"'{name}' => {val}")
+        else:
+            pairs.append(f"'{name}' => '{val}'")
+    if not pairs:
+        return ""
+    return ", [" + ", ".join(pairs) + "]"
+
+
+def _rewrite_component_tag(match: re.Match[str]) -> str:
+    tag_name = match.group(1).replace("-", ".").replace("::", ".")
+    view_name = f"components.{tag_name}"
+    attrs = match.group(2) or ""
+    array_str = _parse_component_attrs(attrs)
+    code = f"<?php view('{view_name}'{array_str}); ?>"
+    return _keep_lines(code, match.group(0))
+
+
 def to_php(text: str) -> str:
     """Rewrite Blade into PHP the tree-sitter php grammar can read."""
     literals: list[str] = []
@@ -59,6 +90,12 @@ def to_php(text: str) -> str:
     text = _PHP_BLOCK.sub(lambda m: _keep_lines(f"<?php {m.group(1)}?>", m.group(0)), text)
     text = _RAW_ECHO.sub(lambda m: _keep_lines(f"<?php echo {m.group(1)}; ?>", m.group(0)), text)
     text = _ESCAPED_ECHO.sub(lambda m: _keep_lines(f"<?php e({m.group(1)}); ?>", m.group(0)), text)
+    text = _INCLUDE.sub(lambda m: _keep_lines(f"<?php view({m.group(1)}); ?>", m.group(0)), text)
+    text = _EXTENDS.sub(lambda m: _keep_lines(f"<?php view({m.group(1)}); ?>", m.group(0)), text)
+    text = _COMPONENT_DIRECTIVE.sub(
+        lambda m: _keep_lines(f"<?php view({m.group(1)}); ?>", m.group(0)), text
+    )
+    text = _COMPONENT_TAG.sub(_rewrite_component_tag, text)
 
     for literal in literals:
         text = text.replace(_LITERAL_PLACEHOLDER, literal, 1)
