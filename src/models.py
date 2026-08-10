@@ -25,6 +25,7 @@ class TaintKind(StrEnum):
 
     SQL = "sql"
     HTML = "html"
+    SHELL = "shell"
 
     # Not an injection kind like the others: it marks a value whose *keys* the
     # attacker chose, which is what makes an Eloquent array write dangerous.

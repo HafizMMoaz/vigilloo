@@ -21,6 +21,7 @@ from .laravel.models import Protection, model_config
 from .laravel.routes import uri_params
 from .laravel.views import extract_view_bindings, template_path
 from .laravel.vocabulary import (
+    COMMAND_INJECTION_RULE,
     MAGIC_PROPERTY_KINDS,
     MASS_ASSIGNMENT_RULE,
     ROUTE_PARAM_KINDS,
@@ -690,16 +691,29 @@ def _sink_steps(
     argument = _sink_argument(args, index, sink_arg_name(method), parsed.source)
     if argument is None:
         return []
+    # `Process::run(['cmd', $arg])` array form does not go through a shell and
+    # must not fire. The argument node is wrapped in an "argument" container, so
+    # unwrap it to check the inner expression type.
+    if kind == TaintKind.SHELL:
+        inner = argument
+        if inner.type == "argument":
+            inner = next(
+                (c for c in inner.children if c.type not in (",", "name", ":")),
+                inner,
+            )
+        if inner.type == "array_creation_expression":
+            return []
     if kind not in expr_kinds(
         argument, parsed.source, local, request_vars, resolve, validated_fields
     ):
         return []
+    note = "shell command execution" if kind == TaintKind.SHELL else "unparameterised SQL fragment"
     return _inline_source_steps(argument, parsed, request_vars, resolve) + [
         PathStep(
             role="sink",
             span=node_span(call, parsed.path),
             snippet=node_text(call, parsed.source).strip(),
-            note="unparameterised SQL fragment",
+            note=note,
             rule_id=rule_id,
         )
     ]
@@ -1058,6 +1072,19 @@ def _walk_method_ast(
                     )
                 ]
 
+        for shell_expr in find_all(stmt, "shell_command_expression"):
+            if TaintKind.SHELL in expr_kinds(
+                shell_expr, source, local, request_vars, resolve, validated_fields
+            ):
+                sink_step = PathStep(
+                    role="sink",
+                    span=node_span(shell_expr, parsed.path),
+                    snippet=node_text(shell_expr, source).strip(),
+                    note="shell execution operator (backticks)",
+                    rule_id=COMMAND_INJECTION_RULE,
+                )
+                paths.append(prefix + [sink_step])
+
         # 2a. Static calls. `User::create($request->all())` names its class at
         #     the call site, so it needs no receiver inference - which is why
         #     it is the form the mass-assignment rule leans on. The same
@@ -1262,7 +1289,43 @@ def _walk_method_ast(
             if not found_callee and passed:
                 _giveup(stats)
 
-        # 2c. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
+        # 2c. Named function call sinks: `exec($cmd)`, `shell_exec($cmd)`, etc.
+        #     Checked before the dynamic-callee give-up below. The distinction
+        #     is between a *named* callee whose text appears in the SINKS table
+        #     (a security hazard) and an *unresolvable* callee whose identity
+        #     is not known (a coverage gap). The first is a finding; the second
+        #     is a give-up.
+        for call in find_all(stmt, "function_call_expression"):
+            invoked = call.child_by_field_name("function")
+            if invoked is None:
+                continue
+            if invoked.type not in ("name", "qualified_name"):
+                continue
+            fname = node_text(invoked, source)
+            sink_found = sink(fname)
+            if sink_found is None:
+                continue
+            args_node = call.child_by_field_name("arguments")
+            args = (
+                [a for a in args_node.children if a.type not in ("(", ")", ",")]
+                if args_node is not None
+                else []
+            )
+            sink_steps = _sink_steps(
+                call,
+                args,
+                sink_found,
+                parsed,
+                fname,
+                local,
+                request_vars,
+                resolve,
+                validated_fields,
+            )
+            if sink_steps:
+                paths.append(prefix + sink_steps)
+
+        # 2d. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
         #     docs/03-parser is explicit about these - "Dynamic dispatch. Mark the
         #     edge unresolved" - and until now they were not marked at all. There is
         #     no loop over function_call_expression in this walk, so a tainted value

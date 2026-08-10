@@ -210,10 +210,7 @@ _TAINTED_SERVER_PREFIX = "HTTP_"
 # comments.
 SQL_INJECTION_RULE = "php.sql-injection"
 XSS_RULE = "php.xss"
-# laravel. rather than php.: the rule is meaningless outside Eloquent. Spelled
-# as docs/08-framework-adapters and docs/13-security-engine spell it, rather
-# than invented to match the php. prefixes above, because invariant 7 makes it
-# permanent the moment it ships.
+COMMAND_INJECTION_RULE = "php.command-injection"
 MASS_ASSIGNMENT_RULE = "laravel.mass-assignment"
 MISSING_AUTHORIZATION_RULE = "laravel.missing-authorization"
 
@@ -256,20 +253,16 @@ SINKS: dict[str, tuple[int, TaintKind, str]] = {
     "groupByRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "selectRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "fromRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
+    "exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "shell_exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "system": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "passthru": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "popen": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "proc_open": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "pcntl_exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
 }
 
 # The DB facade, by every name a project can legitimately call it.
-#
-# Matching the resolved FQN rather than the written text is what makes the
-# `select` entry below safe to add at all. `use App\Reporting\DB;` is a
-# perfectly ordinary import of somebody's own class, and a scanner keying on
-# the two letters "DB" would report every call to it.
-#
-# Two names, because both reach Laravel's facade. The FQN is the imported
-# form. The bare `DB` is what `\DB::raw(...)` resolves to, and what a file
-# with no namespace resolves to - Laravel registers a global class alias, so
-# that form is not a mistake, it is the older of the two idioms and it is
-# still in every upgrade-in-progress codebase.
 DB_FACADE_FQNS = frozenset(
     {
         "Illuminate\\Database\\DatabaseManager",
@@ -278,21 +271,18 @@ DB_FACADE_FQNS = frozenset(
     }
 )
 
-# (receiver class, method) -> sink, for calls whose danger depends on what
-# they were called on. Keyed separately from SINKS rather than merged into it,
-# because the collision is the entire difficulty here:
-#
-#   DB::select("select * from users where id = $id")   injection
-#   $query->select(['id', 'name'])                     a column list
-#
-# One name, two meanings, and only the receiver tells them apart. A name-keyed
-# table cannot express that, and adding "select" to it would fire on the
-# single most common line in any query builder in any Laravel codebase.
-#
-# Every entry is argument 0. `DB::select($sql, $bindings)` and friends take
-# their bindings in argument 1, exactly like the *Raw builders, so a
-# parameterised call is safe and a call whose *query* is built from user data
-# is not, whether or not bindings are also passed.
+# The Process facade, for command execution.
+# The facade resolves to Illuminate\Process\Factory (via BUILTIN_FACADES in facades.py).
+# PendingProcess is what Factory::run() returns, and also the class used directly.
+PROCESS_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\Process",
+        "Illuminate\\Process\\Factory",
+        "Illuminate\\Process\\PendingProcess",
+        "Process",
+    }
+)
+
 STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = {
     (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
     for facade in DB_FACADE_FQNS
@@ -305,25 +295,12 @@ STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = {
         "update",
         "delete",
     )
+} | {
+    (facade, method): (0, TaintKind.SHELL, COMMAND_INJECTION_RULE)
+    for facade in PROCESS_FACADE_FQNS
+    for method in ("run", "start", "fromShellCommandline")
 }
 
-# Sink method -> the name Laravel declares its dangerous parameter under, for
-# call sites that pass it as a named argument.
-#
-# PHP lets the caller write `whereRaw(bindings: [], sql: $x)`, and once a name is
-# written the position stops meaning anything. An index alone is then wrong in
-# both directions: it reads the empty bindings array and loses that injection,
-# and on the mirror image `whereRaw(bindings: [$x], sql: 'a = ?')` it reads the
-# binding and reports the safe parameterised call. Argument precision is what
-# separates these rules from a nuisance, so the name is part of the sink's
-# definition rather than something the walk infers.
-#
-# The names are the framework's, which is why they belong in this module and not
-# in the walk: the *Raw builders declare `$sql`, except selectRaw and fromRaw
-# which declare `$expression`; `DB::raw` declares `$value`; and the
-# connection-level methods declare `$query`. A call site that names nothing costs
-# nothing - the walk falls back to the index, which is what PHP itself does for a
-# positional argument.
 SINK_ARG_NAMES: dict[str, str] = {
     "orderByRaw": "sql",
     "whereRaw": "sql",
@@ -339,6 +316,16 @@ SINK_ARG_NAMES: dict[str, str] = {
     "insert": "query",
     "update": "query",
     "delete": "query",
+    "exec": "command",
+    "shell_exec": "command",
+    "system": "command",
+    "passthru": "command",
+    "popen": "command",
+    "proc_open": "command",
+    "pcntl_exec": "path",
+    "run": "command",
+    "start": "command",
+    "fromShellCommandline": "command",
 }
 
 
@@ -347,19 +334,14 @@ def sink_arg_name(method: str) -> str | None:
     return SINK_ARG_NAMES.get(method)
 
 
-# Function name -> the kinds calling it genuinely clears, per the sanitizer
-# table in docs/06-taint-analysis.
-
-#
-# strip_tags, addslashes and mysql_real_escape_string are deliberately absent.
-# The spec classes them as anti-sanitizers and findings in their own right;
-# listing them here would turn a vulnerability into a clean result.
 SANITIZERS: dict[str, frozenset[TaintKind]] = {
     "e": frozenset({TaintKind.HTML}),
     "htmlspecialchars": frozenset({TaintKind.HTML}),
     "htmlentities": frozenset({TaintKind.HTML}),
     "intval": frozenset({TaintKind.SQL, TaintKind.HTML}),
     "floatval": frozenset({TaintKind.SQL, TaintKind.HTML}),
+    "escapeshellarg": frozenset({TaintKind.SHELL}),
+    "escapeshellcmd": frozenset({TaintKind.SHELL}),
 }
 
 

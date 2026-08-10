@@ -80,7 +80,15 @@ _SOURCES = (
 # that. trim() in particular is the one developers believe sanitizes.
 _OPAQUE_CALLS = ("strtoupper", "trim", "sprintf")
 
-_SANITIZERS = ("e", "htmlspecialchars", "htmlentities", "intval", "floatval")
+_SANITIZERS = (
+    "e",
+    "htmlspecialchars",
+    "htmlentities",
+    "intval",
+    "floatval",
+    "escapeshellarg",
+    "escapeshellcmd",
+)
 
 
 def _expressions() -> st.SearchStrategy[str]:
@@ -361,3 +369,6 @@ def test_the_sanitizer_table_says_what_the_kind_based_design_depends_on() -> Non
     assert sanitizer_clears("intval") == frozenset({TaintKind.SQL, TaintKind.HTML})
     assert TaintKind.MASS_ASSIGN not in sanitizer_clears("intval")
     assert sanitizer_clears("trim") == frozenset()
+    assert sanitizer_clears("escapeshellarg") == frozenset({TaintKind.SHELL})
+    assert TaintKind.HTML not in sanitizer_clears("escapeshellarg")
+    assert sanitizer_clears("escapeshellcmd") == frozenset({TaintKind.SHELL})

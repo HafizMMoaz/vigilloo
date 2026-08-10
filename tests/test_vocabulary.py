@@ -69,7 +69,9 @@ def test_all_kinds_is_what_the_engine_can_reason_about() -> None:
     Declaring `code` or `shell` with nothing able to consume or clear them
     would mark sources with coverage the engine does not have.
     """
-    assert ALL_KINDS == frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.MASS_ASSIGN})
+    assert ALL_KINDS == frozenset(
+        {TaintKind.SQL, TaintKind.HTML, TaintKind.MASS_ASSIGN, TaintKind.SHELL}
+    )
 
 
 def test_every_key_of_a_request_superglobal_is_attacker_controlled() -> None:
