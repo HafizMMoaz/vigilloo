@@ -133,3 +133,27 @@ def test_groups_and_resources() -> None:
     # resource: posts update
     r = next(r for r in routes if r.uri == "/posts/{post}" and "PUT" in r.verbs)
     assert r.action_fqn == "App\\Http\\Controllers\\PostController::update"
+
+def test_dynamic_routes_are_recorded_with_low_confidence() -> None:
+    parsed = parse_source(Path("routes/api.php"), b"""<?php
+Route::get($var, [C::class, 'show']);
+Route::resource($dynamic, C::class);
+foreach ($items as $item) {
+    Route::post('/api/' . $item, [C::class, 'store']);
+}
+""")
+    symbols = extract_symbols(parsed)
+    routes = extract_routes(parsed, symbols)
+
+    assert len(routes) == 9
+
+    
+    # $var and $dynamic become {dynamic}
+    dyn_get = next(r for r in routes if "GET" in r.verbs and r.action_fqn == "C::show")
+    assert dyn_get.uri == "/{dynamic}"
+    assert dyn_get.confidence == 0.5
+    
+    # foreach loop
+    dyn_post = next(r for r in routes if "POST" in r.verbs and r.action_fqn == "C::store")
+    assert dyn_post.uri == "/{dynamic}"
+    assert dyn_post.confidence == 0.5
