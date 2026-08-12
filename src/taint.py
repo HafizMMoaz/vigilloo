@@ -1146,7 +1146,6 @@ def _walk_method_ast(
     symbol = project.method(fqn)
     # What `self::` means: the class or trait whose file this body is in.
     lexical_class = symbol.fqn.rpartition("::")[0] if symbol is not None else requested_class
-    local = dict(tainted)
     paths: list[list[PathStep]] = []
     request_vars = _request_like_params(project, fqn)
 
@@ -1184,7 +1183,7 @@ def _walk_method_ast(
         visited.add(val)
 
         if isinstance(val, PhiNode):
-            res = frozenset()
+            res: frozenset[TaintKind] = frozenset()
             for src in val.sources:
                 res = res.union(resolve_ssa_taint(src, visited))
             return res

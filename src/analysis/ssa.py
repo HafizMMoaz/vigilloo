@@ -167,5 +167,8 @@ class SSABuilder:
 
     def _var_name(self, node: Node) -> str:
         # Extracts name without $
-        text = node.text.decode("utf-8") if isinstance(node.text, bytes) else node.text
-        return text.lstrip("$")
+        text = node.text
+        if text is None:
+            return ""
+        text_str = text.decode("utf-8") if isinstance(text, bytes) else text
+        return text_str.lstrip("$")
