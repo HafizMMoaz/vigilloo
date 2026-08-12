@@ -167,8 +167,14 @@ def _union_of_children(
     for child in node.children:
         kinds |= expr_kinds(child, source, local, request_vars, resolve, validated_fields)
     return kinds
+
+
 class LocalState:
-    def __init__(self, linear_state: dict[str, frozenset[TaintKind]], get_node_taint: Callable[[str, Node], frozenset[TaintKind]] | None = None):
+    def __init__(
+        self,
+        linear_state: dict[str, frozenset[TaintKind]],
+        get_node_taint: Callable[[str, Node], frozenset[TaintKind]] | None = None,
+    ):
         self.linear_state = linear_state
         self.get_node_taint = get_node_taint
 
@@ -180,8 +186,10 @@ class LocalState:
             return self.get_node_taint(name, node)
         return self.linear_state.get(name, frozenset())
 
+
 def _get_local(local: LocalState, name: str, node: Node) -> frozenset[TaintKind]:
     return local.get_node(name, node)
+
 
 def expr_kinds(
     node: Node,
@@ -1158,20 +1166,22 @@ def _walk_method_ast(
                 local_types[param_name] = param_type
 
     initial_tainted = dict(tainted)
-    
+
     cfg = CFGBuilder().build(method_node)
     ssa = SSABuilder(cfg, source)
     ssa.build()
-    
+
     ssa_taints: dict[SSAValue, frozenset[TaintKind]] = {}
-    
-    def resolve_ssa_taint(val: SSAValue, visited: set[SSAValue] | None = None) -> frozenset[TaintKind]:
+
+    def resolve_ssa_taint(
+        val: SSAValue, visited: set[SSAValue] | None = None
+    ) -> frozenset[TaintKind]:
         if visited is None:
             visited = set()
         if val in visited:
             return frozenset()
         visited.add(val)
-        
+
         if isinstance(val, PhiNode):
             res = frozenset()
             for src in val.sources:
@@ -1219,13 +1229,15 @@ def _walk_method_ast(
                 local_types.pop(target, None)
 
             kinds = expr_kinds(right, source, local, request_vars, resolve, validated_fields)
-            
+
             # Find the written SSAValue to update its taint
             val = None
             if left.id in ssa.writes:
                 val = ssa.writes[left.id]
             elif left.type == "subscript_expression":
-                base = left.child_by_field_name("array") or (left.children[0] if left.children else None)
+                base = left.child_by_field_name("array") or (
+                    left.children[0] if left.children else None
+                )
                 if base and base.id in ssa.writes:
                     val = ssa.writes[base.id]
 

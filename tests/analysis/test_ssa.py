@@ -3,6 +3,7 @@ from tree_sitter import Language, Parser, Node
 from vigilloo.analysis.cfg import CFGBuilder
 from vigilloo.analysis.ssa import SSABuilder, PhiNode, VariableVersion
 
+
 def parse_snippet(code: str) -> tuple[Node, bytes]:
     LANGUAGE = Language(tree_sitter_php.language_php())
     parser = Parser(LANGUAGE)
@@ -10,19 +11,20 @@ def parse_snippet(code: str) -> tuple[Node, bytes]:
     tree = parser.parse(source)
     return tree.root_node, source
 
+
 def test_linear_reassignment():
     code = """
     $x = 1;
     $x = 2;
     """
     root, source = parse_snippet(code)
-    
+
     cfg_builder = CFGBuilder()
     cfg = cfg_builder.build(root)
-    
+
     ssa_builder = SSABuilder(cfg, source)
     ssa_builder.build()
-    
+
     # Check that $x is assigned twice with different versions
     writes = list(ssa_builder.writes.values())
     assert len(writes) == 2
@@ -30,6 +32,7 @@ def test_linear_reassignment():
     assert writes[0].version == 1
     assert writes[1].name == "x"
     assert writes[1].version == 2
+
 
 def test_branch_join_phi():
     code = """
@@ -42,20 +45,20 @@ def test_branch_join_phi():
     $y = $x;
     """
     root, source = parse_snippet(code)
-    
+
     cfg_builder = CFGBuilder()
     cfg = cfg_builder.build(root)
-    
+
     ssa_builder = SSABuilder(cfg, source)
     ssa_builder.build()
-    
+
     # Check that reading $x at the end returns a Phi node
     # Find the read of $x in `$y = $x;`
     reads = list(ssa_builder.reads.values())
     assert len(reads) >= 1
     # One of the reads is $cond, another is $x
     x_read = [r for r in reads if r.name == "x"][-1]
-    
+
     assert isinstance(x_read, PhiNode)
     assert x_read.name == "x"
     assert len(x_read.sources) == 2
