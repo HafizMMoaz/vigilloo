@@ -2,6 +2,7 @@ from vigilloo.analysis.cfg import build_cfg, EdgeType
 from tree_sitter import Parser, Language
 import tree_sitter_php
 
+
 # Note: this might need adjustment depending on how parser is initialized in the project
 def parse_snippet(code: str):
     LANGUAGE = Language(tree_sitter_php.language_php())
@@ -11,6 +12,7 @@ def parse_snippet(code: str):
     # returns the compound_statement of a method body roughly
     # for simplicity, we assume the code is just statements
     return tree.root_node
+
 
 def test_cfg_straight_line():
     code = """
@@ -23,6 +25,7 @@ def test_cfg_straight_line():
     assert len(cfg.blocks) == 2
     assert len(cfg.entry.successors) == 1
     assert cfg.entry.successors[0].target == cfg.exit
+
 
 def test_cfg_if_statement():
     code = """
@@ -37,6 +40,7 @@ def test_cfg_if_statement():
     # entry -> cond -> true/false -> merge -> exit
     assert len(cfg.blocks) == 5
     assert len(cfg.entry.successors) == 2
+
 
 def test_cfg_loops():
     code = """
@@ -53,6 +57,7 @@ def test_cfg_loops():
     cfg = build_cfg(root)
     assert len(cfg.blocks) == 7
 
+
 def test_cfg_switch():
     code = """
     switch ($a) {
@@ -68,6 +73,7 @@ def test_cfg_switch():
     root = parse_snippet(code)
     cfg = build_cfg(root)
     assert len(cfg.blocks) == 6
+
 
 def test_cfg_try():
     code = """

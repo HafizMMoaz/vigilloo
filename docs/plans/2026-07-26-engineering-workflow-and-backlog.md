@@ -1243,7 +1243,7 @@ with no sink and no sanitizer claims reasoning the engine cannot do. 9 tasks.
 docs/05-data-flow-analysis. Removes the largest single precision limitation,
 annotated at src/taint.py:3. 5 tasks.
 
-### TASK-061
+### [COMPLETED] TASK-061
 - **Goal:** A control flow graph per function.
 - **Description:** Build the CFG per docs/05-data-flow-analysis section Control flow
   graph. Today the walk is statement-order with no CFG and no branch

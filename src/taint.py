@@ -1047,7 +1047,7 @@ def _anti_sanitizer_steps(
 
 def _is_html_response(node: Node, source: bytes) -> bool:
     """True if this AST node represents an HTTP response that is rendered as HTML.
-    
+
     This includes:
     - response($tainted)
     - response($tainted)->header('Content-Type', 'text/html')
@@ -1060,20 +1060,20 @@ def _is_html_response(node: Node, source: bytes) -> bool:
         if fname_node and node_text(fname_node, source) == "response":
             args = node.child_by_field_name("arguments")
             if args and [a for a in args.children if a.type not in ("(", ")", ",")]:
-                return True # response($content) defaults to HTML
-    
+                return True  # response($content) defaults to HTML
+
     if node.type in _MEMBER_CALLS:
         method_node = node.child_by_field_name("name")
         if method_node:
             method_name = node_text(method_node, source)
             obj = node.child_by_field_name("object")
-            
+
             if method_name == "json":
                 return False
-                
+
             if obj and not _is_html_response(obj, source):
                 return False
-                
+
             if method_name == "header":
                 args_node = node.child_by_field_name("arguments")
                 if args_node:
@@ -1084,8 +1084,9 @@ def _is_html_response(node: Node, source: bytes) -> bool:
                         if header_name == "content-type" and "json" in header_val:
                             return False
             return True
-            
+
     return False
+
 
 def _walk_method_ast(
     project: Project,
@@ -1636,7 +1637,9 @@ def _walk_method_ast(
             if ret_exprs:
                 ret_expr = ret_exprs[0]
                 if _is_html_response(ret_expr, source):
-                    if TaintKind.HTML in expr_kinds(ret_expr, source, local, request_vars, resolve, validated_fields):
+                    if TaintKind.HTML in expr_kinds(
+                        ret_expr, source, local, request_vars, resolve, validated_fields
+                    ):
                         paths.append(
                             prefix
                             + [
