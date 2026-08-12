@@ -4,7 +4,7 @@ from vigilloo.laravel.vocabulary import (
     is_source,
     is_superglobal,
     sanitizer_clears,
-    sink,
+    sinks,
     source_kinds,
     superglobal_kinds,
 )
@@ -36,10 +36,13 @@ def test_developer_chosen_keys_are_tainted_but_not_mass_assignable() -> None:
 
 def test_raw_sinks_declare_the_dangerous_argument_kind_and_rule() -> None:
     """whereRaw('age > ?', [$age]) is safe; only argument 0 is a sink."""
-    assert sink("orderByRaw") == (0, TaintKind.SQL, SQL_INJECTION_RULE)
-    assert sink("whereRaw") == (0, TaintKind.SQL, SQL_INJECTION_RULE)
-    assert sink("orderBy") is None
-    assert sink("where") is None
+    assert sinks("orderByRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
+    assert sinks("whereRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
+    assert sinks("orWhereRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
+    assert sinks("havingRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
+    assert sinks("selectRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
+    assert sinks("orderBy") == []
+    assert sinks("where") == []
 
 
 def test_escaping_helpers_clear_html_but_not_sql() -> None:
@@ -48,8 +51,8 @@ def test_escaping_helpers_clear_html_but_not_sql() -> None:
     assert TaintKind.SQL not in sanitizer_clears("htmlspecialchars")
 
 
-def test_numeric_coercion_clears_both_kinds() -> None:
-    assert sanitizer_clears("intval") == frozenset({TaintKind.SQL, TaintKind.HTML})
+def test_numeric_coercion_clears_multiple_kinds() -> None:
+    assert sanitizer_clears("intval") == frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.PATH})
 
 
 def test_anti_sanitizers_clear_nothing() -> None:
@@ -64,12 +67,27 @@ def test_anti_sanitizers_clear_nothing() -> None:
 
 
 def test_all_kinds_is_what_the_engine_can_reason_about() -> None:
-    """Only kinds with both sinks and sanitizers wired are declared.
+    """Only kinds with sinks wired are declared.
 
-    Declaring `code` or `shell` with nothing able to consume or clear them
-    would mark sources with coverage the engine does not have.
+    Declaring `js` or `path` with nothing able to consume them would mark
+    sources with coverage the engine does not have.
+
+    NOTE: TaintKind.CODE is sink-only (no sanitizers). This is intentional:
+    there is no function call that makes untrusted data safe to pass to eval()
+    or unserialize(). The spec states 'nothing clears this kind', so adding a
+    sanitizer for CODE would be rejected in review.
     """
-    assert ALL_KINDS == frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.MASS_ASSIGN})
+    assert ALL_KINDS == frozenset(
+        {
+            TaintKind.SQL,
+            TaintKind.HTML,
+            TaintKind.MASS_ASSIGN,
+            TaintKind.SHELL,
+            TaintKind.CODE,
+            TaintKind.PATH,
+            TaintKind.URL,
+        }
+    )
 
 
 def test_every_key_of_a_request_superglobal_is_attacker_controlled() -> None:

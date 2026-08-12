@@ -4,6 +4,8 @@ The canonical reference is docs/06-taint-analysis.
 This module carries the subset needed for the sql and html taint kinds.
 """
 
+from collections.abc import Mapping
+
 from ..models import ALL_KINDS, TaintKind
 
 # Values whose keys the developer chose rather than the attacker. Still fully
@@ -210,10 +212,10 @@ _TAINTED_SERVER_PREFIX = "HTTP_"
 # comments.
 SQL_INJECTION_RULE = "php.sql-injection"
 XSS_RULE = "php.xss"
-# laravel. rather than php.: the rule is meaningless outside Eloquent. Spelled
-# as docs/08-framework-adapters and docs/13-security-engine spell it, rather
-# than invented to match the php. prefixes above, because invariant 7 makes it
-# permanent the moment it ships.
+COMMAND_INJECTION_RULE = "php.command-injection"
+CODE_EXECUTION_RULE = "php.code-execution"
+PATH_TRAVERSAL_RULE = "php.path-traversal"
+SSRF_RULE = "php.ssrf"
 MASS_ASSIGNMENT_RULE = "laravel.mass-assignment"
 MISSING_AUTHORIZATION_RULE = "laravel.missing-authorization"
 
@@ -248,7 +250,7 @@ def eloquent_write(method: str) -> tuple[int, bool] | None:
 # The *Raw builders accept bindings in argument 1, which are safe, so only
 # argument 0 is dangerous.
 #
-SINKS: dict[str, tuple[int, TaintKind, str]] = {
+SINKS: dict[str, tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]]] = {
     "orderByRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "whereRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "orWhereRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
@@ -256,20 +258,46 @@ SINKS: dict[str, tuple[int, TaintKind, str]] = {
     "groupByRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "selectRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "fromRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
+    "exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "shell_exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "system": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "passthru": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "popen": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "proc_open": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    "pcntl_exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    # Code execution sinks (CWE-94 / CWE-502).
+    # eval() is a language construct - handled by a dedicated node-type check in
+    # taint.py, but listed here so the sink table drives the rule name.
+    # Nothing clears TaintKind.CODE - see models.py docstring.
+    "eval": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "assert": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "create_function": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "unserialize": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "call_user_func": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "call_user_func_array": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "array_map": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "array_filter": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "array_walk": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "usort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "uasort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "uksort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    # Path traversal and SSRF sinks.
+    "file_get_contents": [
+        (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+        (0, TaintKind.URL, SSRF_RULE),
+    ],
+    "file_put_contents": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "fopen": [
+        (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+        (0, TaintKind.URL, SSRF_RULE),
+    ],
+    "unlink": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "copy": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "rename": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "fsockopen": (0, TaintKind.URL, SSRF_RULE),
 }
 
 # The DB facade, by every name a project can legitimately call it.
-#
-# Matching the resolved FQN rather than the written text is what makes the
-# `select` entry below safe to add at all. `use App\Reporting\DB;` is a
-# perfectly ordinary import of somebody's own class, and a scanner keying on
-# the two letters "DB" would report every call to it.
-#
-# Two names, because both reach Laravel's facade. The FQN is the imported
-# form. The bare `DB` is what `\DB::raw(...)` resolves to, and what a file
-# with no namespace resolves to - Laravel registers a global class alias, so
-# that form is not a mistake, it is the older of the two idioms and it is
-# still in every upgrade-in-progress codebase.
 DB_FACADE_FQNS = frozenset(
     {
         "Illuminate\\Database\\DatabaseManager",
@@ -278,52 +306,91 @@ DB_FACADE_FQNS = frozenset(
     }
 )
 
-# (receiver class, method) -> sink, for calls whose danger depends on what
-# they were called on. Keyed separately from SINKS rather than merged into it,
-# because the collision is the entire difficulty here:
-#
-#   DB::select("select * from users where id = $id")   injection
-#   $query->select(['id', 'name'])                     a column list
-#
-# One name, two meanings, and only the receiver tells them apart. A name-keyed
-# table cannot express that, and adding "select" to it would fire on the
-# single most common line in any query builder in any Laravel codebase.
-#
-# Every entry is argument 0. `DB::select($sql, $bindings)` and friends take
-# their bindings in argument 1, exactly like the *Raw builders, so a
-# parameterised call is safe and a call whose *query* is built from user data
-# is not, whether or not bindings are also passed.
-STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = {
-    (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
-    for facade in DB_FACADE_FQNS
-    for method in (
-        "raw",
-        "statement",
-        "unprepared",
-        "select",
-        "insert",
-        "update",
-        "delete",
-    )
-}
+# The Process facade, for command execution.
+# The facade resolves to Illuminate\Process\Factory (via BUILTIN_FACADES in facades.py).
+# PendingProcess is what Factory::run() returns, and also the class used directly.
+PROCESS_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\Process",
+        "Illuminate\\Process\\Factory",
+        "Illuminate\\Process\\PendingProcess",
+        "Process",
+    }
+)
 
-# Sink method -> the name Laravel declares its dangerous parameter under, for
-# call sites that pass it as a named argument.
-#
-# PHP lets the caller write `whereRaw(bindings: [], sql: $x)`, and once a name is
-# written the position stops meaning anything. An index alone is then wrong in
-# both directions: it reads the empty bindings array and loses that injection,
-# and on the mirror image `whereRaw(bindings: [$x], sql: 'a = ?')` it reads the
-# binding and reports the safe parameterised call. Argument precision is what
-# separates these rules from a nuisance, so the name is part of the sink's
-# definition rather than something the walk infers.
-#
-# The names are the framework's, which is why they belong in this module and not
-# in the walk: the *Raw builders declare `$sql`, except selectRaw and fromRaw
-# which declare `$expression`; `DB::raw` declares `$value`; and the
-# connection-level methods declare `$query`. A call site that names nothing costs
-# nothing - the walk falls back to the index, which is what PHP itself does for a
-# positional argument.
+# The Storage facade, for filesystem access.
+STORAGE_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\Storage",
+        "Illuminate\\Filesystem\\FilesystemManager",
+        "Storage",
+    }
+)
+
+# HTTP clients for SSRF.
+HTTP_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\Http",
+        "Illuminate\\Http\\Client\\Factory",
+        "Http",
+    }
+)
+
+GUZZLE_CLIENT_FQNS = frozenset(
+    {
+        "GuzzleHttp\\Client",
+        "GuzzleHttp\\ClientInterface",
+    }
+)
+
+STATIC_SINKS: Mapping[
+    tuple[str, str],
+    tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]],
+] = (
+    {
+        (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
+        for facade in DB_FACADE_FQNS
+        for method in (
+            "raw",
+            "statement",
+            "unprepared",
+            "select",
+            "insert",
+            "update",
+            "delete",
+        )
+    }
+    | {
+        (facade, method): (0, TaintKind.SHELL, COMMAND_INJECTION_RULE)
+        for facade in PROCESS_FACADE_FQNS
+        for method in ("run", "start", "fromShellCommandline")
+    }
+    | {
+        (facade, method): (0, TaintKind.PATH, PATH_TRAVERSAL_RULE)
+        for facade in STORAGE_FACADE_FQNS
+        for method in ("get", "put", "delete", "disk")
+    }
+    | {
+        (facade, method): (0, TaintKind.URL, SSRF_RULE)
+        for facade in HTTP_FACADE_FQNS
+        for method in ("get", "post", "put", "patch", "delete", "head", "send")
+    }
+    | {
+        (facade, method): (0, TaintKind.URL, SSRF_RULE)
+        for facade in GUZZLE_CLIENT_FQNS
+        for method in (
+            "get",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "request",
+            "requestAsync",
+            "getAsync",
+        )
+    }
+)
+
 SINK_ARG_NAMES: dict[str, str] = {
     "orderByRaw": "sql",
     "whereRaw": "sql",
@@ -339,6 +406,47 @@ SINK_ARG_NAMES: dict[str, str] = {
     "insert": "query",
     "update": "query",
     "delete": "query",
+    "exec": "command",
+    "shell_exec": "command",
+    "system": "command",
+    "passthru": "command",
+    "popen": "command",
+    "proc_open": "command",
+    "pcntl_exec": "path",
+    "run": "command",
+    "start": "command",
+    "fromShellCommandline": "command",
+    # Code execution sink parameter names.
+    "assert": "assertion",
+    "create_function": "body",
+    "unserialize": "data",
+    "call_user_func": "callback",
+    "call_user_func_array": "callback",
+    "array_map": "callback",
+    "array_filter": "callback",
+    "array_walk": "callback",
+    "usort": "callback",
+    "uasort": "callback",
+    "uksort": "callback",
+    # Path traversal sink parameter names.
+    "file_get_contents": "filename",
+    "file_put_contents": "filename",
+    "fopen": "filename",
+    "unlink": "filename",
+    "copy": "from",
+    "rename": "from",
+    "get": "path",
+    "put": "path",
+    "disk": "name",
+    # SSRF sink parameter names.
+    "fsockopen": "hostname",
+    "post": "url",
+    "patch": "url",
+    "head": "url",
+    "send": "method",
+    "request": "method",
+    "requestAsync": "method",
+    "getAsync": "uri",
 }
 
 
@@ -347,19 +455,17 @@ def sink_arg_name(method: str) -> str | None:
     return SINK_ARG_NAMES.get(method)
 
 
-# Function name -> the kinds calling it genuinely clears, per the sanitizer
-# table in docs/06-taint-analysis.
-
-#
-# strip_tags, addslashes and mysql_real_escape_string are deliberately absent.
-# The spec classes them as anti-sanitizers and findings in their own right;
-# listing them here would turn a vulnerability into a clean result.
 SANITIZERS: dict[str, frozenset[TaintKind]] = {
     "e": frozenset({TaintKind.HTML}),
     "htmlspecialchars": frozenset({TaintKind.HTML}),
     "htmlentities": frozenset({TaintKind.HTML}),
-    "intval": frozenset({TaintKind.SQL, TaintKind.HTML}),
-    "floatval": frozenset({TaintKind.SQL, TaintKind.HTML}),
+    "intval": frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.PATH}),
+    "floatval": frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.PATH}),
+    "escapeshellarg": frozenset({TaintKind.SHELL}),
+    "escapeshellcmd": frozenset({TaintKind.SHELL}),
+    "basename": frozenset({TaintKind.PATH}),
+    "urlencode": frozenset({TaintKind.URL}),
+    "rawurlencode": frozenset({TaintKind.URL}),
 }
 
 
@@ -406,12 +512,18 @@ def superglobal_kinds(variable: str, key: str | None) -> frozenset[TaintKind]:
     return frozenset()
 
 
-def sink(method: str) -> tuple[int, TaintKind, str] | None:
-    return SINKS.get(method)
+def sinks(method: str) -> list[tuple[int, TaintKind, str]]:
+    """The sinks a global function call reaches, if any."""
+    val = SINKS.get(method)
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    return [val]
 
 
-def static_sink(receiver_fqn: str | None, method: str) -> tuple[int, TaintKind, str] | None:
-    """The sink a `Receiver::method(...)` call reaches, if any.
+def static_sinks(receiver_fqn: str | None, method: str) -> list[tuple[int, TaintKind, str]]:
+    """The sinks a `Receiver::method(...)` or `$receiver->method(...)` call reaches, if any.
 
     `receiver_fqn` is the resolved class, not the text at the call site, and None when the
     scope could not be resolved. None is not a near miss to be guessed at: an unresolved
@@ -420,8 +532,13 @@ def static_sink(receiver_fqn: str | None, method: str) -> tuple[int, TaintKind, 
     who then has grounds to distrust the whole report.
     """
     if receiver_fqn is None:
-        return None
-    return STATIC_SINKS.get((receiver_fqn, method))
+        return []
+    val = STATIC_SINKS.get((receiver_fqn, method))
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    return [val]
 
 
 def sanitizer_clears(name: str) -> frozenset[TaintKind]:

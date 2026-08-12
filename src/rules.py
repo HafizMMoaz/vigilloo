@@ -8,9 +8,13 @@ from dataclasses import dataclass
 
 from .graph import Project
 from .laravel.vocabulary import (
+    CODE_EXECUTION_RULE,
+    COMMAND_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
     MISSING_AUTHORIZATION_RULE,
+    PATH_TRAVERSAL_RULE,
     SQL_INJECTION_RULE,
+    SSRF_RULE,
     XSS_RULE,
 )
 from .models import Finding, WalkStats
@@ -52,6 +56,58 @@ XSS = Rule(
 )
 
 
+COMMAND_INJECTION = Rule(
+    id=COMMAND_INJECTION_RULE,
+    title="Command Injection",
+    severity="critical",
+    cwe=("CWE-78",),
+    remediation=(
+        "Avoid building shell commands with raw string interpolation of untrusted input. "
+        "Use array arguments with Process::run(['command', $arg]) or "
+        "sanitize input with escapeshellarg()."
+    ),
+)
+
+
+CODE_EXECUTION = Rule(
+    id=CODE_EXECUTION_RULE,
+    title="Code Execution",
+    severity="critical",
+    cwe=("CWE-94", "CWE-502"),
+    remediation=(
+        "Never pass untrusted input to eval(), unserialize(), create_function(), "
+        "dynamic include/require, or callable callbacks. "
+        "There is no sanitizer that makes this safe: redesign the call site to "
+        "avoid executing attacker-controlled code entirely."
+    ),
+)
+
+
+PATH_TRAVERSAL = Rule(
+    id=PATH_TRAVERSAL_RULE,
+    title="Path Traversal",
+    severity="critical",
+    cwe=("CWE-22", "CWE-434"),
+    remediation=(
+        "Validate the filename against a strict allowlist, or use basename() to "
+        "strip directory components before using it in a filesystem operation. "
+        "Ensure paths resolve to the intended directory."
+    ),
+)
+
+
+SSRF = Rule(
+    id=SSRF_RULE,
+    title="Server-Side Request Forgery",
+    severity="high",
+    cwe=("CWE-918",),
+    remediation=(
+        "Validate URLs against a strict allowlist of permitted hosts. "
+        "Do not allow arbitrary user input to form the scheme or host of an outbound HTTP request."
+    ),
+)
+
+
 MASS_ASSIGNMENT = Rule(
     id=MASS_ASSIGNMENT_RULE,
     title="Mass Assignment",
@@ -78,7 +134,17 @@ MISSING_AUTHORIZATION = Rule(
 )
 
 _BY_ID: dict[str, Rule] = {
-    rule.id: rule for rule in (SQL_INJECTION, XSS, MASS_ASSIGNMENT, MISSING_AUTHORIZATION)
+    rule.id: rule
+    for rule in (
+        SQL_INJECTION,
+        XSS,
+        COMMAND_INJECTION,
+        CODE_EXECUTION,
+        PATH_TRAVERSAL,
+        SSRF,
+        MASS_ASSIGNMENT,
+        MISSING_AUTHORIZATION,
+    )
 }
 
 

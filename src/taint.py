@@ -21,6 +21,8 @@ from .laravel.models import Protection, model_config
 from .laravel.routes import uri_params
 from .laravel.views import extract_view_bindings, template_path
 from .laravel.vocabulary import (
+    CODE_EXECUTION_RULE,
+    COMMAND_INJECTION_RULE,
     MAGIC_PROPERTY_KINDS,
     MASS_ASSIGNMENT_RULE,
     ROUTE_PARAM_KINDS,
@@ -32,10 +34,10 @@ from .laravel.vocabulary import (
     is_superglobal,
     route_param_is_source,
     sanitizer_clears,
-    sink,
     sink_arg_name,
+    sinks,
     source_kinds,
-    static_sink,
+    static_sinks,
     superglobal_kinds,
 )
 from .models import PathStep, Route, TaintKind, WalkStats
@@ -690,16 +692,29 @@ def _sink_steps(
     argument = _sink_argument(args, index, sink_arg_name(method), parsed.source)
     if argument is None:
         return []
+    # `Process::run(['cmd', $arg])` array form does not go through a shell and
+    # must not fire. The argument node is wrapped in an "argument" container, so
+    # unwrap it to check the inner expression type.
+    if kind == TaintKind.SHELL:
+        inner = argument
+        if inner.type == "argument":
+            inner = next(
+                (c for c in inner.children if c.type not in (",", "name", ":")),
+                inner,
+            )
+        if inner.type == "array_creation_expression":
+            return []
     if kind not in expr_kinds(
         argument, parsed.source, local, request_vars, resolve, validated_fields
     ):
         return []
+    note = "shell command execution" if kind == TaintKind.SHELL else "unparameterised SQL fragment"
     return _inline_source_steps(argument, parsed, request_vars, resolve) + [
         PathStep(
             role="sink",
             span=node_span(call, parsed.path),
             snippet=node_text(call, parsed.source).strip(),
-            note="unparameterised SQL fragment",
+            note=note,
             rule_id=rule_id,
         )
     ]
@@ -1058,6 +1073,99 @@ def _walk_method_ast(
                     )
                 ]
 
+        for shell_expr in find_all(stmt, "shell_command_expression"):
+            if TaintKind.SHELL in expr_kinds(
+                shell_expr, source, local, request_vars, resolve, validated_fields
+            ):
+                sink_step = PathStep(
+                    role="sink",
+                    span=node_span(shell_expr, parsed.path),
+                    snippet=node_text(shell_expr, source).strip(),
+                    note="shell execution operator (backticks)",
+                    rule_id=COMMAND_INJECTION_RULE,
+                )
+                paths.append(prefix + [sink_step])
+
+        # Dynamic include/require - language constructs (`include $x`,
+        # `require_once $x`) that execute a file whose path comes off the wire.
+        # Tree-sitter parses them as include_expression / require_expression, not
+        # as function_call_expression, so the 2c loop above does not reach them.
+        # Treated as code execution (CWE-98 LFI/RFI) because an attacker who
+        # controls the path can load arbitrary code.
+        for _node_type in (
+            "include_expression",
+            "include_once_expression",
+            "require_expression",
+            "require_once_expression",
+        ):
+            for inc_expr in find_all(stmt, _node_type):
+                # The operand is the first non-keyword child.
+                operand = next(
+                    (
+                        c
+                        for c in inc_expr.children
+                        if c.type not in ("include", "include_once", "require", "require_once")
+                    ),
+                    None,
+                )
+                if operand is None:
+                    continue
+                if TaintKind.CODE not in expr_kinds(
+                    operand, source, local, request_vars, resolve, validated_fields
+                ):
+                    continue
+                paths.append(
+                    prefix
+                    + [
+                        PathStep(
+                            role="sink",
+                            span=node_span(inc_expr, parsed.path),
+                            snippet=node_text(inc_expr, source).strip(),
+                            note="dynamic file inclusion (LFI/RFI)",
+                            rule_id=CODE_EXECUTION_RULE,
+                        )
+                    ]
+                )
+
+        # preg_replace with /e modifier - argument 0 is the pattern and argument
+        # 1 is the replacement that gets eval'd. Tainted pattern fires CWE-94.
+        # Removed in PHP 7 but still found in legacy codebases.
+        for call in find_all(stmt, "function_call_expression"):
+            invoked = call.child_by_field_name("function")
+            if invoked is None or invoked.type not in ("name", "qualified_name"):
+                continue
+            if node_text(invoked, source) != "preg_replace":
+                continue
+            args_node = call.child_by_field_name("arguments")
+            if args_node is None:
+                continue
+            args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+            if not args:
+                continue
+            # The pattern is arg 0 - check if a string literal contains /e.
+            pattern_arg = args[0]
+            pattern_text = node_text(pattern_arg, source).lower()
+            if "/e" not in pattern_text and "\\x65" not in pattern_text:
+                continue
+            # Pattern contains /e - check if a tainted value reaches any argument.
+            if any(
+                TaintKind.CODE
+                in expr_kinds(a, source, local, request_vars, resolve, validated_fields)
+                for a in args
+            ):
+                paths.append(
+                    prefix
+                    + [
+                        PathStep(
+                            role="sink",
+                            span=node_span(call, parsed.path),
+                            snippet=node_text(call, source).strip(),
+                            note="preg_replace with /e modifier evaluates replacement as PHP code",
+                            rule_id=CODE_EXECUTION_RULE,
+                        )
+                    ]
+                )
+
         # 2a. Static calls. `User::create($request->all())` names its class at
         #     the call site, so it needs no receiver inference - which is why
         #     it is the form the mass-assignment rule leans on. The same
@@ -1094,8 +1202,8 @@ def _walk_method_ast(
             # for readability today, since no name appears in both, but the scoped table is
             # the more specific statement and a more specific rule losing to a general one
             # is the kind of thing that is invisible until the general one is widened.
-            scoped_sink = static_sink(scoped_receiver_fqn, name) or sink(name)
-            if scoped_sink is not None:
+            found_sinks = static_sinks(scoped_receiver_fqn, name) + sinks(name)
+            for scoped_sink in found_sinks:
                 sink_steps = _sink_steps(
                     call,
                     args,
@@ -1110,6 +1218,7 @@ def _walk_method_ast(
 
                 if sink_steps:
                     paths.append(prefix + sink_steps)
+            if found_sinks:
                 continue
 
             paths.extend(
@@ -1156,8 +1265,9 @@ def _walk_method_ast(
                     paths.append(prefix + steps)
                 continue
 
-            sink_found = sink(name)
-            if sink_found is not None:
+            receiver_type = local_types.get(obj.lstrip("$"))
+            found_sinks = static_sinks(receiver_type, name) + sinks(name)
+            for sink_found in found_sinks:
                 sink_steps = _sink_steps(
                     call,
                     args,
@@ -1172,6 +1282,7 @@ def _walk_method_ast(
 
                 if sink_steps:
                     paths.append(prefix + sink_steps)
+            if found_sinks:
                 continue
 
             # Which arguments carry tainted data, and which kinds. Computed
@@ -1262,7 +1373,63 @@ def _walk_method_ast(
             if not found_callee and passed:
                 _giveup(stats)
 
-        # 2c. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
+        # 2c. Named function call sinks: `exec($cmd)`, `shell_exec($cmd)`, etc.
+        #     Checked before the dynamic-callee give-up below. The distinction
+        #     is between a *named* callee whose text appears in the SINKS table
+        #     (a security hazard) and an *unresolvable* callee whose identity
+        #     is not known (a coverage gap). The first is a finding; the second
+        #     is a give-up.
+        for call in find_all(stmt, "function_call_expression"):
+            invoked = call.child_by_field_name("function")
+            if invoked is None:
+                continue
+            if invoked.type not in ("name", "qualified_name"):
+                continue
+            fname = node_text(invoked, source)
+            args_node = call.child_by_field_name("arguments")
+            args = (
+                [a for a in args_node.children if a.type not in ("(", ")", ",")]
+                if args_node is not None
+                else []
+            )
+
+            # Special case for curl_setopt
+            if fname == "curl_setopt":
+                if len(args) >= 3 and node_text(args[1], source).strip() == "CURLOPT_URL":
+                    sink_steps = _sink_steps(
+                        call,
+                        args,
+                        (2, TaintKind.URL, "php.ssrf"),
+                        parsed,
+                        fname,
+                        local,
+                        request_vars,
+                        resolve,
+                        validated_fields,
+                    )
+                    if sink_steps:
+                        paths.append(prefix + sink_steps)
+                continue
+
+            found_sinks = sinks(fname)
+            if not found_sinks:
+                continue
+            for sink_found in found_sinks:
+                sink_steps = _sink_steps(
+                    call,
+                    args,
+                    sink_found,
+                    parsed,
+                    fname,
+                    local,
+                    request_vars,
+                    resolve,
+                    validated_fields,
+                )
+                if sink_steps:
+                    paths.append(prefix + sink_steps)
+
+        # 2d. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
         #     docs/03-parser is explicit about these - "Dynamic dispatch. Mark the
         #     edge unresolved" - and until now they were not marked at all. There is
         #     no loop over function_call_expression in this walk, so a tainted value
@@ -1432,9 +1599,9 @@ def find_taint_paths(
 
     # Walking nested statements can reach the same call twice, so collapse
     # paths that are step-for-step identical before returning.
-    unique: dict[tuple[tuple[str, str, int], ...], list[PathStep]] = {}
+    unique: dict[tuple[tuple[str, str, int, str | None], ...], list[PathStep]] = {}
     for path in paths:
-        key = tuple((s.role, str(s.span.file), s.span.start_line) for s in path)
+        key = tuple((s.role, str(s.span.file), s.span.start_line, s.rule_id) for s in path)
         unique.setdefault(key, path)
 
     return sorted(unique.values(), key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))

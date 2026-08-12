@@ -15,16 +15,28 @@ class TaintKind(StrEnum):
     """A category of danger a tainted value carries.
 
     docs/06-taint-analysis tables eleven kinds. Only those with both sinks and
-    sanitizers wired are declared here: marking a source `code`-tainted when no
+    sanitizers wired are declared here: marking a source `shell`-tainted when no
     sink can consume it and no sanitizer can clear it would claim reasoning the
     engine cannot do. Each remaining kind arrives with its sinks.
 
-    ponytail: three kinds. js, shell, path, url, code, ldap, xpath, header and
-    log land with their own sink tables - see docs/06-taint-analysis.
+    Exception: `code` has sinks but no sanitizers. Untrusted data must never reach
+    eval/unserialize at all; there is no sanitizer that makes it safe, so none is
+    registered and none will ever be accepted in review.
+
+    ponytail: js, path, url, ldap, xpath, header and log land with their own
+    sink tables - see docs/06-taint-analysis.
     """
 
     SQL = "sql"
     HTML = "html"
+    SHELL = "shell"
+    PATH = "path"
+    URL = "url"
+
+    # Reaches eval(), unserialize(), create_function(), dynamic include/require.
+    # Nothing clears this kind: there is no sanitizer that makes untrusted input
+    # safe to pass to these sinks. Invariant: no SANITIZERS entry for CODE.
+    CODE = "code"
 
     # Not an injection kind like the others: it marks a value whose *keys* the
     # attacker chose, which is what makes an Eloquent array write dangerous.
