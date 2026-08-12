@@ -219,6 +219,9 @@ SSRF_RULE = "php.ssrf"
 MASS_ASSIGNMENT_RULE = "laravel.mass-assignment"
 MISSING_AUTHORIZATION_RULE = "laravel.missing-authorization"
 OPEN_REDIRECT_RULE = "php.open-redirect"
+LDAP_INJECTION_RULE = "php.ldap-injection"
+XPATH_INJECTION_RULE = "php.xpath-injection"
+LOG_INJECTION_RULE = "php.log-injection"
 
 # Eloquent array writes -> (index of the mass-assigned argument, bypasses
 # protection).
@@ -298,6 +301,10 @@ SINKS: dict[str, tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]]] 
     "fsockopen": (0, TaintKind.URL, SSRF_RULE),
     "header": (0, TaintKind.HEADER, OPEN_REDIRECT_RULE),
     "redirect": (0, TaintKind.HEADER, OPEN_REDIRECT_RULE),
+    "ldap_search": (2, TaintKind.LDAP, LDAP_INJECTION_RULE),
+    "ldap_list": (2, TaintKind.LDAP, LDAP_INJECTION_RULE),
+    "ldap_read": (2, TaintKind.LDAP, LDAP_INJECTION_RULE),
+    "logger": (0, TaintKind.LOG, LOG_INJECTION_RULE),
 }
 
 # The DB facade, by every name a project can legitimately call it.
@@ -343,6 +350,14 @@ GUZZLE_CLIENT_FQNS = frozenset(
     {
         "GuzzleHttp\\Client",
         "GuzzleHttp\\ClientInterface",
+    }
+)
+
+LOG_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\Log",
+        "Illuminate\\Log\\LogManager",
+        "Log",
     }
 )
 
@@ -401,6 +416,24 @@ STATIC_SINKS: Mapping[
             TaintKind.HEADER,
             OPEN_REDIRECT_RULE,
         ),
+        ("DOMXPath", "query"): (0, TaintKind.XPATH, XPATH_INJECTION_RULE),
+        ("DOMXPath", "evaluate"): (0, TaintKind.XPATH, XPATH_INJECTION_RULE),
+    }
+    | {
+        (facade, method): (0, TaintKind.LOG, LOG_INJECTION_RULE)
+        for facade in LOG_FACADE_FQNS
+        for method in (
+            "emergency",
+            "alert",
+            "critical",
+            "error",
+            "warning",
+            "notice",
+            "info",
+            "debug",
+            "log",
+            "write",
+        )
     }
 )
 
@@ -460,6 +493,22 @@ SINK_ARG_NAMES: dict[str, str] = {
     "request": "method",
     "requestAsync": "method",
     "getAsync": "uri",
+    "ldap_search": "filter",
+    "ldap_list": "filter",
+    "ldap_read": "filter",
+    "query": "expression",
+    "evaluate": "expression",
+    "emergency": "message",
+    "alert": "message",
+    "critical": "message",
+    "error": "message",
+    "warning": "message",
+    "notice": "message",
+    "info": "message",
+    "debug": "message",
+    "log": "message",
+    "write": "message",
+    "logger": "message",
 }
 
 
