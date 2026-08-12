@@ -3,7 +3,7 @@ from pathlib import Path
 from vigilloo.graph import load_project
 from vigilloo.models import ALL_KINDS
 from vigilloo.parser import find_all
-from vigilloo.taint import expr_kinds
+from vigilloo.taint import LocalState, expr_kinds
 
 
 def test_expr(tmp_path: Path):
@@ -16,5 +16,6 @@ def test_expr(tmp_path: Path):
     parsed = list(project.files.values())[0]
 
     expr = find_all(parsed.tree.root_node, "member_access_expression")[0]
-    kinds = expr_kinds(expr, parsed.source, {"this": ALL_KINDS}, frozenset(), lambda x: None)
+    local = LocalState({"this": ALL_KINDS}, None)
+    kinds = expr_kinds(expr, parsed.source, local, frozenset(), lambda x: None)
     print("Kinds:", kinds)
