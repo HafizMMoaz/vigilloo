@@ -64,13 +64,24 @@ def test_anti_sanitizers_clear_nothing() -> None:
 
 
 def test_all_kinds_is_what_the_engine_can_reason_about() -> None:
-    """Only kinds with both sinks and sanitizers wired are declared.
+    """Only kinds with sinks wired are declared.
 
-    Declaring `code` or `shell` with nothing able to consume or clear them
-    would mark sources with coverage the engine does not have.
+    Declaring `js` or `path` with nothing able to consume them would mark
+    sources with coverage the engine does not have.
+
+    NOTE: TaintKind.CODE is sink-only (no sanitizers). This is intentional:
+    there is no function call that makes untrusted data safe to pass to eval()
+    or unserialize(). The spec states 'nothing clears this kind', so adding a
+    sanitizer for CODE would be rejected in review.
     """
     assert ALL_KINDS == frozenset(
-        {TaintKind.SQL, TaintKind.HTML, TaintKind.MASS_ASSIGN, TaintKind.SHELL}
+        {
+            TaintKind.SQL,
+            TaintKind.HTML,
+            TaintKind.MASS_ASSIGN,
+            TaintKind.SHELL,
+            TaintKind.CODE,
+        }
     )
 
 

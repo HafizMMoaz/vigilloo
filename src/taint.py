@@ -21,6 +21,7 @@ from .laravel.models import Protection, model_config
 from .laravel.routes import uri_params
 from .laravel.views import extract_view_bindings, template_path
 from .laravel.vocabulary import (
+    CODE_EXECUTION_RULE,
     COMMAND_INJECTION_RULE,
     MAGIC_PROPERTY_KINDS,
     MASS_ASSIGNMENT_RULE,
@@ -1084,6 +1085,86 @@ def _walk_method_ast(
                     rule_id=COMMAND_INJECTION_RULE,
                 )
                 paths.append(prefix + [sink_step])
+
+        # Dynamic include/require - language constructs (`include $x`,
+        # `require_once $x`) that execute a file whose path comes off the wire.
+        # Tree-sitter parses them as include_expression / require_expression, not
+        # as function_call_expression, so the 2c loop above does not reach them.
+        # Treated as code execution (CWE-98 LFI/RFI) because an attacker who
+        # controls the path can load arbitrary code.
+        for _node_type in (
+            "include_expression",
+            "include_once_expression",
+            "require_expression",
+            "require_once_expression",
+        ):
+            for inc_expr in find_all(stmt, _node_type):
+                # The operand is the first non-keyword child.
+                operand = next(
+                    (
+                        c
+                        for c in inc_expr.children
+                        if c.type not in ("include", "include_once", "require", "require_once")
+                    ),
+                    None,
+                )
+                if operand is None:
+                    continue
+                if TaintKind.CODE not in expr_kinds(
+                    operand, source, local, request_vars, resolve, validated_fields
+                ):
+                    continue
+                paths.append(
+                    prefix
+                    + [
+                        PathStep(
+                            role="sink",
+                            span=node_span(inc_expr, parsed.path),
+                            snippet=node_text(inc_expr, source).strip(),
+                            note="dynamic file inclusion (LFI/RFI)",
+                            rule_id=CODE_EXECUTION_RULE,
+                        )
+                    ]
+                )
+
+        # preg_replace with /e modifier - argument 0 is the pattern and argument
+        # 1 is the replacement that gets eval'd. Tainted pattern fires CWE-94.
+        # Removed in PHP 7 but still found in legacy codebases.
+        for call in find_all(stmt, "function_call_expression"):
+            invoked = call.child_by_field_name("function")
+            if invoked is None or invoked.type not in ("name", "qualified_name"):
+                continue
+            if node_text(invoked, source) != "preg_replace":
+                continue
+            args_node = call.child_by_field_name("arguments")
+            if args_node is None:
+                continue
+            args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+            if not args:
+                continue
+            # The pattern is arg 0 - check if a string literal contains /e.
+            pattern_arg = args[0]
+            pattern_text = node_text(pattern_arg, source).lower()
+            if "/e" not in pattern_text and "\\x65" not in pattern_text:
+                continue
+            # Pattern contains /e - check if a tainted value reaches any argument.
+            if any(
+                TaintKind.CODE
+                in expr_kinds(a, source, local, request_vars, resolve, validated_fields)
+                for a in args
+            ):
+                paths.append(
+                    prefix
+                    + [
+                        PathStep(
+                            role="sink",
+                            span=node_span(call, parsed.path),
+                            snippet=node_text(call, source).strip(),
+                            note="preg_replace with /e modifier evaluates replacement as PHP code",
+                            rule_id=CODE_EXECUTION_RULE,
+                        )
+                    ]
+                )
 
         # 2a. Static calls. `User::create($request->all())` names its class at
         #     the call site, so it needs no receiver inference - which is why

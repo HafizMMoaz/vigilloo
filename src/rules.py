@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from .graph import Project
 from .laravel.vocabulary import (
+    CODE_EXECUTION_RULE,
     COMMAND_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
     MISSING_AUTHORIZATION_RULE,
@@ -66,6 +67,20 @@ COMMAND_INJECTION = Rule(
 )
 
 
+CODE_EXECUTION = Rule(
+    id=CODE_EXECUTION_RULE,
+    title="Code Execution",
+    severity="critical",
+    cwe=("CWE-94", "CWE-502"),
+    remediation=(
+        "Never pass untrusted input to eval(), unserialize(), create_function(), "
+        "dynamic include/require, or callable callbacks. "
+        "There is no sanitizer that makes this safe: redesign the call site to "
+        "avoid executing attacker-controlled code entirely."
+    ),
+)
+
+
 MASS_ASSIGNMENT = Rule(
     id=MASS_ASSIGNMENT_RULE,
     title="Mass Assignment",
@@ -93,7 +108,14 @@ MISSING_AUTHORIZATION = Rule(
 
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
-    for rule in (SQL_INJECTION, XSS, COMMAND_INJECTION, MASS_ASSIGNMENT, MISSING_AUTHORIZATION)
+    for rule in (
+        SQL_INJECTION,
+        XSS,
+        COMMAND_INJECTION,
+        CODE_EXECUTION,
+        MASS_ASSIGNMENT,
+        MISSING_AUTHORIZATION,
+    )
 }
 
 

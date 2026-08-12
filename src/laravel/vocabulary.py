@@ -211,6 +211,7 @@ _TAINTED_SERVER_PREFIX = "HTTP_"
 SQL_INJECTION_RULE = "php.sql-injection"
 XSS_RULE = "php.xss"
 COMMAND_INJECTION_RULE = "php.command-injection"
+CODE_EXECUTION_RULE = "php.code-execution"
 MASS_ASSIGNMENT_RULE = "laravel.mass-assignment"
 MISSING_AUTHORIZATION_RULE = "laravel.missing-authorization"
 
@@ -260,6 +261,22 @@ SINKS: dict[str, tuple[int, TaintKind, str]] = {
     "popen": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
     "proc_open": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
     "pcntl_exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
+    # Code execution sinks (CWE-94 / CWE-502).
+    # eval() is a language construct - handled by a dedicated node-type check in
+    # taint.py, but listed here so the sink table drives the rule name.
+    # Nothing clears TaintKind.CODE - see models.py docstring.
+    "eval": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "assert": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "create_function": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "unserialize": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "call_user_func": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "call_user_func_array": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "array_map": (0, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "array_filter": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "array_walk": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "usort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "uasort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    "uksort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
 }
 
 # The DB facade, by every name a project can legitimately call it.
@@ -326,6 +343,18 @@ SINK_ARG_NAMES: dict[str, str] = {
     "run": "command",
     "start": "command",
     "fromShellCommandline": "command",
+    # Code execution sink parameter names.
+    "assert": "assertion",
+    "create_function": "body",
+    "unserialize": "data",
+    "call_user_func": "callback",
+    "call_user_func_array": "callback",
+    "array_map": "callback",
+    "array_filter": "callback",
+    "array_walk": "callback",
+    "usort": "callback",
+    "uasort": "callback",
+    "uksort": "callback",
 }
 
 
