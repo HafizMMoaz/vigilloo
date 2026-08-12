@@ -12,11 +12,11 @@ from .laravel.vocabulary import (
     COMMAND_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
     MISSING_AUTHORIZATION_RULE,
+    OPEN_REDIRECT_RULE,
     PATH_TRAVERSAL_RULE,
     SQL_INJECTION_RULE,
     SSRF_RULE,
     XSS_RULE,
-    OPEN_REDIRECT_RULE,
 )
 from .models import Finding, WalkStats
 from .structural import find_structural_paths

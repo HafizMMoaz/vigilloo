@@ -58,7 +58,9 @@ def test_positive_header_injection(tmp_path: Path):
 def test_positive_response_header(tmp_path: Path):
     body = """
         public function act(Request $request) {
-            return \\Illuminate\\Support\\Facades\\Response::header('X-Custom', $request->input('next'));
+            return \\Illuminate\\Support\\Facades\\Response::header(
+                'X-Custom', $request->input('next')
+            );
         }
     """
     proj_dir = _minimal_project(tmp_path, body)
