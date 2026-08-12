@@ -376,7 +376,16 @@ STATIC_SINKS: dict[
     | {
         (facade, method): (0, TaintKind.URL, SSRF_RULE)
         for facade in GUZZLE_CLIENT_FQNS
-        for method in ("get", "post", "put", "patch", "delete", "request", "requestAsync", "getAsync")
+        for method in (
+            "get",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "request",
+            "requestAsync",
+            "getAsync",
+        )
     }
 )
 
@@ -511,9 +520,7 @@ def sinks(method: str) -> list[tuple[int, TaintKind, str]]:
     return [val]
 
 
-def static_sinks(
-    receiver_fqn: str | None, method: str
-) -> list[tuple[int, TaintKind, str]]:
+def static_sinks(receiver_fqn: str | None, method: str) -> list[tuple[int, TaintKind, str]]:
     """The sinks a `Receiver::method(...)` or `$receiver->method(...)` call reaches, if any.
 
     `receiver_fqn` is the resolved class, not the text at the call site, and None when the
@@ -530,7 +537,6 @@ def static_sinks(
     if isinstance(val, list):
         return val
     return [val]
-
 
 
 def sanitizer_clears(name: str) -> frozenset[TaintKind]:

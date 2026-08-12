@@ -369,9 +369,7 @@ def test_the_sanitizer_table_says_what_the_kind_based_design_depends_on() -> Non
     a sanitizer to whoever wrote the code being scanned.
     """
     assert sanitizer_clears("e") == frozenset({TaintKind.HTML})
-    assert sanitizer_clears("intval") == frozenset(
-        {TaintKind.SQL, TaintKind.HTML, TaintKind.PATH}
-    )
+    assert sanitizer_clears("intval") == frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.PATH})
     assert sanitizer_clears("trim") == frozenset()
     assert sanitizer_clears("escapeshellarg") == frozenset({TaintKind.SHELL})
     assert TaintKind.HTML not in sanitizer_clears("escapeshellarg")
