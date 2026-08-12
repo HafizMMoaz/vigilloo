@@ -4,6 +4,8 @@ The canonical reference is docs/06-taint-analysis.
 This module carries the subset needed for the sql and html taint kinds.
 """
 
+from collections.abc import Mapping
+
 from ..models import ALL_KINDS, TaintKind
 
 # Values whose keys the developer chose rather than the attacker. Still fully
@@ -341,7 +343,7 @@ GUZZLE_CLIENT_FQNS = frozenset(
     }
 )
 
-STATIC_SINKS: dict[
+STATIC_SINKS: Mapping[
     tuple[str, str],
     tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]],
 ] = (
