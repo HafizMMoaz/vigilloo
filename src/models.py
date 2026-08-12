@@ -22,9 +22,6 @@ class TaintKind(StrEnum):
     Exception: `code` has sinks but no sanitizers. Untrusted data must never reach
     eval/unserialize at all; there is no sanitizer that makes it safe, so none is
     registered and none will ever be accepted in review.
-
-    ponytail: js, path, url, ldap, xpath, header and log land with their own
-    sink tables - see docs/06-taint-analysis.
     """
 
     SQL = "sql"
@@ -34,6 +31,9 @@ class TaintKind(StrEnum):
     URL = "url"
     JS = "js"
     HEADER = "header"
+    LDAP = "ldap"
+    XPATH = "xpath"
+    LOG = "log"
 
     # Reaches eval(), unserialize(), create_function(), dynamic include/require.
     # Nothing clears this kind: there is no sanitizer that makes untrusted input

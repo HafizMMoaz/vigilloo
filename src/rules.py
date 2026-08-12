@@ -10,12 +10,15 @@ from .graph import Project
 from .laravel.vocabulary import (
     CODE_EXECUTION_RULE,
     COMMAND_INJECTION_RULE,
+    LDAP_INJECTION_RULE,
+    LOG_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
     MISSING_AUTHORIZATION_RULE,
     OPEN_REDIRECT_RULE,
     PATH_TRAVERSAL_RULE,
     SQL_INJECTION_RULE,
     SSRF_RULE,
+    XPATH_INJECTION_RULE,
     XSS_RULE,
 )
 from .models import Finding, WalkStats
@@ -136,12 +139,48 @@ MISSING_AUTHORIZATION = Rule(
 
 OPEN_REDIRECT = Rule(
     id=OPEN_REDIRECT_RULE,
-    title="Open Redirect / Header Injection",
+    title="Open Redirect",
     severity="medium",
     cwe=("CWE-601", "CWE-113"),
     remediation=(
-        "Validate the URL against a strict allowlist of permitted hosts or paths. "
-        "Do not allow arbitrary user input to form the Location header."
+        "Validate the redirect URL against a strict allowlist of permitted destinations, "
+        "or ensure it is a relative path (e.g. starts_with:/)."
+    ),
+)
+
+
+LDAP_INJECTION = Rule(
+    id=LDAP_INJECTION_RULE,
+    title="LDAP Injection",
+    severity="high",
+    cwe=("CWE-90",),
+    remediation=(
+        "Escape user input before placing it in an LDAP search filter. "
+        "Use ldap_escape() with appropriate flags for DN or filter contexts."
+    ),
+)
+
+
+XPATH_INJECTION = Rule(
+    id=XPATH_INJECTION_RULE,
+    title="XPath Injection",
+    severity="high",
+    cwe=("CWE-643",),
+    remediation=(
+        "Avoid string concatenation when building XPath queries. Use bound variables if supported, "
+        "or strictly validate and cast input to expected types before interpolation."
+    ),
+)
+
+
+LOG_INJECTION = Rule(
+    id=LOG_INJECTION_RULE,
+    title="Log Injection",
+    severity="low",
+    cwe=("CWE-117",),
+    remediation=(
+        "Sanitize user input before writing it to logs by removing or encoding newline characters "
+        "to prevent log forging. Alternatively, use structured logging (e.g. JSON)."
     ),
 )
 
@@ -157,6 +196,9 @@ _BY_ID: dict[str, Rule] = {
         MASS_ASSIGNMENT,
         MISSING_AUTHORIZATION,
         OPEN_REDIRECT,
+        LDAP_INJECTION,
+        XPATH_INJECTION,
+        LOG_INJECTION,
     )
 }
 

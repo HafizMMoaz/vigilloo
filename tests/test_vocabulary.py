@@ -88,6 +88,9 @@ def test_all_kinds_is_what_the_engine_can_reason_about() -> None:
             TaintKind.URL,
             TaintKind.JS,
             TaintKind.HEADER,
+            TaintKind.LDAP,
+            TaintKind.XPATH,
+            TaintKind.LOG,
         }
     )
 
