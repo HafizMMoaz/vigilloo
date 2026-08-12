@@ -30,6 +30,7 @@ _LITERAL = re.compile(r"@\{\{.*?\}\}", re.S)
 _RAW_ECHO = re.compile(r"\{!!(.*?)!!\}", re.S)
 _ESCAPED_ECHO = re.compile(r"\{\{(.*?)\}\}", re.S)
 _PHP_BLOCK = re.compile(r"@php(.*?)@endphp", re.S)
+_SCRIPT_BLOCK = re.compile(r"<script.*?>.*?</script>", re.S | re.IGNORECASE)
 
 _INCLUDE = re.compile(r"@include(?:If|When|Unless)?\s*\((.*?)\)", re.S)
 _EXTENDS = re.compile(r"@extends\s*\((.*?)\)", re.S)
@@ -97,6 +98,19 @@ def to_php(text: str) -> str:
 
     text = _LITERAL.sub(_stash, text)
     text = _COMMENT.sub(lambda m: _keep_lines("", m.group(0)), text)
+
+    def _rewrite_script_block(match: re.Match[str]) -> str:
+        block = match.group(0)
+        block = _RAW_ECHO.sub(
+            lambda m: _keep_lines(f"<?php vigilloo_js_sink({m.group(1)}); ?>", m.group(0)), block
+        )
+        block = _ESCAPED_ECHO.sub(
+            lambda m: _keep_lines(f"<?php vigilloo_js_sink(e({m.group(1)})); ?>", m.group(0)), block
+        )
+        return block
+
+    text = _SCRIPT_BLOCK.sub(_rewrite_script_block, text)
+
     text = _PHP_BLOCK.sub(lambda m: _keep_lines(f"<?php {m.group(1)}?>", m.group(0)), text)
     text = _RAW_ECHO.sub(lambda m: _keep_lines(f"<?php echo {m.group(1)}; ?>", m.group(0)), text)
     text = _ESCAPED_ECHO.sub(lambda m: _keep_lines(f"<?php e({m.group(1)}); ?>", m.group(0)), text)

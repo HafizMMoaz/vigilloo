@@ -252,6 +252,10 @@ def expr_kinds(
                     return entering - validated_fields[field_name]
             return entering
         cleared = sanitizer_clears(name)
+        if name == "json_encode":
+            args_node = node.child_by_field_name("arguments")
+            if args_node and "JSON_HEX_TAG" in node_text(args_node, source):
+                cleared = frozenset({TaintKind.JS, TaintKind.HTML})
         if cleared:
             args = node.child_by_field_name("arguments")
             inner = (
@@ -264,20 +268,33 @@ def expr_kinds(
     # `Input::get('sort')`, the facade Laravel removed in 6.0. Keyed on the resolved
     # class, so a project's own `Input` is untouched - the same reason the DB facade
     # sinks require a resolved receiver.
-    if node.type == "scoped_call_expression" and resolve is not None:
+    if node.type == "scoped_call_expression":
         scope = node.child_by_field_name("scope")
         name_node = node.child_by_field_name("name")
         if scope is not None and name_node is not None:
-            entering = input_facade_kinds(
-                resolve(node_text(scope, source)), node_text(name_node, source)
-            )
-            if entering:
-                if validated_fields:
-                    args = node.child_by_field_name("arguments")
-                    field_name = _get_first_string_arg(args, source)
-                    if field_name and field_name in validated_fields:
-                        return entering - validated_fields[field_name]
-                return entering
+            scope_text = node_text(scope, source)
+            method_text = node_text(name_node, source)
+
+            if method_text == "from" and (
+                scope_text == "Js" or (resolve and resolve(scope_text) == "Illuminate\\Support\\Js")
+            ):
+                args = node.child_by_field_name("arguments")
+                inner = (
+                    _union_of_children(args, source, local, request_vars, resolve, validated_fields)
+                    if args is not None
+                    else frozenset()
+                )
+                return inner - frozenset({TaintKind.JS, TaintKind.HTML})
+
+            if resolve is not None:
+                entering = input_facade_kinds(resolve(scope_text), method_text)
+                if entering:
+                    if validated_fields:
+                        args = node.child_by_field_name("arguments")
+                        field_name = _get_first_string_arg(args, source)
+                        if field_name and field_name in validated_fields:
+                            return entering - validated_fields[field_name]
+                    return entering
 
     if node.type == "cast_expression":
         # cast_type text is "int", without the parentheses.
@@ -882,6 +899,26 @@ def _walk_template(
                 )
             ]
         )
+
+    # 1b. JS context sinks in this template
+    for call in find_all(parsed.tree.root_node, "function_call_expression"):
+        func_node = call.child_by_field_name("function")
+        if func_node and node_text(func_node, parsed.source) == "vigilloo_js_sink":
+            args = call.child_by_field_name("arguments")
+            if args and TaintKind.JS in expr_kinds(args, parsed.source, local_bound):
+                line = call.start_point[0] + 1
+                paths.append(
+                    prefix
+                    + [
+                        PathStep(
+                            role="sink",
+                            span=node_span(call, parsed.path),
+                            snippet=project.blade_line(parsed.path, line),
+                            note="echo inside JS context without JS escaping",
+                            rule_id=XSS_RULE,
+                        )
+                    ]
+                )
 
     # 2. Includes, extends, components inside this template
     for stmt in find_all(parsed.tree.root_node, "expression_statement"):
