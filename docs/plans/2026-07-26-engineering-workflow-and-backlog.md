@@ -1213,7 +1213,7 @@ with no sink and no sanitizer claims reasoning the engine cannot do. 9 tasks.
 - **Difficulty:** L
 - **Tests:** Positive and negative per kind.
 
-### TASK-059
+### [x] TASK-059
 - **Goal:** Anti-sanitizers are findings, not sanitizers.
 - **Description:** strip_tags, addslashes, mysql_real_escape_string are deliberately
   absent from SANITIZERS and the comment there says the spec classes
@@ -1228,8 +1228,7 @@ with no sink and no sanitizer claims reasoning the engine cannot do. 9 tasks.
 - **Tests:** Fixture per anti-sanitizer asserting the finding survives with a
   note.
 
-### TASK-060
-- **Goal:** Response bodies and non-Blade templates as html sinks.
+### [COMPLETED] TASK-060: Response bodies and non-Blade templates as html sinks.
 - **Description:** Removes the ponytail: at src/taint.py:302, which defers these
   until a fixture needs one. docs/06-taint-analysis section XSS
   lists Response with HTML content type.

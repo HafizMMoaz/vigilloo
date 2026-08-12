@@ -1045,6 +1045,48 @@ def _anti_sanitizer_steps(
     return steps
 
 
+def _is_html_response(node: Node, source: bytes) -> bool:
+    """True if this AST node represents an HTTP response that is rendered as HTML.
+    
+    This includes:
+    - response($tainted)
+    - response($tainted)->header('Content-Type', 'text/html')
+    It excludes:
+    - response()->json(...)
+    - response($tainted)->header('Content-Type', 'application/json')
+    """
+    if node.type == "function_call_expression":
+        fname_node = node.child_by_field_name("function")
+        if fname_node and node_text(fname_node, source) == "response":
+            args = node.child_by_field_name("arguments")
+            if args and [a for a in args.children if a.type not in ("(", ")", ",")]:
+                return True # response($content) defaults to HTML
+    
+    if node.type in _MEMBER_CALLS:
+        method_node = node.child_by_field_name("name")
+        if method_node:
+            method_name = node_text(method_node, source)
+            obj = node.child_by_field_name("object")
+            
+            if method_name == "json":
+                return False
+                
+            if obj and not _is_html_response(obj, source):
+                return False
+                
+            if method_name == "header":
+                args_node = node.child_by_field_name("arguments")
+                if args_node:
+                    args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+                    if len(args) >= 2:
+                        header_name = node_text(args[0], source).strip("'\"").lower()
+                        header_val = node_text(args[1], source).strip("'\"").lower()
+                        if header_name == "content-type" and "json" in header_val:
+                            return False
+            return True
+            
+    return False
+
 def _walk_method_ast(
     project: Project,
     fqn: str,
@@ -1587,6 +1629,26 @@ def _walk_method_ast(
                 note=f"view data into {template}",
             )
             paths.extend(_walk_template(project, template, bound, prefix + [step], stats))
+
+        # 4. HTTP response sinks (e.g. response($tainted)->header('Content-Type', 'text/html'))
+        for return_stmt in find_all(stmt, "return_statement"):
+            ret_exprs = [c for c in return_stmt.children if c.type not in ("return", ";")]
+            if ret_exprs:
+                ret_expr = ret_exprs[0]
+                if _is_html_response(ret_expr, source):
+                    if TaintKind.HTML in expr_kinds(ret_expr, source, local, request_vars, resolve, validated_fields):
+                        paths.append(
+                            prefix
+                            + [
+                                PathStep(
+                                    role="sink",
+                                    span=node_span(return_stmt, parsed.path),
+                                    snippet=node_text(return_stmt, source).strip(),
+                                    note="returned as an HTML response",
+                                    rule_id=XSS_RULE,
+                                )
+                            ]
+                        )
 
     return paths
 
