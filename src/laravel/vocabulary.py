@@ -530,6 +530,18 @@ SANITIZERS: dict[str, frozenset[TaintKind]] = {
     "rawurlencode": frozenset({TaintKind.URL}),
 }
 
+ANTI_SANITIZERS: frozenset[str] = frozenset(
+    {
+        "strip_tags",
+        "addslashes",
+        "mysql_real_escape_string",
+    }
+)
+
+
+def is_anti_sanitizer(name: str) -> bool:
+    return name in ANTI_SANITIZERS
+
 
 def is_source(method: str) -> bool:
     return method in SOURCE_METHODS

@@ -29,6 +29,7 @@ from .laravel.vocabulary import (
     XSS_RULE,
     eloquent_write,
     input_facade_kinds,
+    is_anti_sanitizer,
     is_request_helper,
     is_source,
     is_superglobal,
@@ -1007,6 +1008,43 @@ def _walk_method(
     return [prefix + p for p in summary.paths_by_taint[cache_key]]
 
 
+def _anti_sanitizer_steps(
+    node: Node,
+    source: bytes,
+    parsed: ParsedFile,
+    local: dict[str, frozenset[TaintKind]],
+    request_vars: frozenset[str],
+    resolve: ClassResolver | None,
+    validated_fields: dict[str, frozenset[TaintKind]] | None,
+) -> list[PathStep]:
+    """Steps for anti-sanitizers called on tainted data within this expression."""
+    steps: list[PathStep] = []
+    for call in find_all(node, "function_call_expression"):
+        invoked = call.child_by_field_name("function")
+        if invoked is None or invoked.type not in ("name", "qualified_name"):
+            continue
+        fname = node_text(invoked, source)
+        if not is_anti_sanitizer(fname):
+            continue
+        args_node = call.child_by_field_name("arguments")
+        if args_node is None:
+            continue
+        args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+        # Only emit if the argument is tainted. Anti-sanitizers usually take one primary argument.
+        if any(
+            expr_kinds(arg, source, local, request_vars, resolve, validated_fields) for arg in args
+        ):
+            steps.append(
+                PathStep(
+                    role="sanitizer",
+                    span=node_span(call, parsed.path),
+                    snippet=node_text(call, source).strip(),
+                    note="weak control",
+                )
+            )
+    return steps
+
+
 def _walk_method_ast(
     project: Project,
     fqn: str,
@@ -1066,6 +1104,12 @@ def _walk_method_ast(
     statements = [n for n in walk(method_node) if n.type in _STATEMENT_TYPES]
 
     for stmt in statements:
+        anti_steps = _anti_sanitizer_steps(
+            stmt, source, parsed, local, request_vars, resolve, validated_fields
+        )
+        if anti_steps:
+            prefix = prefix + anti_steps
+
         # 1. Assignment from a Request source, or from an already tainted value.
         for assign in find_all(stmt, "assignment_expression"):
             left = assign.child_by_field_name("left")
