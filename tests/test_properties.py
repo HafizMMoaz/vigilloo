@@ -35,7 +35,7 @@ from vigilloo.laravel.vocabulary import SANITIZERS, sanitizer_clears
 from vigilloo.models import ALL_KINDS, TaintKind
 from vigilloo.parser import ParsedFile, node_span, node_text, parse_php, parse_source, walk
 from vigilloo.symbols import extract_symbols
-from vigilloo.taint import expr_kinds
+from vigilloo.taint import expr_kinds, LocalState
 
 # ---------------------------------------------------------------------------
 # A grammar of PHP, small enough to stay valid and wide enough to be worth generating.
@@ -304,16 +304,15 @@ def test_taint_propagation_is_monotonic(
     weaker, stronger = environments
     node, source = _rhs(expr)
 
-    less = expr_kinds(node, source, dict(weaker), _REQUEST_VARS)
-    more = expr_kinds(node, source, dict(stronger), _REQUEST_VARS)
-
-    assert less <= more, f"{expr}: {sorted(less)} is not contained in {sorted(more)}"
+    less = expr_kinds(node, source, LocalState(dict(weaker), None), _REQUEST_VARS)
+    more = expr_kinds(node, source, LocalState(dict(stronger), None), _REQUEST_VARS)
+    assert less <= more, f"Non-monotonic!\nExpr: {expr}\nLess: {less}\nMore: {more}"
 
 
 @settings(max_examples=300, deadline=None)
 @given(sanitizer=st.sampled_from(_SANITIZERS), inner=_EXPRESSIONS, environment=_KIND_SETS)
 def test_a_sanitizer_clears_the_kinds_it_declares_and_no_others(
-    sanitizer: str, inner: str, environment: frozenset
+    sanitizer: str, inner: str, environment: frozenset[TaintKind]
 ) -> None:
     """Wrapping an expression in a sanitizer subtracts exactly that sanitizer's kinds.
 
@@ -338,10 +337,10 @@ def test_a_sanitizer_clears_the_kinds_it_declares_and_no_others(
     local = {name: environment for name in _VAR_NAMES}
 
     inner_node, inner_source = _rhs(inner)
-    before = expr_kinds(inner_node, inner_source, dict(local), _REQUEST_VARS)
+    before = expr_kinds(inner_node, inner_source, LocalState(dict(local), None), _REQUEST_VARS)
 
     outer_node, outer_source = _rhs(f"{sanitizer}({inner})")
-    after = expr_kinds(outer_node, outer_source, dict(local), _REQUEST_VARS)
+    after = expr_kinds(outer_node, outer_source, LocalState(dict(local), None), _REQUEST_VARS)
 
     assert after == before - sanitizer_clears(sanitizer)
 

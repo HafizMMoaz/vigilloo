@@ -16,6 +16,8 @@ from tree_sitter import Node
 # ->orderByRaw(...)` are where the interesting calls actually live. A walk
 # over expression_statement alone finds nothing in a typical repository.
 from .graph import Project
+from .analysis.cfg import CFGBuilder
+from .analysis.ssa import SSABuilder, PhiNode, VariableVersion, SSAValue
 from .laravel.facades import resolve_facade
 from .laravel.models import Protection, model_config
 from .laravel.routes import uri_params
@@ -156,7 +158,7 @@ def _get_first_string_arg(args_node: Node | None, source: bytes) -> str | None:
 def _union_of_children(
     node: Node,
     source: bytes,
-    local: dict[str, frozenset[TaintKind]],
+    local: LocalState,
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
     validated_fields: dict[str, frozenset[TaintKind]] | None = None,
@@ -165,12 +167,26 @@ def _union_of_children(
     for child in node.children:
         kinds |= expr_kinds(child, source, local, request_vars, resolve, validated_fields)
     return kinds
+class LocalState:
+    def __init__(self, linear_state: dict[str, frozenset[TaintKind]], get_node_taint: Callable[[str, Node], frozenset[TaintKind]] | None = None):
+        self.linear_state = linear_state
+        self.get_node_taint = get_node_taint
 
+    def get(self, name: str, default: frozenset[TaintKind] = frozenset()) -> frozenset[TaintKind]:
+        return self.linear_state.get(name, default)
+
+    def get_node(self, name: str, node: Node) -> frozenset[TaintKind]:
+        if self.get_node_taint:
+            return self.get_node_taint(name, node)
+        return self.linear_state.get(name, frozenset())
+
+def _get_local(local: LocalState, name: str, node: Node) -> frozenset[TaintKind]:
+    return local.get_node(name, node)
 
 def expr_kinds(
     node: Node,
     source: bytes,
-    local: dict[str, frozenset[TaintKind]],
+    local: LocalState,
     request_vars: frozenset[str] = frozenset(),
     resolve: ClassResolver | None = None,
     validated_fields: dict[str, frozenset[TaintKind]] | None = None,
@@ -204,7 +220,7 @@ def expr_kinds(
         return superglobal_kinds(*superglobal)
 
     if node.type == "variable_name":
-        return local.get(_var_name(node, source), frozenset())
+        return _get_local(local, _var_name(node, source), node)
 
     if node.type in _MEMBER_CALLS:
         name = node_text(node.child_by_field_name("name"), source)
@@ -511,7 +527,7 @@ def _mass_assign_steps(
     args: list[Node],
     receiver_fqn: str | None,
     parsed: ParsedFile,
-    local: dict[str, frozenset[TaintKind]],
+    local: LocalState,
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
 ) -> list[PathStep] | None:
@@ -694,7 +710,7 @@ def _sink_steps(
     found: tuple[int, TaintKind, str],
     parsed: ParsedFile,
     method: str,
-    local: dict[str, frozenset[TaintKind]],
+    local: LocalState,
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
     validated_fields: dict[str, frozenset[TaintKind]] | None = None,
@@ -745,7 +761,7 @@ def _follow_static(
     name: str,
     args: list[Node],
     parsed: ParsedFile,
-    local: dict[str, frozenset[TaintKind]],
+    local: LocalState,
     request_vars: frozenset[str],
     prefix: list[PathStep],
     depth: int,
@@ -873,10 +889,11 @@ def _walk_template(
     visited_set = visited_set | {template}
 
     local_bound = dict(bound)
+    local_state = LocalState(local_bound, None)
     for foreach_stmt in find_all(parsed.tree.root_node, "foreach_statement"):
         collection_node, loop_vars = _extract_foreach_vars(foreach_stmt, parsed.source)
         if collection_node is not None:
-            kinds = expr_kinds(collection_node, parsed.source, local_bound)
+            kinds = expr_kinds(collection_node, parsed.source, local_state)
             if kinds:
                 for var_name in loop_vars:
                     local_bound[var_name] = kinds
@@ -885,7 +902,7 @@ def _walk_template(
 
     # 1. Direct raw echos in this template
     for stmt in find_all(parsed.tree.root_node, "echo_statement"):
-        if TaintKind.HTML not in expr_kinds(stmt, parsed.source, local_bound):
+        if TaintKind.HTML not in expr_kinds(stmt, parsed.source, local_state):
             continue
         line = stmt.start_point[0] + 1
         paths.append(
@@ -906,7 +923,7 @@ def _walk_template(
         func_node = call.child_by_field_name("function")
         if func_node and node_text(func_node, parsed.source) == "vigilloo_js_sink":
             args = call.child_by_field_name("arguments")
-            if args and TaintKind.JS in expr_kinds(args, parsed.source, local_bound):
+            if args and TaintKind.JS in expr_kinds(args, parsed.source, local_state):
                 line = call.start_point[0] + 1
                 paths.append(
                     prefix
@@ -932,7 +949,7 @@ def _walk_template(
 
             child_bound = dict(local_bound)
             for name, expression in binding.variables:
-                kinds = expr_kinds(expression, parsed.source, local_bound)
+                kinds = expr_kinds(expression, parsed.source, local_state)
                 if kinds:
                     child_bound[name] = kinds
             for name in binding.compacted:
@@ -1012,7 +1029,7 @@ def _anti_sanitizer_steps(
     node: Node,
     source: bytes,
     parsed: ParsedFile,
-    local: dict[str, frozenset[TaintKind]],
+    local: LocalState,
     request_vars: frozenset[str],
     resolve: ClassResolver | None,
     validated_fields: dict[str, frozenset[TaintKind]] | None,
@@ -1140,6 +1157,37 @@ def _walk_method_ast(
             if param_type:
                 local_types[param_name] = param_type
 
+    initial_tainted = dict(tainted)
+    
+    cfg = CFGBuilder().build(method_node)
+    ssa = SSABuilder(cfg, source)
+    ssa.build()
+    
+    ssa_taints: dict[SSAValue, frozenset[TaintKind]] = {}
+    
+    def resolve_ssa_taint(val: SSAValue, visited: set[SSAValue] | None = None) -> frozenset[TaintKind]:
+        if visited is None:
+            visited = set()
+        if val in visited:
+            return frozenset()
+        visited.add(val)
+        
+        if isinstance(val, PhiNode):
+            res = frozenset()
+            for src in val.sources:
+                res = res.union(resolve_ssa_taint(src, visited))
+            return res
+        if val in ssa_taints:
+            return ssa_taints[val]
+        return initial_tainted.get(val.name, frozenset())
+
+    def get_taint(name: str, node: Node) -> frozenset[TaintKind]:
+        if node.id in ssa.reads:
+            return resolve_ssa_taint(ssa.reads[node.id])
+        return initial_tainted.get(name, frozenset())
+
+    local = LocalState(initial_tainted, get_taint)
+
     from .laravel.validation import extract_validation_cleared
 
     validated_fields = extract_validation_cleared(method_node, source, parsed)
@@ -1171,14 +1219,28 @@ def _walk_method_ast(
                 local_types.pop(target, None)
 
             kinds = expr_kinds(right, source, local, request_vars, resolve, validated_fields)
+            
+            # Find the written SSAValue to update its taint
+            val = None
+            if left.id in ssa.writes:
+                val = ssa.writes[left.id]
+            elif left.type == "subscript_expression":
+                base = left.child_by_field_name("array") or (left.children[0] if left.children else None)
+                if base and base.id in ssa.writes:
+                    val = ssa.writes[base.id]
+
             if kinds:
-                local[target] = kinds
+                if val:
+                    ssa_taints[val] = kinds
+                local.linear_state[target] = kinds
             else:
                 # Reassigned from a clean or fully sanitized value: whatever
                 # taint the target carried before this statement no longer
-                # applies. Without this, `$sort = $request->input('sort');
-                # $sort = 'asc';` would still report $sort as tainted below.
-                local.pop(target, None)
+                # applies.
+                if val:
+                    # Pop isn't strictly necessary since it wouldn't be in ssa_taints yet, but safe.
+                    ssa_taints.pop(val, None)
+                local.linear_state.pop(target, None)
 
             # expr_kinds computes *what* the value carries; the evidence path
             # still has to record *where* it entered, so the crossing is
