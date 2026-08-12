@@ -47,8 +47,8 @@ build-backend = "setuptools.build_meta"
 #      silently omits it. Hatchling was dropped for this layout: it cannot do
 #      editable installs when sources renames a prefix.
 [tool.setuptools]
-package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel", "vigilloo.workspace" = "src/workspace" }
-packages = ["vigilloo", "vigilloo.laravel", "vigilloo.workspace"]
+package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel", "vigilloo.workspace" = "src/workspace", "vigilloo.analysis" = "src/analysis" }
+packages = ["vigilloo", "vigilloo.laravel", "vigilloo.workspace", "vigilloo.analysis"]
 
 [tool.ruff]
 line-length = 100
