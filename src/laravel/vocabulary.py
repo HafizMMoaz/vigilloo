@@ -213,6 +213,7 @@ XSS_RULE = "php.xss"
 COMMAND_INJECTION_RULE = "php.command-injection"
 CODE_EXECUTION_RULE = "php.code-execution"
 PATH_TRAVERSAL_RULE = "php.path-traversal"
+SSRF_RULE = "php.ssrf"
 MASS_ASSIGNMENT_RULE = "laravel.mass-assignment"
 MISSING_AUTHORIZATION_RULE = "laravel.missing-authorization"
 
@@ -247,7 +248,7 @@ def eloquent_write(method: str) -> tuple[int, bool] | None:
 # The *Raw builders accept bindings in argument 1, which are safe, so only
 # argument 0 is dangerous.
 #
-SINKS: dict[str, tuple[int, TaintKind, str]] = {
+SINKS: dict[str, tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]]] = {
     "orderByRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "whereRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
     "orWhereRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
@@ -278,13 +279,20 @@ SINKS: dict[str, tuple[int, TaintKind, str]] = {
     "usort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
     "uasort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
     "uksort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
-    # Path traversal sinks (CWE-22 / CWE-434).
-    "file_get_contents": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    # Path traversal and SSRF sinks.
+    "file_get_contents": [
+        (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+        (0, TaintKind.URL, SSRF_RULE),
+    ],
     "file_put_contents": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
-    "fopen": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "fopen": [
+        (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+        (0, TaintKind.URL, SSRF_RULE),
+    ],
     "unlink": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
     "copy": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
     "rename": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "fsockopen": (0, TaintKind.URL, SSRF_RULE),
 }
 
 # The DB facade, by every name a project can legitimately call it.
@@ -317,7 +325,26 @@ STORAGE_FACADE_FQNS = frozenset(
     }
 )
 
-STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = (
+# HTTP clients for SSRF.
+HTTP_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\Http",
+        "Illuminate\\Http\\Client\\Factory",
+        "Http",
+    }
+)
+
+GUZZLE_CLIENT_FQNS = frozenset(
+    {
+        "GuzzleHttp\\Client",
+        "GuzzleHttp\\ClientInterface",
+    }
+)
+
+STATIC_SINKS: dict[
+    tuple[str, str],
+    tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]],
+] = (
     {
         (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
         for facade in DB_FACADE_FQNS
@@ -340,6 +367,16 @@ STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = (
         (facade, method): (0, TaintKind.PATH, PATH_TRAVERSAL_RULE)
         for facade in STORAGE_FACADE_FQNS
         for method in ("get", "put", "delete", "disk")
+    }
+    | {
+        (facade, method): (0, TaintKind.URL, SSRF_RULE)
+        for facade in HTTP_FACADE_FQNS
+        for method in ("get", "post", "put", "patch", "delete", "head", "send")
+    }
+    | {
+        (facade, method): (0, TaintKind.URL, SSRF_RULE)
+        for facade in GUZZLE_CLIENT_FQNS
+        for method in ("get", "post", "put", "patch", "delete", "request", "requestAsync", "getAsync")
     }
 )
 
@@ -390,6 +427,15 @@ SINK_ARG_NAMES: dict[str, str] = {
     "get": "path",
     "put": "path",
     "disk": "name",
+    # SSRF sink parameter names.
+    "fsockopen": "hostname",
+    "post": "url",
+    "patch": "url",
+    "head": "url",
+    "send": "method",
+    "request": "method",
+    "requestAsync": "method",
+    "getAsync": "uri",
 }
 
 
@@ -407,6 +453,8 @@ SANITIZERS: dict[str, frozenset[TaintKind]] = {
     "escapeshellarg": frozenset({TaintKind.SHELL}),
     "escapeshellcmd": frozenset({TaintKind.SHELL}),
     "basename": frozenset({TaintKind.PATH}),
+    "urlencode": frozenset({TaintKind.URL}),
+    "rawurlencode": frozenset({TaintKind.URL}),
 }
 
 
@@ -453,12 +501,20 @@ def superglobal_kinds(variable: str, key: str | None) -> frozenset[TaintKind]:
     return frozenset()
 
 
-def sink(method: str) -> tuple[int, TaintKind, str] | None:
-    return SINKS.get(method)
+def sinks(method: str) -> list[tuple[int, TaintKind, str]]:
+    """The sinks a global function call reaches, if any."""
+    val = SINKS.get(method)
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    return [val]
 
 
-def static_sink(receiver_fqn: str | None, method: str) -> tuple[int, TaintKind, str] | None:
-    """The sink a `Receiver::method(...)` call reaches, if any.
+def static_sinks(
+    receiver_fqn: str | None, method: str
+) -> list[tuple[int, TaintKind, str]]:
+    """The sinks a `Receiver::method(...)` or `$receiver->method(...)` call reaches, if any.
 
     `receiver_fqn` is the resolved class, not the text at the call site, and None when the
     scope could not be resolved. None is not a near miss to be guessed at: an unresolved
@@ -467,8 +523,14 @@ def static_sink(receiver_fqn: str | None, method: str) -> tuple[int, TaintKind, 
     who then has grounds to distrust the whole report.
     """
     if receiver_fqn is None:
-        return None
-    return STATIC_SINKS.get((receiver_fqn, method))
+        return []
+    val = STATIC_SINKS.get((receiver_fqn, method))
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    return [val]
+
 
 
 def sanitizer_clears(name: str) -> frozenset[TaintKind]:

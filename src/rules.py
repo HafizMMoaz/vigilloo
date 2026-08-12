@@ -14,6 +14,7 @@ from .laravel.vocabulary import (
     MISSING_AUTHORIZATION_RULE,
     PATH_TRAVERSAL_RULE,
     SQL_INJECTION_RULE,
+    SSRF_RULE,
     XSS_RULE,
 )
 from .models import Finding, WalkStats
@@ -95,6 +96,18 @@ PATH_TRAVERSAL = Rule(
 )
 
 
+SSRF = Rule(
+    id=SSRF_RULE,
+    title="Server-Side Request Forgery",
+    severity="high",
+    cwe=("CWE-918",),
+    remediation=(
+        "Validate URLs against a strict allowlist of permitted hosts. "
+        "Do not allow arbitrary user input to form the scheme or host of an outbound HTTP request."
+    ),
+)
+
+
 MASS_ASSIGNMENT = Rule(
     id=MASS_ASSIGNMENT_RULE,
     title="Mass Assignment",
@@ -128,6 +141,7 @@ _BY_ID: dict[str, Rule] = {
         COMMAND_INJECTION,
         CODE_EXECUTION,
         PATH_TRAVERSAL,
+        SSRF,
         MASS_ASSIGNMENT,
         MISSING_AUTHORIZATION,
     )

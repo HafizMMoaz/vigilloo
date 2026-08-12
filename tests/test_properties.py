@@ -89,6 +89,8 @@ _SANITIZERS = (
     "escapeshellarg",
     "escapeshellcmd",
     "basename",
+    "urlencode",
+    "rawurlencode",
 )
 
 

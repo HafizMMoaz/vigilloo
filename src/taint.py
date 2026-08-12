@@ -34,10 +34,10 @@ from .laravel.vocabulary import (
     is_superglobal,
     route_param_is_source,
     sanitizer_clears,
-    sink,
+    sinks,
     sink_arg_name,
     source_kinds,
-    static_sink,
+    static_sinks,
     superglobal_kinds,
 )
 from .models import PathStep, Route, TaintKind, WalkStats
@@ -1202,8 +1202,8 @@ def _walk_method_ast(
             # for readability today, since no name appears in both, but the scoped table is
             # the more specific statement and a more specific rule losing to a general one
             # is the kind of thing that is invisible until the general one is widened.
-            scoped_sink = static_sink(scoped_receiver_fqn, name) or sink(name)
-            if scoped_sink is not None:
+            found_sinks = static_sinks(scoped_receiver_fqn, name) + sinks(name)
+            for scoped_sink in found_sinks:
                 sink_steps = _sink_steps(
                     call,
                     args,
@@ -1218,6 +1218,7 @@ def _walk_method_ast(
 
                 if sink_steps:
                     paths.append(prefix + sink_steps)
+            if found_sinks:
                 continue
 
             paths.extend(
@@ -1264,8 +1265,9 @@ def _walk_method_ast(
                     paths.append(prefix + steps)
                 continue
 
-            sink_found = sink(name)
-            if sink_found is not None:
+            receiver_type = local_types.get(obj.lstrip("$"))
+            found_sinks = static_sinks(receiver_type, name) + sinks(name)
+            for sink_found in found_sinks:
                 sink_steps = _sink_steps(
                     call,
                     args,
@@ -1280,6 +1282,7 @@ def _walk_method_ast(
 
                 if sink_steps:
                     paths.append(prefix + sink_steps)
+            if found_sinks:
                 continue
 
             # Which arguments carry tainted data, and which kinds. Computed
@@ -1383,28 +1386,48 @@ def _walk_method_ast(
             if invoked.type not in ("name", "qualified_name"):
                 continue
             fname = node_text(invoked, source)
-            sink_found = sink(fname)
-            if sink_found is None:
-                continue
             args_node = call.child_by_field_name("arguments")
             args = (
                 [a for a in args_node.children if a.type not in ("(", ")", ",")]
                 if args_node is not None
                 else []
             )
-            sink_steps = _sink_steps(
-                call,
-                args,
-                sink_found,
-                parsed,
-                fname,
-                local,
-                request_vars,
-                resolve,
-                validated_fields,
-            )
-            if sink_steps:
-                paths.append(prefix + sink_steps)
+
+            # Special case for curl_setopt
+            if fname == "curl_setopt":
+                if len(args) >= 3 and node_text(args[1], source).strip() == "CURLOPT_URL":
+                    sink_steps = _sink_steps(
+                        call,
+                        args,
+                        (2, TaintKind.URL, "php.ssrf"),
+                        parsed,
+                        fname,
+                        local,
+                        request_vars,
+                        resolve,
+                        validated_fields,
+                    )
+                    if sink_steps:
+                        paths.append(prefix + sink_steps)
+                continue
+
+            found_sinks = sinks(fname)
+            if not found_sinks:
+                continue
+            for sink_found in found_sinks:
+                sink_steps = _sink_steps(
+                    call,
+                    args,
+                    sink_found,
+                    parsed,
+                    fname,
+                    local,
+                    request_vars,
+                    resolve,
+                    validated_fields,
+                )
+                if sink_steps:
+                    paths.append(prefix + sink_steps)
 
         # 2d. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
         #     docs/03-parser is explicit about these - "Dynamic dispatch. Mark the
@@ -1576,9 +1599,9 @@ def find_taint_paths(
 
     # Walking nested statements can reach the same call twice, so collapse
     # paths that are step-for-step identical before returning.
-    unique: dict[tuple[tuple[str, str, int], ...], list[PathStep]] = {}
+    unique: dict[tuple[tuple[str, str, int, str | None], ...], list[PathStep]] = {}
     for path in paths:
-        key = tuple((s.role, str(s.span.file), s.span.start_line) for s in path)
+        key = tuple((s.role, str(s.span.file), s.span.start_line, s.rule_id) for s in path)
         unique.setdefault(key, path)
 
     return sorted(unique.values(), key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))

@@ -31,6 +31,7 @@ class TaintKind(StrEnum):
     HTML = "html"
     SHELL = "shell"
     PATH = "path"
+    URL = "url"
 
     # Reaches eval(), unserialize(), create_function(), dynamic include/require.
     # Nothing clears this kind: there is no sanitizer that makes untrusted input
