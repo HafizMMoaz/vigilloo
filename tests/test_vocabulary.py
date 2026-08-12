@@ -48,8 +48,8 @@ def test_escaping_helpers_clear_html_but_not_sql() -> None:
     assert TaintKind.SQL not in sanitizer_clears("htmlspecialchars")
 
 
-def test_numeric_coercion_clears_both_kinds() -> None:
-    assert sanitizer_clears("intval") == frozenset({TaintKind.SQL, TaintKind.HTML})
+def test_numeric_coercion_clears_multiple_kinds() -> None:
+    assert sanitizer_clears("intval") == frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.PATH})
 
 
 def test_anti_sanitizers_clear_nothing() -> None:
@@ -81,6 +81,7 @@ def test_all_kinds_is_what_the_engine_can_reason_about() -> None:
             TaintKind.MASS_ASSIGN,
             TaintKind.SHELL,
             TaintKind.CODE,
+            TaintKind.PATH,
         }
     )
 

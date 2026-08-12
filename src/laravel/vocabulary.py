@@ -212,6 +212,7 @@ SQL_INJECTION_RULE = "php.sql-injection"
 XSS_RULE = "php.xss"
 COMMAND_INJECTION_RULE = "php.command-injection"
 CODE_EXECUTION_RULE = "php.code-execution"
+PATH_TRAVERSAL_RULE = "php.path-traversal"
 MASS_ASSIGNMENT_RULE = "laravel.mass-assignment"
 MISSING_AUTHORIZATION_RULE = "laravel.missing-authorization"
 
@@ -277,6 +278,13 @@ SINKS: dict[str, tuple[int, TaintKind, str]] = {
     "usort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
     "uasort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
     "uksort": (1, TaintKind.CODE, CODE_EXECUTION_RULE),
+    # Path traversal sinks (CWE-22 / CWE-434).
+    "file_get_contents": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "file_put_contents": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "fopen": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "unlink": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "copy": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
+    "rename": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
 }
 
 # The DB facade, by every name a project can legitimately call it.
@@ -300,23 +308,40 @@ PROCESS_FACADE_FQNS = frozenset(
     }
 )
 
-STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = {
-    (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
-    for facade in DB_FACADE_FQNS
-    for method in (
-        "raw",
-        "statement",
-        "unprepared",
-        "select",
-        "insert",
-        "update",
-        "delete",
-    )
-} | {
-    (facade, method): (0, TaintKind.SHELL, COMMAND_INJECTION_RULE)
-    for facade in PROCESS_FACADE_FQNS
-    for method in ("run", "start", "fromShellCommandline")
-}
+# The Storage facade, for filesystem access.
+STORAGE_FACADE_FQNS = frozenset(
+    {
+        "Illuminate\\Support\\Facades\\Storage",
+        "Illuminate\\Filesystem\\FilesystemManager",
+        "Storage",
+    }
+)
+
+STATIC_SINKS: dict[tuple[str, str], tuple[int, TaintKind, str]] = (
+    {
+        (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
+        for facade in DB_FACADE_FQNS
+        for method in (
+            "raw",
+            "statement",
+            "unprepared",
+            "select",
+            "insert",
+            "update",
+            "delete",
+        )
+    }
+    | {
+        (facade, method): (0, TaintKind.SHELL, COMMAND_INJECTION_RULE)
+        for facade in PROCESS_FACADE_FQNS
+        for method in ("run", "start", "fromShellCommandline")
+    }
+    | {
+        (facade, method): (0, TaintKind.PATH, PATH_TRAVERSAL_RULE)
+        for facade in STORAGE_FACADE_FQNS
+        for method in ("get", "put", "delete", "disk")
+    }
+)
 
 SINK_ARG_NAMES: dict[str, str] = {
     "orderByRaw": "sql",
@@ -355,6 +380,16 @@ SINK_ARG_NAMES: dict[str, str] = {
     "usort": "callback",
     "uasort": "callback",
     "uksort": "callback",
+    # Path traversal sink parameter names.
+    "file_get_contents": "filename",
+    "file_put_contents": "filename",
+    "fopen": "filename",
+    "unlink": "filename",
+    "copy": "from",
+    "rename": "from",
+    "get": "path",
+    "put": "path",
+    "disk": "name",
 }
 
 
@@ -367,10 +402,11 @@ SANITIZERS: dict[str, frozenset[TaintKind]] = {
     "e": frozenset({TaintKind.HTML}),
     "htmlspecialchars": frozenset({TaintKind.HTML}),
     "htmlentities": frozenset({TaintKind.HTML}),
-    "intval": frozenset({TaintKind.SQL, TaintKind.HTML}),
-    "floatval": frozenset({TaintKind.SQL, TaintKind.HTML}),
+    "intval": frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.PATH}),
+    "floatval": frozenset({TaintKind.SQL, TaintKind.HTML, TaintKind.PATH}),
     "escapeshellarg": frozenset({TaintKind.SHELL}),
     "escapeshellcmd": frozenset({TaintKind.SHELL}),
+    "basename": frozenset({TaintKind.PATH}),
 }
 
 

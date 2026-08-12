@@ -12,6 +12,7 @@ from .laravel.vocabulary import (
     COMMAND_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
     MISSING_AUTHORIZATION_RULE,
+    PATH_TRAVERSAL_RULE,
     SQL_INJECTION_RULE,
     XSS_RULE,
 )
@@ -81,6 +82,19 @@ CODE_EXECUTION = Rule(
 )
 
 
+PATH_TRAVERSAL = Rule(
+    id=PATH_TRAVERSAL_RULE,
+    title="Path Traversal",
+    severity="critical",
+    cwe=("CWE-22", "CWE-434"),
+    remediation=(
+        "Validate the filename against a strict allowlist, or use basename() to "
+        "strip directory components before using it in a filesystem operation. "
+        "Ensure paths resolve to the intended directory."
+    ),
+)
+
+
 MASS_ASSIGNMENT = Rule(
     id=MASS_ASSIGNMENT_RULE,
     title="Mass Assignment",
@@ -113,6 +127,7 @@ _BY_ID: dict[str, Rule] = {
         XSS,
         COMMAND_INJECTION,
         CODE_EXECUTION,
+        PATH_TRAVERSAL,
         MASS_ASSIGNMENT,
         MISSING_AUTHORIZATION,
     )
