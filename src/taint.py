@@ -1077,10 +1077,10 @@ def _is_html_response(node: Node, source: bytes) -> bool:
             if method_name == "header":
                 args_node = node.child_by_field_name("arguments")
                 if args_node:
-                    args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
-                    if len(args) >= 2:
-                        header_name = node_text(args[0], source).strip("'\"").lower()
-                        header_val = node_text(args[1], source).strip("'\"").lower()
+                    header_args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+                    if len(header_args) >= 2:
+                        header_name = node_text(header_args[0], source).strip("'\"").lower()
+                        header_val = node_text(header_args[1], source).strip("'\"").lower()
                         if header_name == "content-type" and "json" in header_val:
                             return False
             return True

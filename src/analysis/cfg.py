@@ -47,12 +47,12 @@ class CFG:
 
 
 class CFGBuilder:
-    def __init__(self):
+    def __init__(self) -> None:
         self._block_id = 0
         self.blocks: list[BasicBlock] = []
         self.entry = self._new_block()
         self.exit = self._new_block()
-        self.current_block = self.entry
+        self.current_block: BasicBlock | None = self.entry
 
         # Stacks for break/continue
         self.break_targets: list[BasicBlock] = []
@@ -120,6 +120,7 @@ class CFGBuilder:
             self.current_block.statements.append(node)
 
     def _walk_if(self, node: Node) -> None:
+        assert self.current_block is not None
         self.current_block.statements.append(node)
 
         cond_block = self.current_block
@@ -148,6 +149,7 @@ class CFGBuilder:
         self.current_block = merge_block
 
     def _walk_loop(self, node: Node) -> None:
+        assert self.current_block is not None
         self.current_block.statements.append(node)
 
         cond_block = self.current_block
@@ -173,6 +175,7 @@ class CFGBuilder:
         self.current_block = exit_block
 
     def _walk_do_while(self, node: Node) -> None:
+        assert self.current_block is not None
         self.current_block.statements.append(node)
 
         body_block = self._new_block()
@@ -200,6 +203,7 @@ class CFGBuilder:
         self.current_block = exit_block
 
     def _walk_switch(self, node: Node) -> None:
+        assert self.current_block is not None
         self.current_block.statements.append(node)
 
         cond_block = self.current_block
@@ -239,11 +243,13 @@ class CFGBuilder:
         self.current_block = exit_block
 
     def _walk_match(self, node: Node) -> None:
+        assert self.current_block is not None
         self.current_block.statements.append(node)
         # Match expressions aren't complex statement sequences, but they can be evaluated
         pass
 
     def _walk_try(self, node: Node) -> None:
+        assert self.current_block is not None
         self.current_block.statements.append(node)
 
         body_block = self._new_block()
