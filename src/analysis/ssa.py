@@ -1,6 +1,8 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
 from tree_sitter import Node
-from .cfg import CFG, BasicBlock
+
+from .cfg import CFG
 
 
 @dataclass(frozen=True)
@@ -135,7 +137,8 @@ class SSABuilder:
                 self.writes[node.id] = ver
             state[name] = ver
         elif node.type == "subscript_expression":
-            # Assignment to array element: reads the base array, writes a new version of the base array
+            # Assignment to array element: reads the base array,
+            # writes a new version of the base array
             base = node.children[0] if node.children else None
             if base and base.type == "variable_name":
                 name = self._var_name(base)
@@ -158,7 +161,8 @@ class SSABuilder:
                     self._handle_assignment(child, state)
         else:
             # Maybe a property access $this->foo = 1
-            # We treat the base object as being read, but property sensitivity is beyond this simple SSA for now
+            # We treat the base object as being read,
+            # but property sensitivity is beyond this simple SSA for now
             self._walk_node(node, state)
 
     def _var_name(self, node: Node) -> str:

@@ -1,7 +1,8 @@
 import tree_sitter_php
-from tree_sitter import Language, Parser, Node
+from tree_sitter import Language, Node, Parser
+
 from vigilloo.analysis.cfg import CFGBuilder
-from vigilloo.analysis.ssa import SSABuilder, PhiNode, VariableVersion
+from vigilloo.analysis.ssa import PhiNode, SSABuilder
 
 
 def parse_snippet(code: str) -> tuple[Node, bytes]:

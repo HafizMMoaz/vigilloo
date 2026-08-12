@@ -10,14 +10,15 @@ from pathlib import Path
 
 from tree_sitter import Node
 
+from .analysis.cfg import CFGBuilder
+from .analysis.ssa import PhiNode, SSABuilder, SSAValue
+
 # Statement kinds that can carry a source, a propagating call or a sink.
 # return_statement is not optional: idiomatic Laravel returns the query
 # directly, so `return $repo->search($x);` and `return DB::table(...)
 # ->orderByRaw(...)` are where the interesting calls actually live. A walk
 # over expression_statement alone finds nothing in a typical repository.
 from .graph import Project
-from .analysis.cfg import CFGBuilder
-from .analysis.ssa import SSABuilder, PhiNode, VariableVersion, SSAValue
 from .laravel.facades import resolve_facade
 from .laravel.models import Protection, model_config
 from .laravel.routes import uri_params
@@ -155,20 +156,6 @@ def _get_first_string_arg(args_node: Node | None, source: bytes) -> str | None:
     return None
 
 
-def _union_of_children(
-    node: Node,
-    source: bytes,
-    local: LocalState,
-    request_vars: frozenset[str],
-    resolve: ClassResolver | None = None,
-    validated_fields: dict[str, frozenset[TaintKind]] | None = None,
-) -> frozenset[TaintKind]:
-    kinds: frozenset[TaintKind] = frozenset()
-    for child in node.children:
-        kinds |= expr_kinds(child, source, local, request_vars, resolve, validated_fields)
-    return kinds
-
-
 class LocalState:
     def __init__(
         self,
@@ -185,6 +172,20 @@ class LocalState:
         if self.get_node_taint:
             return self.get_node_taint(name, node)
         return self.linear_state.get(name, frozenset())
+
+
+def _union_of_children(
+    node: Node,
+    source: bytes,
+    local: LocalState,
+    request_vars: frozenset[str],
+    resolve: ClassResolver | None = None,
+    validated_fields: dict[str, frozenset[TaintKind]] | None = None,
+) -> frozenset[TaintKind]:
+    kinds: frozenset[TaintKind] = frozenset()
+    for child in node.children:
+        kinds |= expr_kinds(child, source, local, request_vars, resolve, validated_fields)
+    return kinds
 
 
 def _get_local(local: LocalState, name: str, node: Node) -> frozenset[TaintKind]:

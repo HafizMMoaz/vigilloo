@@ -3,7 +3,7 @@ from pathlib import Path
 from vigilloo.graph import load_project
 from vigilloo.models import ALL_KINDS
 from vigilloo.parser import find_all
-from vigilloo.taint import expr_kinds, LocalState
+from vigilloo.taint import LocalState, expr_kinds
 
 
 def test_expr(tmp_path: Path):

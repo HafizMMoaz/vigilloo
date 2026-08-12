@@ -35,7 +35,7 @@ from vigilloo.laravel.vocabulary import SANITIZERS, sanitizer_clears
 from vigilloo.models import ALL_KINDS, TaintKind
 from vigilloo.parser import ParsedFile, node_span, node_text, parse_php, parse_source, walk
 from vigilloo.symbols import extract_symbols
-from vigilloo.taint import expr_kinds, LocalState
+from vigilloo.taint import LocalState, expr_kinds
 
 # ---------------------------------------------------------------------------
 # A grammar of PHP, small enough to stay valid and wide enough to be worth generating.
