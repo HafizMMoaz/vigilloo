@@ -218,6 +218,7 @@ PATH_TRAVERSAL_RULE = "php.path-traversal"
 SSRF_RULE = "php.ssrf"
 MASS_ASSIGNMENT_RULE = "laravel.mass-assignment"
 MISSING_AUTHORIZATION_RULE = "laravel.missing-authorization"
+OPEN_REDIRECT_RULE = "php.open-redirect"
 
 # Eloquent array writes -> (index of the mass-assigned argument, bypasses
 # protection).
@@ -295,6 +296,8 @@ SINKS: dict[str, tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]]] 
     "copy": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
     "rename": (0, TaintKind.PATH, PATH_TRAVERSAL_RULE),
     "fsockopen": (0, TaintKind.URL, SSRF_RULE),
+    "header": (0, TaintKind.HEADER, OPEN_REDIRECT_RULE),
+    "redirect": (0, TaintKind.HEADER, OPEN_REDIRECT_RULE),
 }
 
 # The DB facade, by every name a project can legitimately call it.
@@ -384,10 +387,17 @@ STATIC_SINKS: Mapping[
             "put",
             "patch",
             "delete",
+            "head",
             "request",
             "requestAsync",
             "getAsync",
         )
+    }
+
+    | {
+        ("Illuminate\\Routing\\Redirector", "to"): (0, TaintKind.HEADER, OPEN_REDIRECT_RULE),
+        ("Illuminate\\Routing\\Redirector", "away"): (0, TaintKind.HEADER, OPEN_REDIRECT_RULE),
+        ("Illuminate\\Routing\\ResponseFactory", "header"): (1, TaintKind.HEADER, OPEN_REDIRECT_RULE),
     }
 )
 

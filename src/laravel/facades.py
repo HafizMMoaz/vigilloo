@@ -29,6 +29,8 @@ BUILTIN_FACADES: dict[str, str] = {
     "Illuminate\\Support\\Facades\\Validator": "Illuminate\\Validation\\Factory",
     "Illuminate\\Support\\Facades\\Blade": "Illuminate\\View\\Compilers\\BladeCompiler",
     "Illuminate\\Support\\Facades\\Process": "Illuminate\\Process\\Factory",
+    "Illuminate\\Support\\Facades\\Redirect": "Illuminate\\Routing\\Redirector",
+    "Illuminate\\Support\\Facades\\Response": "Illuminate\\Routing\\ResponseFactory",
 }
 
 
