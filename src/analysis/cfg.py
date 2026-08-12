@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
+
 from tree_sitter import Node
 
 
@@ -211,7 +212,7 @@ class CFGBuilder:
 
             case_blocks = [self._new_block() for _ in cases]
 
-            for i, case_node in enumerate(cases):
+            for i, _ in enumerate(cases):
                 cond_block.add_successor(case_blocks[i], EdgeType.TRUE)
                 if i + 1 < len(case_blocks):
                     cond_block.add_successor(case_blocks[i + 1], EdgeType.FALSE)

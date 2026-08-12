@@ -1,6 +1,5 @@
-import pytest
 from pathlib import Path
-from vigilloo.models import TaintKind
+
 from vigilloo.rules import XSS_RULE
 
 

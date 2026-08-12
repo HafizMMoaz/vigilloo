@@ -1,6 +1,7 @@
-from vigilloo.analysis.cfg import build_cfg, EdgeType
-from tree_sitter import Parser, Language
 import tree_sitter_php
+from tree_sitter import Language, Parser
+
+from vigilloo.analysis.cfg import build_cfg
 
 
 # Note: this might need adjustment depending on how parser is initialized in the project
@@ -8,7 +9,7 @@ def parse_snippet(code: str):
     LANGUAGE = Language(tree_sitter_php.language_php())
     parser = Parser(LANGUAGE)
     # wrap in php tags for tree-sitter
-    tree = parser.parse(f"<?php\n{code}".encode("utf-8"))
+    tree = parser.parse(f"<?php\n{code}".encode())
     # returns the compound_statement of a method body roughly
     # for simplicity, we assume the code is just statements
     return tree.root_node
