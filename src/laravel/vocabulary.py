@@ -393,11 +393,14 @@ STATIC_SINKS: Mapping[
             "getAsync",
         )
     }
-
     | {
         ("Illuminate\\Routing\\Redirector", "to"): (0, TaintKind.HEADER, OPEN_REDIRECT_RULE),
         ("Illuminate\\Routing\\Redirector", "away"): (0, TaintKind.HEADER, OPEN_REDIRECT_RULE),
-        ("Illuminate\\Routing\\ResponseFactory", "header"): (1, TaintKind.HEADER, OPEN_REDIRECT_RULE),
+        ("Illuminate\\Routing\\ResponseFactory", "header"): (
+            1,
+            TaintKind.HEADER,
+            OPEN_REDIRECT_RULE,
+        ),
     }
 )
 
