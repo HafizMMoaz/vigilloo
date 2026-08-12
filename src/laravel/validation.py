@@ -38,6 +38,9 @@ def rule_clears(rule_str: str) -> frozenset[TaintKind]:
     if rule_clean.startswith("exists:"):
         return frozenset({TaintKind.SQL})
 
+    if rule_clean.startswith("starts_with:/"):
+        return frozenset({TaintKind.HEADER, TaintKind.URL})
+
     base_rule = rule_clean.split(":", 1)[0].strip()
     return _RULE_CLEARS.get(base_rule, frozenset())
 

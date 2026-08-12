@@ -12,6 +12,7 @@ from .laravel.vocabulary import (
     COMMAND_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
     MISSING_AUTHORIZATION_RULE,
+    OPEN_REDIRECT_RULE,
     PATH_TRAVERSAL_RULE,
     SQL_INJECTION_RULE,
     SSRF_RULE,
@@ -133,6 +134,17 @@ MISSING_AUTHORIZATION = Rule(
     ),
 )
 
+OPEN_REDIRECT = Rule(
+    id=OPEN_REDIRECT_RULE,
+    title="Open Redirect / Header Injection",
+    severity="medium",
+    cwe=("CWE-601", "CWE-113"),
+    remediation=(
+        "Validate the URL against a strict allowlist of permitted hosts or paths. "
+        "Do not allow arbitrary user input to form the Location header."
+    ),
+)
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -144,6 +156,7 @@ _BY_ID: dict[str, Rule] = {
         SSRF,
         MASS_ASSIGNMENT,
         MISSING_AUTHORIZATION,
+        OPEN_REDIRECT,
     )
 }
 
