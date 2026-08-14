@@ -1027,6 +1027,7 @@ def _walk_method(
             inner_paths = _walk_method_ast(
                 project, fqn, tainted, depth, max_depth, stats, receiver_fqn, new_visited
             )
+            print(f"DEBUG: inner_paths length: {len(inner_paths)}")
             if len(inner_paths) == len(summary.paths_by_taint[cache_key]):
                 break
             summary.paths_by_taint[cache_key] = inner_paths
@@ -1167,9 +1168,9 @@ def _walk_method_ast(
 
     initial_tainted = dict(tainted)
 
-    cfg = CFGBuilder().build(method_node)
-    ssa = SSABuilder(cfg, source)
-    ssa.build()
+    # cfg = CFGBuilder().build(method_node.child_by_field_name("body") or method_node)
+    # ssa = SSABuilder(cfg, source)
+    # ssa.build()
 
     ssa_taints: dict[SSAValue, frozenset[TaintKind]] = {}
 
@@ -1198,406 +1199,435 @@ def _walk_method_ast(
 
     local = LocalState(initial_tainted, get_taint)
 
-    from .laravel.validation import extract_validation_cleared
 
+    from .laravel.validation import extract_validation_cleared
     validated_fields = extract_validation_cleared(method_node, source, parsed)
 
-    statements = [n for n in walk(method_node) if n.type in _STATEMENT_TYPES]
+    def explore(
+        block: BasicBlock,
+        current_prefix: list[PathStep],
+        visited_edges: frozenset[tuple[int, int]],
+        current_linear: dict[str, frozenset[TaintKind]],
+        current_local_types: dict[str, str],
+    ) -> None:
+        prefix = current_prefix.copy()
+        local_types = current_local_types.copy()
+        linear_state = current_linear.copy()
+        local = LocalState(linear_state, get_taint)
 
-    for stmt in statements:
-        anti_steps = _anti_sanitizer_steps(
-            stmt, source, parsed, local, request_vars, resolve, validated_fields
-        )
-        if anti_steps:
-            prefix = prefix + anti_steps
+        for stmt in block.statements:
+            anti_steps = _anti_sanitizer_steps(
+                stmt, source, parsed, local, request_vars, resolve, validated_fields
+            )
+            if anti_steps:
+                prefix = prefix + anti_steps
 
-        # 1. Assignment from a Request source, or from an already tainted value.
-        for assign in find_all(stmt, "assignment_expression"):
-            left = assign.child_by_field_name("left")
-            right = assign.child_by_field_name("right")
-            if left is None or right is None:
-                continue
-            target = _var_name(left, source)
-
-            # `$u = User::find($id)` and `$u = new User(...)` both make $u a
-            # User, which is what lets the instance-form Eloquent writes below
-            # resolve their receiver.
-            constructed = _constructed_class(right, source, project, parsed.path)
-            if constructed is not None:
-                local_types[target] = constructed
-            else:
-                local_types.pop(target, None)
-
-            kinds = expr_kinds(right, source, local, request_vars, resolve, validated_fields)
-
-            # Find the written SSAValue to update its taint
-            val = None
-            if left.id in ssa.writes:
-                val = ssa.writes[left.id]
-            elif left.type == "subscript_expression":
-                base = left.child_by_field_name("array") or (
-                    left.children[0] if left.children else None
-                )
-                if base and base.id in ssa.writes:
-                    val = ssa.writes[base.id]
-
-            if kinds:
-                if val:
-                    ssa_taints[val] = kinds
-                local.linear_state[target] = kinds
-            else:
-                # Reassigned from a clean or fully sanitized value: whatever
-                # taint the target carried before this statement no longer
-                # applies.
-                if val:
-                    # Pop isn't strictly necessary since it wouldn't be in ssa_taints yet, but safe.
-                    ssa_taints.pop(val, None)
-                local.linear_state.pop(target, None)
-
-            # expr_kinds computes *what* the value carries; the evidence path
-            # still has to record *where* it entered, so the crossing is
-            # detected separately. The step is emitted even when a sanitizer
-            # cleared every kind, because it costs nothing on a path that then
-            # never reaches a sink, and omitting it would drop the source step
-            # from a path where only one kind was cleared.
-            entered = _source_note(right, source, request_vars, resolve)
-            if entered is not None:
-                prefix = prefix + [
-                    PathStep(
-                        role="source",
-                        span=node_span(assign, parsed.path),
-                        snippet=node_text(assign, source).strip(),
-                        note=entered,
-                    )
-                ]
-
-        for shell_expr in find_all(stmt, "shell_command_expression"):
-            if TaintKind.SHELL in expr_kinds(
-                shell_expr, source, local, request_vars, resolve, validated_fields
-            ):
-                sink_step = PathStep(
-                    role="sink",
-                    span=node_span(shell_expr, parsed.path),
-                    snippet=node_text(shell_expr, source).strip(),
-                    note="shell execution operator (backticks)",
-                    rule_id=COMMAND_INJECTION_RULE,
-                )
-                paths.append(prefix + [sink_step])
-
-        # Dynamic include/require - language constructs (`include $x`,
-        # `require_once $x`) that execute a file whose path comes off the wire.
-        # Tree-sitter parses them as include_expression / require_expression, not
-        # as function_call_expression, so the 2c loop above does not reach them.
-        # Treated as code execution (CWE-98 LFI/RFI) because an attacker who
-        # controls the path can load arbitrary code.
-        for _node_type in (
-            "include_expression",
-            "include_once_expression",
-            "require_expression",
-            "require_once_expression",
-        ):
-            for inc_expr in find_all(stmt, _node_type):
-                # The operand is the first non-keyword child.
-                operand = next(
-                    (
-                        c
-                        for c in inc_expr.children
-                        if c.type not in ("include", "include_once", "require", "require_once")
-                    ),
-                    None,
-                )
-                if operand is None:
+            # 1. Assignment from a Request source, or from an already tainted value.
+            for assign in find_all(stmt, "assignment_expression"):
+                left = assign.child_by_field_name("left")
+                right = assign.child_by_field_name("right")
+                if left is None or right is None:
                     continue
-                if TaintKind.CODE not in expr_kinds(
-                    operand, source, local, request_vars, resolve, validated_fields
-                ):
-                    continue
-                paths.append(
-                    prefix
-                    + [
-                        PathStep(
-                            role="sink",
-                            span=node_span(inc_expr, parsed.path),
-                            snippet=node_text(inc_expr, source).strip(),
-                            note="dynamic file inclusion (LFI/RFI)",
-                            rule_id=CODE_EXECUTION_RULE,
-                        )
-                    ]
-                )
+                target = _var_name(left, source)
 
-        # preg_replace with /e modifier - argument 0 is the pattern and argument
-        # 1 is the replacement that gets eval'd. Tainted pattern fires CWE-94.
-        # Removed in PHP 7 but still found in legacy codebases.
-        for call in find_all(stmt, "function_call_expression"):
-            invoked = call.child_by_field_name("function")
-            if invoked is None or invoked.type not in ("name", "qualified_name"):
-                continue
-            if node_text(invoked, source) != "preg_replace":
-                continue
-            args_node = call.child_by_field_name("arguments")
-            if args_node is None:
-                continue
-            args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
-            if not args:
-                continue
-            # The pattern is arg 0 - check if a string literal contains /e.
-            pattern_arg = args[0]
-            pattern_text = node_text(pattern_arg, source).lower()
-            if "/e" not in pattern_text and "\\x65" not in pattern_text:
-                continue
-            # Pattern contains /e - check if a tainted value reaches any argument.
-            if any(
-                TaintKind.CODE
-                in expr_kinds(a, source, local, request_vars, resolve, validated_fields)
-                for a in args
-            ):
-                paths.append(
-                    prefix
-                    + [
-                        PathStep(
-                            role="sink",
-                            span=node_span(call, parsed.path),
-                            snippet=node_text(call, source).strip(),
-                            note="preg_replace with /e modifier evaluates replacement as PHP code",
-                            rule_id=CODE_EXECUTION_RULE,
-                        )
-                    ]
-                )
-
-        # 2a. Static calls. `User::create($request->all())` names its class at
-        #     the call site, so it needs no receiver inference - which is why
-        #     it is the form the mass-assignment rule leans on. The same
-        #     property is what makes `DB::raw($sql)` reachable: the receiver is
-        #     written down, so a sink can require one without inferring it.
-        for call in find_all(stmt, "scoped_call_expression"):
-            parts = _scoped_parts(call, source)
-            if parts is None:
-                continue
-            written, name, args = parts
-            scoped_receiver_fqn = _scoped_receiver(
-                project, written, lexical_class, runtime_class, parsed.path
-            )
-
-            steps = _mass_assign_steps(
-                project,
-                call,
-                name,
-                args,
-                scoped_receiver_fqn,
-                parsed,
-                local,
-                request_vars,
-                resolve,
-            )
-            if steps is not None:
-                # Empty means "resolved and safe" - stop here rather than let the
-                # propagator handling below record a lost trail, exactly as 2b does.
-                if steps:
-                    paths.append(prefix + steps)
-                continue
-
-            # A receiver-scoped sink first, then the name-keyed table. Order matters only
-            # for readability today, since no name appears in both, but the scoped table is
-            # the more specific statement and a more specific rule losing to a general one
-            # is the kind of thing that is invisible until the general one is widened.
-            found_sinks = static_sinks(scoped_receiver_fqn, name) + sinks(name)
-            for scoped_sink in found_sinks:
-                sink_steps = _sink_steps(
-                    call,
-                    args,
-                    scoped_sink,
-                    parsed,
-                    name,
-                    local,
-                    request_vars,
-                    resolve,
-                    validated_fields,
-                )
-
-                if sink_steps:
-                    paths.append(prefix + sink_steps)
-            if found_sinks:
-                continue
-
-            paths.extend(
-                _follow_static(
-                    project,
-                    call,
-                    scoped_receiver_fqn,
-                    name,
-                    args,
-                    parsed,
-                    local,
-                    request_vars,
-                    prefix,
-                    depth,
-                    max_depth,
-                    stats,
-                    resolve,
-                    visited=visited,
-                )
-            )
-
-        # 2b. Calls: either a sink, or a step deeper into another method. Both
-        #     spellings of the operator, because `$repo?->search($tainted)` is
-        #     the same call as `$repo->search($tainted)` and stopping at one of
-        #     them loses the trail without recording that anything was lost.
-        for call in find_any(stmt, _MEMBER_CALLS):
-            obj, name, args = _call_parts(call, source)
-
-            steps = _mass_assign_steps(
-                project,
-                call,
-                name,
-                args,
-                local_types.get(obj.lstrip("$")),
-                parsed,
-                local,
-                request_vars,
-                resolve,
-            )
-            if steps is not None:
-                # Empty means "resolved and safe" - stop here without letting
-                # the propagator handling below record a lost trail.
-                if steps:
-                    paths.append(prefix + steps)
-                continue
-
-            receiver_type = local_types.get(obj.lstrip("$"))
-            found_sinks = static_sinks(receiver_type, name) + sinks(name)
-            for sink_found in found_sinks:
-                sink_steps = _sink_steps(
-                    call,
-                    args,
-                    sink_found,
-                    parsed,
-                    name,
-                    local,
-                    request_vars,
-                    resolve,
-                    validated_fields,
-                )
-
-                if sink_steps:
-                    paths.append(prefix + sink_steps)
-            if found_sinks:
-                continue
-
-            # Which arguments carry tainted data, and which kinds. Computed
-            # before the give-up checks because a give-up only counts as a lost
-            # trail when there was something to lose: counting every unresolved
-            # receiver fires on benign calls like $request->input() and a
-            # ->get() chain terminator, and a counter that reports gaps on
-            # correct code trains people to ignore it.
-            passed = {
-                i: kinds
-                for i, arg in enumerate(args)
-                if (kinds := expr_kinds(arg, source, local, request_vars, resolve))
-            }
-
-            # `$this->method($tainted)` resolves through the enclosing class,
-            # including its traits and parents. `$this->prop->method(...)`
-            # resolves through the property's declared type.
-            target_class: str | None
-            if obj == "$this":
-                target_class = runtime_class
-            elif obj.startswith("$this->"):
-                prop = obj.removeprefix("$this->")
-                target_class = project.resolve_property_type(runtime_class, prop)
-            else:
-                target_class = None
-
-            candidates = []
-            confidence = 1.0
-
-            if target_class is None:
-                for cls_fqn in project.classes:
-                    if project.method(f"{cls_fqn}::{name}") is not None:
-                        candidates.append(cls_fqn)
-                if not candidates:
-                    if passed:
-                        _giveup(stats)
-                    continue
-                confidence = 0.4 if len(candidates) == 1 else 0.4 / len(candidates)
-            else:
-                candidates = project.bindings.get(target_class, [target_class])
-                if target_class in project.bindings:
-                    confidence = 0.9 if len(candidates) == 1 else 0.6 / len(candidates)
+                # `$u = User::find($id)` and `$u = new User(...)` both make $u a
+                # User, which is what lets the instance-form Eloquent writes below
+                # resolve their receiver.
+                constructed = _constructed_class(right, source, project, parsed.path)
+                if constructed is not None:
+                    local_types[target] = constructed
                 else:
-                    confidence = 1.0 if obj == "$this" else 0.95
+                    local_types.pop(target, None)
 
-            found_callee = False
+                kinds = expr_kinds(right, source, local, request_vars, resolve, validated_fields)
 
-            for candidate in candidates:
-                callee_fqn = f"{candidate}::{name}"
-                callee = project.method(callee_fqn)
-                if callee is None:
+                # Find the written SSAValue to update its taint
+                val = None
+                if left.id in ssa.writes:
+                    val = ssa.writes[left.id]
+                elif left.type == "subscript_expression":
+                    base = left.child_by_field_name("array") or (
+                        left.children[0] if left.children else None
+                    )
+                    if base and base.id in ssa.writes:
+                        val = ssa.writes[base.id]
+
+                if kinds:
+                    if val:
+                        ssa_taints[val] = kinds
+                    local.linear_state[target] = kinds
+                else:
+                    # Reassigned from a clean or fully sanitized value: whatever
+                    # taint the target carried before this statement no longer
+                    # applies.
+                    if val:
+                        # Pop isn't strictly necessary since it wouldn't be in ssa_taints yet, but safe.
+                        ssa_taints.pop(val, None)
+                    local.linear_state.pop(target, None)
+
+                # expr_kinds computes *what* the value carries; the evidence path
+                # still has to record *where* it entered, so the crossing is
+                # detected separately. The step is emitted even when a sanitizer
+                # cleared every kind, because it costs nothing on a path that then
+                # never reaches a sink, and omitting it would drop the source step
+                # from a path where only one kind was cleared.
+                entered = _source_note(right, source, request_vars, resolve)
+                if entered is not None:
+                    prefix = prefix + [
+                        PathStep(
+                            role="source",
+                            span=node_span(assign, parsed.path),
+                            snippet=node_text(assign, source).strip(),
+                            note=entered,
+                        )
+                    ]
+
+            for shell_expr in find_all(stmt, "shell_command_expression"):
+                if TaintKind.SHELL in expr_kinds(
+                    shell_expr, source, local, request_vars, resolve, validated_fields
+                ):
+                    sink_step = PathStep(
+                        role="sink",
+                        span=node_span(shell_expr, parsed.path),
+                        snippet=node_text(shell_expr, source).strip(),
+                        note="shell execution operator (backticks)",
+                        rule_id=COMMAND_INJECTION_RULE,
+                    )
+                    paths.append(prefix + [sink_step])
+
+            # Dynamic include/require - language constructs (`include $x`,
+            # `require_once $x`) that execute a file whose path comes off the wire.
+            # Tree-sitter parses them as include_expression / require_expression, not
+            # as function_call_expression, so the 2c loop above does not reach them.
+            # Treated as code execution (CWE-98 LFI/RFI) because an attacker who
+            # controls the path can load arbitrary code.
+            for _node_type in (
+                "include_expression",
+                "include_once_expression",
+                "require_expression",
+                "require_once_expression",
+            ):
+                for inc_expr in find_all(stmt, _node_type):
+                    # The operand is the first non-keyword child.
+                    operand = next(
+                        (
+                            c
+                            for c in inc_expr.children
+                            if c.type not in ("include", "include_once", "require", "require_once")
+                        ),
+                        None,
+                    )
+                    if operand is None:
+                        continue
+                    if TaintKind.CODE not in expr_kinds(
+                        operand, source, local, request_vars, resolve, validated_fields
+                    ):
+                        continue
+                    paths.append(
+                        prefix
+                        + [
+                            PathStep(
+                                role="sink",
+                                span=node_span(inc_expr, parsed.path),
+                                snippet=node_text(inc_expr, source).strip(),
+                                note="dynamic file inclusion (LFI/RFI)",
+                                rule_id=CODE_EXECUTION_RULE,
+                            )
+                        ]
+                    )
+
+            # preg_replace with /e modifier - argument 0 is the pattern and argument
+            # 1 is the replacement that gets eval'd. Tainted pattern fires CWE-94.
+            # Removed in PHP 7 but still found in legacy codebases.
+            for call in find_all(stmt, "function_call_expression"):
+                invoked = call.child_by_field_name("function")
+                if invoked is None or invoked.type not in ("name", "qualified_name"):
                     continue
-
-                found_callee = True
-                if not passed:
+                if node_text(invoked, source) != "preg_replace":
                     continue
-
-                _followed(stats)
-                callee_tainted = {
-                    callee.params[i]: kinds for i, kinds in passed.items() if i < len(callee.params)
-                }
-                if not callee_tainted:
+                args_node = call.child_by_field_name("arguments")
+                if args_node is None:
                     continue
+                args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+                if not args:
+                    continue
+                # The pattern is arg 0 - check if a string literal contains /e.
+                pattern_arg = args[0]
+                pattern_text = node_text(pattern_arg, source).lower()
+                if "/e" not in pattern_text and "\\x65" not in pattern_text:
+                    continue
+                # Pattern contains /e - check if a tainted value reaches any argument.
+                if any(
+                    TaintKind.CODE
+                    in expr_kinds(a, source, local, request_vars, resolve, validated_fields)
+                    for a in args
+                ):
+                    paths.append(
+                        prefix
+                        + [
+                            PathStep(
+                                role="sink",
+                                span=node_span(call, parsed.path),
+                                snippet=node_text(call, source).strip(),
+                                note="preg_replace with /e modifier evaluates replacement as PHP code",
+                                rule_id=CODE_EXECUTION_RULE,
+                            )
+                        ]
+                    )
 
-                step = PathStep(
-                    role="propagator",
-                    span=node_span(call, parsed.path),
-                    snippet=node_text(call, source).strip(),
-                    note=f"argument {min(passed)} into {callee.fqn}",
-                    confidence=confidence,
+            # 2a. Static calls. `User::create($request->all())` names its class at
+            #     the call site, so it needs no receiver inference - which is why
+            #     it is the form the mass-assignment rule leans on. The same
+            #     property is what makes `DB::raw($sql)` reachable: the receiver is
+            #     written down, so a sink can require one without inferring it.
+            for call in find_all(stmt, "scoped_call_expression"):
+                parts = _scoped_parts(call, source)
+                if parts is None:
+                    continue
+                written, name, args = parts
+                scoped_receiver_fqn = _scoped_receiver(
+                    project, written, lexical_class, runtime_class, parsed.path
                 )
 
-                inner_paths = _walk_method(
+                steps = _mass_assign_steps(
                     project,
-                    callee_fqn,
-                    callee_tainted,
-                    [],
-                    depth + 1,
-                    max_depth,
-                    stats,
-                    candidate,
-                    visited=visited,
+                    call,
+                    name,
+                    args,
+                    scoped_receiver_fqn,
+                    parsed,
+                    local,
+                    request_vars,
+                    resolve,
                 )
+                if steps is not None:
+                    # Empty means "resolved and safe" - stop here rather than let the
+                    # propagator handling below record a lost trail, exactly as 2b does.
+                    if steps:
+                        paths.append(prefix + steps)
+                    continue
 
-                for inner_path in inner_paths:
-                    paths.append(prefix + [step] + inner_path)
-
-            if not found_callee and passed:
-                _giveup(stats)
-
-        # 2c. Named function call sinks: `exec($cmd)`, `shell_exec($cmd)`, etc.
-        #     Checked before the dynamic-callee give-up below. The distinction
-        #     is between a *named* callee whose text appears in the SINKS table
-        #     (a security hazard) and an *unresolvable* callee whose identity
-        #     is not known (a coverage gap). The first is a finding; the second
-        #     is a give-up.
-        for call in find_all(stmt, "function_call_expression"):
-            invoked = call.child_by_field_name("function")
-            if invoked is None:
-                continue
-            if invoked.type not in ("name", "qualified_name"):
-                continue
-            fname = node_text(invoked, source)
-            args_node = call.child_by_field_name("arguments")
-            args = (
-                [a for a in args_node.children if a.type not in ("(", ")", ",")]
-                if args_node is not None
-                else []
-            )
-
-            # Special case for curl_setopt
-            if fname == "curl_setopt":
-                if len(args) >= 3 and node_text(args[1], source).strip() == "CURLOPT_URL":
+                # A receiver-scoped sink first, then the name-keyed table. Order matters only
+                # for readability today, since no name appears in both, but the scoped table is
+                # the more specific statement and a more specific rule losing to a general one
+                # is the kind of thing that is invisible until the general one is widened.
+                found_sinks = static_sinks(scoped_receiver_fqn, name) + sinks(name)
+                for scoped_sink in found_sinks:
                     sink_steps = _sink_steps(
                         call,
                         args,
-                        (2, TaintKind.URL, "php.ssrf"),
+                        scoped_sink,
+                        parsed,
+                        name,
+                        local,
+                        request_vars,
+                        resolve,
+                        validated_fields,
+                    )
+
+                    if sink_steps:
+                        paths.append(prefix + sink_steps)
+                if found_sinks:
+                    continue
+
+                paths.extend(
+                    _follow_static(
+                        project,
+                        call,
+                        scoped_receiver_fqn,
+                        name,
+                        args,
+                        parsed,
+                        local,
+                        request_vars,
+                        prefix,
+                        depth,
+                        max_depth,
+                        stats,
+                        resolve,
+                        visited=visited,
+                    )
+                )
+
+            # 2b. Calls: either a sink, or a step deeper into another method. Both
+            #     spellings of the operator, because `$repo?->search($tainted)` is
+            #     the same call as `$repo->search($tainted)` and stopping at one of
+            #     them loses the trail without recording that anything was lost.
+            for call in find_any(stmt, _MEMBER_CALLS):
+                obj, name, args = _call_parts(call, source)
+
+                steps = _mass_assign_steps(
+                    project,
+                    call,
+                    name,
+                    args,
+                    local_types.get(obj.lstrip("$")),
+                    parsed,
+                    local,
+                    request_vars,
+                    resolve,
+                )
+                if steps is not None:
+                    # Empty means "resolved and safe" - stop here without letting
+                    # the propagator handling below record a lost trail.
+                    if steps:
+                        paths.append(prefix + steps)
+                    continue
+
+                receiver_type = local_types.get(obj.lstrip("$"))
+                found_sinks = static_sinks(receiver_type, name) + sinks(name)
+                for sink_found in found_sinks:
+                    sink_steps = _sink_steps(
+                        call,
+                        args,
+                        sink_found,
+                        parsed,
+                        name,
+                        local,
+                        request_vars,
+                        resolve,
+                        validated_fields,
+                    )
+
+                    if sink_steps:
+                        paths.append(prefix + sink_steps)
+                if found_sinks:
+                    continue
+
+                # Which arguments carry tainted data, and which kinds. Computed
+                # before the give-up checks because a give-up only counts as a lost
+                # trail when there was something to lose: counting every unresolved
+                # receiver fires on benign calls like $request->input() and a
+                # ->get() chain terminator, and a counter that reports gaps on
+                # correct code trains people to ignore it.
+                passed = {
+                    i: kinds
+                    for i, arg in enumerate(args)
+                    if (kinds := expr_kinds(arg, source, local, request_vars, resolve))
+                }
+
+                # `$this->method($tainted)` resolves through the enclosing class,
+                # including its traits and parents. `$this->prop->method(...)`
+                # resolves through the property's declared type.
+                target_class: str | None
+                if obj == "$this":
+                    target_class = runtime_class
+                elif obj.startswith("$this->"):
+                    prop = obj.removeprefix("$this->")
+                    target_class = project.resolve_property_type(runtime_class, prop)
+                else:
+                    target_class = None
+
+                candidates = []
+                confidence = 1.0
+
+                if target_class is None:
+                    for cls_fqn in project.classes:
+                        if project.method(f"{cls_fqn}::{name}") is not None:
+                            candidates.append(cls_fqn)
+                    if not candidates:
+                        if passed:
+                            _giveup(stats)
+                        continue
+                    confidence = 0.4 if len(candidates) == 1 else 0.4 / len(candidates)
+                else:
+                    candidates = project.bindings.get(target_class, [target_class])
+                    if target_class in project.bindings:
+                        confidence = 0.9 if len(candidates) == 1 else 0.6 / len(candidates)
+                    else:
+                        confidence = 1.0 if obj == "$this" else 0.95
+
+                found_callee = False
+
+                for candidate in candidates:
+                    callee_fqn = f"{candidate}::{name}"
+                    callee = project.method(callee_fqn)
+                    if callee is None:
+                        continue
+
+                    found_callee = True
+                    if not passed:
+                        continue
+
+                    _followed(stats)
+                    callee_tainted = {
+                        callee.params[i]: kinds for i, kinds in passed.items() if i < len(callee.params)
+                    }
+                    if not callee_tainted:
+                        continue
+
+                    step = PathStep(
+                        role="propagator",
+                        span=node_span(call, parsed.path),
+                        snippet=node_text(call, source).strip(),
+                        note=f"argument {min(passed)} into {callee.fqn}",
+                        confidence=confidence,
+                    )
+
+                    inner_paths = _walk_method(
+                        project,
+                        callee_fqn,
+                        callee_tainted,
+                        [],
+                        depth + 1,
+                        max_depth,
+                        stats,
+                        candidate,
+                        visited=visited,
+                    )
+
+                    for inner_path in inner_paths:
+                        paths.append(prefix + [step] + inner_path)
+
+                if not found_callee and passed:
+                    _giveup(stats)
+
+            # 2c. Named function call sinks: `exec($cmd)`, `shell_exec($cmd)`, etc.
+            #     Checked before the dynamic-callee give-up below. The distinction
+            #     is between a *named* callee whose text appears in the SINKS table
+            #     (a security hazard) and an *unresolvable* callee whose identity
+            #     is not known (a coverage gap). The first is a finding; the second
+            #     is a give-up.
+            for call in find_all(stmt, "function_call_expression"):
+                invoked = call.child_by_field_name("function")
+                if invoked is None:
+                    continue
+                if invoked.type not in ("name", "qualified_name"):
+                    continue
+                fname = node_text(invoked, source)
+                args_node = call.child_by_field_name("arguments")
+                args = (
+                    [a for a in args_node.children if a.type not in ("(", ")", ",")]
+                    if args_node is not None
+                    else []
+                )
+
+                # Special case for curl_setopt
+                if fname == "curl_setopt":
+                    if len(args) >= 3 and node_text(args[1], source).strip() == "CURLOPT_URL":
+                        sink_steps = _sink_steps(
+                            call,
+                            args,
+                            (2, TaintKind.URL, "php.ssrf"),
+                            parsed,
+                            fname,
+                            local,
+                            request_vars,
+                            resolve,
+                            validated_fields,
+                        )
+                        if sink_steps:
+                            paths.append(prefix + sink_steps)
+                    continue
+
+                found_sinks = sinks(fname)
+                if not found_sinks:
+                    continue
+                for sink_found in found_sinks:
+                    sink_steps = _sink_steps(
+                        call,
+                        args,
+                        sink_found,
                         parsed,
                         fname,
                         local,
@@ -1607,125 +1637,125 @@ def _walk_method_ast(
                     )
                     if sink_steps:
                         paths.append(prefix + sink_steps)
-                continue
 
-            found_sinks = sinks(fname)
-            if not found_sinks:
-                continue
-            for sink_found in found_sinks:
-                sink_steps = _sink_steps(
-                    call,
-                    args,
-                    sink_found,
-                    parsed,
-                    fname,
-                    local,
-                    request_vars,
-                    resolve,
-                    validated_fields,
+            # 2d. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
+            #     docs/03-parser is explicit about these - "Dynamic dispatch. Mark the
+            #     edge unresolved" - and until now they were not marked at all. There is
+            #     no loop over function_call_expression in this walk, so a tainted value
+            #     handed to a variable callee vanished: no finding, and no give-up either,
+            #     so the resolution rate reported full coverage over a trail it had lost.
+            #     That is precisely the combination invariant 4 exists to prevent.
+            #
+            #     Only a *dynamic* callee counts. A written name - `strlen($x)`,
+            #     `sprintf($x)`, `\strlen($x)` - is skipped, and that exclusion is what
+            #     keeps the number meaningful: every PHP file is full of calls to builtins
+            #     and to project functions, none of which this walk was ever going to
+            #     enter, and counting them would bury the one call that genuinely lost a
+            #     trail under thousands that never had one. `name` and `qualified_name`
+            #     are both literal spellings of a known callee; anything else - a
+            #     variable, a parenthesised expression, an array offset - is a callee
+            #     whose identity is not knowable here.
+            #
+            #     ponytail: the edge is counted, not followed. Following it needs the set
+            #     of closures a variable may hold, which is a data-flow question this
+            #     statement-order walk cannot answer - see docs/05-data-flow-analysis.
+            #     The upgrade trigger is a fixture where a closure assigned in one branch
+            #     reaches a sink, at which point the give-up here becomes a real edge.
+            for call in find_all(stmt, "function_call_expression"):
+                invoked = call.child_by_field_name("function")
+                if invoked is None or invoked.type in ("name", "qualified_name"):
+                    continue
+                args_node = call.child_by_field_name("arguments")
+                if args_node is None:
+                    continue
+                dynamic_args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
+                # Same condition as every other give-up in this walk: a call is only a
+                # lost trail when something was being carried into it. `$fn()` and
+                # `$fn($constant)` lose nothing, and `$fn(...)` is a first-class callable
+                # that has not been invoked yet - nothing is passed to any of them.
+                if any(expr_kinds(arg, source, local, request_vars, resolve) for arg in dynamic_args):
+                    _giveup(stats)
+
+            # 3. view() hands data to a template, where html taint can reach a
+            #    raw echo. A statement can hold more than one view() call, as in a
+
+            #    ternary choosing between two templates, so each is walked.
+            for binding in extract_view_bindings(stmt, source):
+                bound: dict[str, frozenset[TaintKind]] = {}
+                for name, expression in binding.variables:
+                    kinds = expr_kinds(expression, source, local, request_vars, resolve)
+                    if kinds:
+                        bound[name] = kinds
+                for name in binding.compacted:
+                    kinds = local.get(name, frozenset())
+                    if kinds:
+                        bound[name] = kinds
+
+                if not bound:
+                    continue
+
+                # binding.template is None when the name could not be resolved to
+                # a literal (extract_view_bindings still returns the call rather
+                # than dropping it, see laravel/views.py). That case falls into
+                # the same unresolved path below as a name that resolved to a
+                # file outside the project.
+                template = template_path(binding.template) if binding.template is not None else None
+                if template is None or template not in project.blade:
+                    # A template that was handed tainted data and could not be
+                    # resolved is a real gap in coverage, and invariant 4 says
+                    # gaps are reported rather than hidden.
+                    _giveup(stats)
+                    continue
+
+                _followed(stats)
+                step = PathStep(
+                    role="propagator",
+                    span=node_span(stmt, parsed.path),
+                    snippet=node_text(stmt, source).strip(),
+                    note=f"view data into {template}",
                 )
-                if sink_steps:
-                    paths.append(prefix + sink_steps)
+                paths.extend(_walk_template(project, template, bound, prefix + [step], stats))
 
-        # 2d. Dynamic invocation: `$fn($tainted)`, `($handler->method)($tainted)`.
-        #     docs/03-parser is explicit about these - "Dynamic dispatch. Mark the
-        #     edge unresolved" - and until now they were not marked at all. There is
-        #     no loop over function_call_expression in this walk, so a tainted value
-        #     handed to a variable callee vanished: no finding, and no give-up either,
-        #     so the resolution rate reported full coverage over a trail it had lost.
-        #     That is precisely the combination invariant 4 exists to prevent.
-        #
-        #     Only a *dynamic* callee counts. A written name - `strlen($x)`,
-        #     `sprintf($x)`, `\strlen($x)` - is skipped, and that exclusion is what
-        #     keeps the number meaningful: every PHP file is full of calls to builtins
-        #     and to project functions, none of which this walk was ever going to
-        #     enter, and counting them would bury the one call that genuinely lost a
-        #     trail under thousands that never had one. `name` and `qualified_name`
-        #     are both literal spellings of a known callee; anything else - a
-        #     variable, a parenthesised expression, an array offset - is a callee
-        #     whose identity is not knowable here.
-        #
-        #     ponytail: the edge is counted, not followed. Following it needs the set
-        #     of closures a variable may hold, which is a data-flow question this
-        #     statement-order walk cannot answer - see docs/05-data-flow-analysis.
-        #     The upgrade trigger is a fixture where a closure assigned in one branch
-        #     reaches a sink, at which point the give-up here becomes a real edge.
-        for call in find_all(stmt, "function_call_expression"):
-            invoked = call.child_by_field_name("function")
-            if invoked is None or invoked.type in ("name", "qualified_name"):
-                continue
-            args_node = call.child_by_field_name("arguments")
-            if args_node is None:
-                continue
-            dynamic_args = [a for a in args_node.children if a.type not in ("(", ")", ",")]
-            # Same condition as every other give-up in this walk: a call is only a
-            # lost trail when something was being carried into it. `$fn()` and
-            # `$fn($constant)` lose nothing, and `$fn(...)` is a first-class callable
-            # that has not been invoked yet - nothing is passed to any of them.
-            if any(expr_kinds(arg, source, local, request_vars, resolve) for arg in dynamic_args):
-                _giveup(stats)
+            # 4. HTTP response sinks (e.g. response($tainted)->header('Content-Type', 'text/html'))
+            for return_stmt in find_all(stmt, "return_statement"):
+                ret_exprs = [c for c in return_stmt.children if c.type not in ("return", ";")]
+                if ret_exprs:
+                    ret_expr = ret_exprs[0]
+                    if _is_html_response(ret_expr, source):
+                        if TaintKind.HTML in expr_kinds(
+                            ret_expr, source, local, request_vars, resolve, validated_fields
+                        ):
+                            paths.append(
+                                prefix
+                                + [
+                                    PathStep(
+                                        role="sink",
+                                        span=node_span(return_stmt, parsed.path),
+                                        snippet=node_text(return_stmt, source).strip(),
+                                        note="returned as an HTML response",
+                                        rule_id=XSS_RULE,
+                                    )
+                                ]
+                            )
 
-        # 3. view() hands data to a template, where html taint can reach a
-        #    raw echo. A statement can hold more than one view() call, as in a
 
-        #    ternary choosing between two templates, so each is walked.
-        for binding in extract_view_bindings(stmt, source):
-            bound: dict[str, frozenset[TaintKind]] = {}
-            for name, expression in binding.variables:
-                kinds = expr_kinds(expression, source, local, request_vars, resolve)
-                if kinds:
-                    bound[name] = kinds
-            for name in binding.compacted:
-                kinds = local.get(name, frozenset())
-                if kinds:
-                    bound[name] = kinds
+        for edge in block.successors:
+            edge_tuple = (block.id, edge.target.id)
+            if edge_tuple not in visited_edges:
+                explore(
+                    edge.target,
+                    prefix,
+                    visited_edges.union({edge_tuple}),
+                    linear_state,
+                    local_types,
+                )
 
-            if not bound:
-                continue
-
-            # binding.template is None when the name could not be resolved to
-            # a literal (extract_view_bindings still returns the call rather
-            # than dropping it, see laravel/views.py). That case falls into
-            # the same unresolved path below as a name that resolved to a
-            # file outside the project.
-            template = template_path(binding.template) if binding.template is not None else None
-            if template is None or template not in project.blade:
-                # A template that was handed tainted data and could not be
-                # resolved is a real gap in coverage, and invariant 4 says
-                # gaps are reported rather than hidden.
-                _giveup(stats)
-                continue
-
-            _followed(stats)
-            step = PathStep(
-                role="propagator",
-                span=node_span(stmt, parsed.path),
-                snippet=node_text(stmt, source).strip(),
-                note=f"view data into {template}",
-            )
-            paths.extend(_walk_template(project, template, bound, prefix + [step], stats))
-
-        # 4. HTTP response sinks (e.g. response($tainted)->header('Content-Type', 'text/html'))
-        for return_stmt in find_all(stmt, "return_statement"):
-            ret_exprs = [c for c in return_stmt.children if c.type not in ("return", ";")]
-            if ret_exprs:
-                ret_expr = ret_exprs[0]
-                if _is_html_response(ret_expr, source):
-                    if TaintKind.HTML in expr_kinds(
-                        ret_expr, source, local, request_vars, resolve, validated_fields
-                    ):
-                        paths.append(
-                            prefix
-                            + [
-                                PathStep(
-                                    role="sink",
-                                    span=node_span(return_stmt, parsed.path),
-                                    snippet=node_text(return_stmt, source).strip(),
-                                    note="returned as an HTML response",
-                                    rule_id=XSS_RULE,
-                                )
-                            ]
-                        )
+    cfg = CFGBuilder().build(method_node.child_by_field_name("body") or method_node)
+    ssa = SSABuilder(cfg, source)
+    ssa.build()
+    
+    if cfg.entry:
+        explore(cfg.entry, [], frozenset(), dict(tainted), local_types)
 
     return paths
 

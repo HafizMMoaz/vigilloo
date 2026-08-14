@@ -121,7 +121,9 @@ class CFGBuilder:
 
     def _walk_if(self, node: Node) -> None:
         assert self.current_block is not None
-        self.current_block.statements.append(node)
+        cond = node.child_by_field_name("condition")
+        if cond:
+            self.current_block.statements.append(cond)
 
         cond_block = self.current_block
 
@@ -150,12 +152,27 @@ class CFGBuilder:
 
     def _walk_loop(self, node: Node) -> None:
         assert self.current_block is not None
-        self.current_block.statements.append(node)
+        if node.type == "while_statement":
+            cond = node.child_by_field_name("condition")
+            if cond:
+                self.current_block.statements.append(cond)
+        elif node.type == "for_statement":
+            # just append the whole node for now? No, let\'s append init and cond if possible
+            cond = node.child_by_field_name("condition")
+            if cond:
+                self.current_block.statements.append(cond)
+        elif node.type == "foreach_statement":
+            arr = node.child_by_field_name("array")
+            if arr:
+                self.current_block.statements.append(arr)
 
         cond_block = self.current_block
         body_block = self._new_block()
         exit_block = self._new_block()
 
+        cond = node.child_by_field_name("condition")
+        if cond:
+            cond_block.statements.append(cond)
         cond_block.add_successor(body_block, EdgeType.TRUE)
         cond_block.add_successor(exit_block, EdgeType.FALSE)
 
@@ -176,7 +193,7 @@ class CFGBuilder:
 
     def _walk_do_while(self, node: Node) -> None:
         assert self.current_block is not None
-        self.current_block.statements.append(node)
+        # cond is evaluated in cond_block, so do not append here!
 
         body_block = self._new_block()
         cond_block = self._new_block()
@@ -194,6 +211,9 @@ class CFGBuilder:
         if self.current_block:
             self.current_block.add_successor(cond_block)
 
+        cond = node.child_by_field_name("condition")
+        if cond:
+            cond_block.statements.append(cond)
         cond_block.add_successor(body_block, EdgeType.TRUE)
         cond_block.add_successor(exit_block, EdgeType.FALSE)
 
@@ -204,7 +224,9 @@ class CFGBuilder:
 
     def _walk_switch(self, node: Node) -> None:
         assert self.current_block is not None
-        self.current_block.statements.append(node)
+        cond = node.child_by_field_name("condition")
+        if cond:
+            self.current_block.statements.append(cond)
 
         cond_block = self.current_block
         exit_block = self._new_block()
@@ -244,13 +266,15 @@ class CFGBuilder:
 
     def _walk_match(self, node: Node) -> None:
         assert self.current_block is not None
-        self.current_block.statements.append(node)
+        cond = node.child_by_field_name("condition")
+        if cond:
+            self.current_block.statements.append(cond)
         # Match expressions aren't complex statement sequences, but they can be evaluated
         pass
 
     def _walk_try(self, node: Node) -> None:
         assert self.current_block is not None
-        self.current_block.statements.append(node)
+        # No condition in try
 
         body_block = self._new_block()
         exit_block = self._new_block()

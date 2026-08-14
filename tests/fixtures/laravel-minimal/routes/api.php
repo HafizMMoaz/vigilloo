@@ -13,7 +13,7 @@ use App\Http\Controllers\ReceiptController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SlugController;
 use App\Http\Controllers\UserController;
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\BranchController; use Illuminate\Support\Facades\Route;
 
 Route::post('/orders/search', [OrderController::class, 'search']);
 Route::get('/orders/recent', [OrderController::class, 'recent']);
@@ -123,3 +123,5 @@ Route::get('/named/bound-reordered', [NamedArgController::class, 'boundReordered
 // call into one resolved to nothing and the walk stopped without counting it.
 Route::post('/enum/purge', [EnumController::class, 'purge']);
 Route::get('/enum/status', [EnumController::class, 'status']);
+Route::get('/branch', [BranchController::class, 'branchSanitized']);
+Route::get('/branch/safe', [BranchController::class, 'fullySanitized']);

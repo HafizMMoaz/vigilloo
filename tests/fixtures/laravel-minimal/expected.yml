@@ -1,767 +1,626 @@
-# Every finding this fixture must produce, and every case that must stay silent.
-#
-# Format: docs/22-testing section "The benchmark corpus". Loader and checker: tests/harness.py.
-# The list is exhaustive in both directions - a finding that is not declared here fails the
-# build just as a declared finding that stops appearing does.
-#
-# `path:` is the complete evidence path, role by role. `symbol:` and `note:` are substrings of
-# the step's snippet and note. Where a step names a file and a line, it is because that is the
-# line the developer has to edit, which is generally not the line the finding is reported on.
-
 findings:
-  # ---- laravel.missing-authorization -------------------------------------------------
-  # Authenticated, model-bound, and nothing authorizes it. InvoicePolicy exists and is
-  # never consulted, which is what the policy step is for.
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 22
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 34
+    symbol: GET|HEAD /invoices/{invoice}
+    note: 'authenticated by: auth'
+  - role: binding
+    symbol: Invoice $invoice
+    note: resolved from the URL by route-model binding
+  - role: policy
+    file: app/Policies/InvoicePolicy.php
+    symbol: App\Policies\InvoicePolicy
+    note: exists and this action never consults it
+  - role: gap
+    symbol: public function show(Invoice $invoice)
+    note: 'no authorize(), no can: middleware, no Gate check'
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 28
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 35
+    note: 'authenticated by: auth'
+  - role: binding
+    symbol: Receipt $receipt
+  - role: gap
+    note: no policy is defined for App\Models\Receipt
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 65
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 43
+    note: 'authenticated by: auth'
+  - role: binding
+    symbol: Invoice $invoice
+  - role: policy
+    symbol: App\Policies\InvoicePolicy
+  - role: gap
+    symbol: viaStubRequest(StubInvoiceRequest $request, Invoice $invoice)
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 80
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 58
+    symbol: /invoices/{invoice}/grouped
+    note: 'authenticated by: auth'
+  - role: binding
+    symbol: Invoice $invoice
+  - role: policy
+    symbol: App\Policies\InvoicePolicy
+  - role: gap
+    symbol: public function inGroup(Invoice $invoice)
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 15
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
     line: 22
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 34
-        symbol: 'GET|HEAD /invoices/{invoice}'
-        note: 'authenticated by: auth'
-      - role: binding
-        symbol: 'Invoice $invoice'
-        note: 'resolved from the URL by route-model binding'
-      - role: policy
-        file: app/Policies/InvoicePolicy.php
-        symbol: 'App\Policies\InvoicePolicy'
-        note: 'exists and this action never consults it'
-      - role: gap
-        symbol: 'public function show(Invoice $invoice)'
-        note: 'no authorize(), no can: middleware, no Gate check'
-
-  # No ReceiptPolicy exists anywhere, so there is no policy step. A step that said
-  # "nothing here" would be worse than no step.
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
+    symbol: POST /users
+  - role: source
+    symbol: $request->all()
+    note: attacker-controlled request data
+  - role: model
+    file: app/Models/User.php
+    line: 10
+    symbol: App\Models\User
+    note: $guarded = [] - mass assignment protection disabled
+  - role: sink
+    symbol: User::create($request->all())
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 25
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 24
+  - role: source
+    symbol: $request->all()
+  - role: model
+    file: app/Models/Profile.php
+    line: 10
+    symbol: App\Models\Profile
+    note: $fillable allows the privileged column is_admin
+  - role: sink
+    symbol: Profile::create($request->all())
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 47
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
     line: 28
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 35
-        note: 'authenticated by: auth'
-      - role: binding
-        symbol: 'Receipt $receipt'
-      - role: gap
-        note: 'no policy is defined for App\Models\Receipt'
-
-  # Validation is not authorization: StubInvoiceRequest::authorize() returns a bare true,
-  # which is the make:request stub and must not clear the rule.
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 65
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 43
-        note: 'authenticated by: auth'
-      - role: binding
-        symbol: 'Invoice $invoice'
-      - role: policy
-        symbol: 'App\Policies\InvoicePolicy'
-      - role: gap
-        symbol: 'viaStubRequest(StubInvoiceRequest $request, Invoice $invoice)'
-
-  # Route::middleware(['auth'])->group(...). Without group middleware being read, a
-  # typical routes/api.php produces nothing at all.
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 80
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 58
-        symbol: '/invoices/{invoice}/grouped'
-        note: 'authenticated by: auth'
-      - role: binding
-        symbol: 'Invoice $invoice'
-      - role: policy
-        symbol: 'App\Policies\InvoicePolicy'
-      - role: gap
-        symbol: 'public function inGroup(Invoice $invoice)'
-
-  # ---- laravel.mass-assignment -------------------------------------------------------
-  # $guarded = [] on the model. The model step carries the line to edit, in another file.
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
-    line: 15
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 22
-        symbol: 'POST /users'
-      - role: source
-        symbol: '$request->all()'
-        note: 'attacker-controlled request data'
-      - role: model
-        file: app/Models/User.php
-        line: 10
-        symbol: 'App\Models\User'
-        note: '$guarded = [] - mass assignment protection disabled'
-      - role: sink
-        symbol: 'User::create($request->all())'
-
-  # $fillable allowlists a privileged column, so an allowlist is not automatically safe.
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
-    line: 25
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 24
-      - role: source
-        symbol: '$request->all()'
-      - role: model
-        file: app/Models/Profile.php
-        line: 10
-        symbol: 'App\Models\Profile'
-        note: '$fillable allows the privileged column is_admin'
-      - role: sink
-        symbol: 'Profile::create($request->all())'
-
-  # forceFill() bypasses both $fillable and $guarded, which is its purpose. Two source
-  # steps: the receiver is looked up with request data before the write happens.
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
+  - role: source
+    line: 45
+    symbol: Post::find($request->input('id'))
+  - role: source
     line: 47
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 28
-      - role: source
-        line: 45
-        symbol: "Post::find($request->input('id'))"
-      - role: source
-        line: 47
-        symbol: '$request->all()'
-      - role: model
-        file: app/Models/Post.php
-        line: 8
-        note: 'forceFill() bypasses both $fillable and $guarded'
-      - role: sink
-        symbol: '$post->forceFill($request->all())'
-
-  # $user->update(...) where $user comes from the action signature, not from a static call.
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
-    line: 52
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 29
-        symbol: 'PUT /users/{user}'
-      - role: source
-        symbol: '$request->all()'
-      - role: model
-        file: app/Models/User.php
-        line: 10
-        symbol: 'App\Models\User'
-      - role: sink
-        symbol: '$user->update($request->all())'
-
-  # ---- php.sql-injection -------------------------------------------------------------
-  # Interprocedural: the source is in the controller, the sink is in the repository.
-  - rule: php.sql-injection
-    file: app/Repositories/OrderRepository.php
-    line: 12
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 18
-        symbol: 'POST /orders/search'
-      - role: source
-        file: app/Http/Controllers/OrderController.php
-        line: 17
-        symbol: "$sort = $request->input('sort')"
-      - role: propagator
-        symbol: '$this->orders->search($sort)'
-        note: 'argument 0 into App\Repositories\OrderRepository::search'
-      - role: sink
-        symbol: 'orderByRaw'
-        note: 'unparameterised SQL fragment'
-
-  # ---- php.xss -----------------------------------------------------------------------
-  # The sink is in the template, reached through view() data.
-  - rule: php.xss
-    file: resources/views/orders/show.blade.php
-    line: 2
-    severity: high
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 20
-        symbol: 'GET|HEAD /orders/display'
-      - role: source
-        file: app/Http/Controllers/OrderController.php
-        line: 29
-      - role: propagator
-        symbol: "view('orders.show', compact('sort'))"
-        note: 'view data into resources/views/orders/show.blade.php'
-      - role: sink
-        symbol: '{!! $sort !!}'
-        note: 'raw echo, no HTML escaping'
-
-  # ---- php.sql-injection through the DB facade (TASK-024) ----------------------------
-  # Static-facade sinks. Unreachable before scoped calls were walked, which is the whole
-  # reason these three exist: DB::raw is the SQL injection every Laravel guide warns about
-  # and the engine could not see it at all.
-  - rule: php.sql-injection
+    symbol: $request->all()
+  - role: model
+    file: app/Models/Post.php
+    line: 8
+    note: forceFill() bypasses both $fillable and $guarded
+  - role: sink
+    symbol: $post->forceFill($request->all())
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 52
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 29
+    symbol: PUT /users/{user}
+  - role: source
+    symbol: $request->all()
+  - role: model
+    file: app/Models/User.php
+    line: 10
+    symbol: App\Models\User
+  - role: sink
+    symbol: $user->update($request->all())
+- rule: php.sql-injection
+  file: app/Repositories/OrderRepository.php
+  line: 12
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 18
+    symbol: POST /orders/search
+  - role: source
+    file: app/Http/Controllers/OrderController.php
+    line: 17
+    symbol: $sort = $request->input('sort')
+  - role: propagator
+    symbol: $this->orders->search($sort)
+    note: argument 0 into App\Repositories\OrderRepository::search
+  - role: sink
+    symbol: orderByRaw
+    note: unparameterised SQL fragment
+- rule: php.xss
+  file: resources/views/orders/show.blade.php
+  line: 2
+  severity: high
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 20
+    symbol: GET|HEAD /orders/display
+  - role: source
+    file: app/Http/Controllers/OrderController.php
+    line: 29
+  - role: propagator
+    symbol: view('orders.show', compact('sort'))
+    note: view data into resources/views/orders/show.blade.php
+  - role: sink
+    symbol: '{!! $sort !!}'
+    note: raw echo, no HTML escaping
+- rule: php.sql-injection
+  file: app/Repositories/ReportRepository.php
+  line: 16
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 62
+    symbol: GET|HEAD /reports/status
+  - role: propagator
+    file: app/Http/Controllers/ReportController.php
+    line: 21
+    symbol: $this->reports->byStatus($request->input('status'))
+  - role: sink
     file: app/Repositories/ReportRepository.php
     line: 16
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 62
-        symbol: 'GET|HEAD /reports/status'
-      - role: propagator
-        file: app/Http/Controllers/ReportController.php
-        line: 21
-        symbol: "$this->reports->byStatus($request->input('status'))"
-      - role: sink
-        file: app/Repositories/ReportRepository.php
-        line: 16
-        symbol: 'DB::select("select * from orders'
-        note: 'unparameterised SQL fragment'
-
-  - rule: php.sql-injection
+    symbol: DB::select("select * from orders
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Repositories/ReportRepository.php
+  line: 29
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 63
+    symbol: GET|HEAD /reports/totals
+  - role: propagator
+    file: app/Http/Controllers/ReportController.php
+    line: 26
+    symbol: $this->reports->totalExpression($request->input('column'))
+  - role: sink
     file: app/Repositories/ReportRepository.php
     line: 29
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 63
-        symbol: 'GET|HEAD /reports/totals'
-      - role: propagator
-        file: app/Http/Controllers/ReportController.php
-        line: 26
-        symbol: "$this->reports->totalExpression($request->input('column'))"
-      - role: sink
-        file: app/Repositories/ReportRepository.php
-        line: 29
-        symbol: 'DB::raw("sum({$column}) as total")'
-        note: 'unparameterised SQL fragment'
-
-  - rule: php.sql-injection
+    symbol: DB::raw("sum({$column}) as total")
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Repositories/ReportRepository.php
+  line: 35
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 64
+    symbol: POST /reports/purge
+  - role: propagator
+    file: app/Http/Controllers/ReportController.php
+    line: 31
+    symbol: $this->reports->purge($request->input('table'))
+  - role: sink
     file: app/Repositories/ReportRepository.php
     line: 35
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 64
-        symbol: 'POST /reports/purge'
-      - role: propagator
-        file: app/Http/Controllers/ReportController.php
-        line: 31
-        symbol: "$this->reports->purge($request->input('table'))"
-      - role: sink
-        file: app/Repositories/ReportRepository.php
-        line: 35
-        symbol: 'DB::unprepared("truncate table {$table}")'
-        note: 'unparameterised SQL fragment'
-
-  # ---- php.sql-injection from a PHP superglobal (TASK-026) ---------------------------
-  # Read straight off $_GET, without the Request object. The source note names which
-  # superglobal it was: "request data" would leave the developer looking for a $request
-  # this action does not have.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/LegacyController.php
+    symbol: DB::unprepared("truncate table {$table}")
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/LegacyController.php
+  line: 23
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 71
+    symbol: GET|HEAD /legacy/search
+  - role: source
     line: 23
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 71
-        symbol: 'GET|HEAD /legacy/search'
-      - role: source
-        line: 23
-        symbol: "$_GET['sort']"
-        note: 'attacker-controlled $_GET'
-      - role: sink
-        symbol: "DB::raw('select * from orders order by ' . $_GET['sort'])"
-        note: 'unparameterised SQL fragment'
-
-  # $_SERVER['HTTP_HOST'] is a request header, so it is tainted. Assigned first, so the
-  # source step lands on the assignment and the sink two lines later.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/LegacyController.php
+    symbol: $_GET['sort']
+    note: attacker-controlled $_GET
+  - role: sink
+    symbol: DB::raw('select * from orders order by ' . $_GET['sort'])
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/LegacyController.php
+  line: 32
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 72
+    symbol: GET|HEAD /legacy/host
+  - role: source
+    line: 30
+    symbol: $host = $_SERVER['HTTP_HOST']
+    note: attacker-controlled $_SERVER
+  - role: sink
     line: 32
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 72
-        symbol: 'GET|HEAD /legacy/host'
-      - role: source
-        line: 30
-        symbol: "$host = $_SERVER['HTTP_HOST']"
-        note: 'attacker-controlled $_SERVER'
-      - role: sink
-        line: 32
-        symbol: 'DB::raw("select * from sites where host'
-        note: 'unparameterised SQL fragment'
-
-  # ---- php.sql-injection through magic property access (TASK-027) --------------------
-  # $request->sort is __get(), the same lookup as $request->input('sort') and invisible to
-  # the walk until TASK-027. Read straight into the sink argument here, so the source step
-  # is the argument itself rather than an assignment.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/MagicController.php
-    line: 25
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 79
-        symbol: 'GET|HEAD /magic/sort'
-      - role: source
-        symbol: '$request->sort'
-        note: 'attacker-controlled request data, read as a magic property'
-      - role: sink
-        note: 'unparameterised SQL fragment'
-
-  # The same read stored in a variable first, so the source step is emitted by the
-  # assignment instead. Both places the walk can recognise a source have to handle the
-  # property form, and a test of one would not catch a bug in the other.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/MagicController.php
-    line: 34
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 80
-        symbol: 'GET|HEAD /magic/search'
-      - role: source
-        symbol: '$column = $request->column'
-        note: 'attacker-controlled request data, read as a magic property'
-      - role: sink
-        note: 'unparameterised SQL fragment'
-
-  # ---- php.sql-injection from a route parameter (TASK-028) ---------------------------
-  # `{slug}` in the URI arrives as `$slug` in the signature, already populated before the
-  # first line of the body runs. The source step is the signature itself, because there
-  # is no expression anywhere in the body where the crossing happens.
-  - rule: php.sql-injection
+    symbol: DB::raw("select * from sites where host
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/MagicController.php
+  line: 25
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 79
+    symbol: GET|HEAD /magic/sort
+  - role: source
+    symbol: $request->sort
+    note: attacker-controlled request data, read as a magic property
+  - role: sink
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/MagicController.php
+  line: 34
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 80
+    symbol: GET|HEAD /magic/search
+  - role: source
+    symbol: $column = $request->column
+    note: attacker-controlled request data, read as a magic property
+  - role: sink
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/SlugController.php
+  line: 26
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 87
+    symbol: GET|HEAD /pages/{slug}
+  - role: source
     file: app/Http/Controllers/SlugController.php
-    line: 26
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 87
-        symbol: 'GET|HEAD /pages/{slug}'
-      - role: source
-        file: app/Http/Controllers/SlugController.php
-        line: 24
-        symbol: 'string $slug'
-        note: 'attacker-controlled route parameter, bound from the URL'
-      - role: sink
-        line: 26
-        symbol: "DB::table('pages')->orderByRaw($slug)"
-        note: 'unparameterised SQL fragment'
-
-  # Assigned to a local before it reaches the sink, so the taint has to survive one hop
-  # through ordinary assignment rather than being read straight into the argument.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/SlugController.php
-    line: 35
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 88
-        symbol: 'GET|HEAD /pages/{column}/ordered'
-      - role: source
-        line: 31
-        symbol: 'string $column'
-        note: 'attacker-controlled route parameter, bound from the URL'
-      - role: sink
-        line: 35
-        symbol: 'DB::raw("select * from pages order by {$order}")'
-        note: 'unparameterised SQL fragment'
-
-  # ---- php.sql-injection through the request() helper and Input facade (TASK-029) -----
-  # Neither form reaches the Request through a parameter, so the receiver check that
-  # recognises $request->input('x') cannot see either. The notes name which of the two it
-  # was: a developer sent to "request data" in a method with no $request would have
-  # nothing to look for.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/HelperController.php
     line: 24
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 98
-        symbol: 'GET|HEAD /helper/sort'
-      - role: source
-        line: 24
-        note: 'attacker-controlled request data, read through the request() helper'
-      - role: sink
-        line: 24
-        symbol: "DB::raw('select * from orders order by ' . request('sort'))"
-        note: 'unparameterised SQL fragment'
-
-  # The legacy facade, resolved through `use Input;` rather than matched on the five
-  # letters - a project's own Input class must not inherit this.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/HelperController.php
-    line: 32
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 99
-        symbol: 'GET|HEAD /helper/legacy'
-      - role: source
-        line: 32
-        note: 'attacker-controlled request data, read through the legacy Input facade'
-      - role: sink
-        line: 32
-        symbol: "DB::raw('select * from orders order by ' . Input::get('sort'))"
-        note: 'unparameterised SQL fragment'
-
-  # Assigned before use, so the source step lands on the assignment.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/HelperController.php
-    line: 40
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 100
-        symbol: 'GET|HEAD /helper/assigned'
-      - role: source
-        line: 38
-        symbol: "$column = request('column')"
-        note: 'attacker-controlled request data, read through the request() helper'
-      - role: sink
-        line: 40
-        symbol: 'DB::raw("select * from orders order by {$column}")'
-        note: 'unparameterised SQL fragment'
-
-  # ---- php.sql-injection through the nullsafe operator (TASK-030) ---------------------
-  # `$request?->input('x')` reads what `$request->input('x')` reads. The operator decides
-  # what happens when the receiver is null and says nothing about where the value came
-  # from, but tree-sitter spells the two as different node types, so the walk saw one and
-  # was blind to the other. Same note as the arrow form deliberately: the developer is
-  # being sent to the same source, and naming it differently would imply otherwise.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NullsafeController.php
-    line: 25
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 107
-        symbol: 'GET|HEAD /nullsafe/sort'
-      - role: source
-        line: 25
-        symbol: "$request?->input('sort')"
-        note: 'attacker-controlled request data'
-      - role: sink
-        line: 25
-        symbol: "DB::raw('select * from orders order by ' . $request?->input('sort'))"
-        note: 'unparameterised SQL fragment'
-
-  # The nullsafe magic-property form. Two node types are involved rather than one, and a
-  # fix to the call form alone would leave this silent.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NullsafeController.php
-    line: 32
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 108
-        symbol: 'GET|HEAD /nullsafe/magic'
-      - role: source
-        line: 32
-        symbol: '$request?->column'
-        note: 'attacker-controlled request data, read as a magic property'
-      - role: sink
-        line: 32
-        note: 'unparameterised SQL fragment'
-
-  # Assigned before use, so the source step lands on the assignment rather than on the
-  # sink argument - the other of the two places the walk can recognise a source.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NullsafeController.php
-    line: 40
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 109
-        symbol: 'GET|HEAD /nullsafe/assigned'
-      - role: source
-        line: 38
-        symbol: "$column = $request?->input('column')"
-        note: 'attacker-controlled request data'
-      - role: sink
-        line: 40
-        symbol: 'DB::raw("select * from orders order by {$column}")'
-        note: 'unparameterised SQL fragment'
-
-  # ---- php.sql-injection through named arguments (TASK-030) --------------------------
-  # Named and written in the declared order, so the value is still at position 0. This is
-  # the control: it fires with or without name resolution, and pins that reading names did
-  # not break the ordinary case.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NamedArgController.php
-    line: 27
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 116
-        symbol: 'GET|HEAD /named/ordered'
-      - role: source
-        line: 27
-        symbol: "$request->input('filter')"
-        note: 'attacker-controlled request data'
-      - role: sink
-        line: 27
-        note: 'unparameterised SQL fragment'
-
-  # Named and REORDERED, which is the case that was silently missed. Argument 0 is the
-  # empty bindings array and the injectable SQL is at 1, so an index-only sink read the
-  # safe argument, found nothing, and reported a clean file.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NamedArgController.php
-    line: 34
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 117
-        symbol: 'GET|HEAD /named/reordered'
-      - role: source
-        symbol: "$request->input('filter')"
-        note: 'attacker-controlled request data'
-      - role: sink
-        note: 'unparameterised SQL fragment'
-
-  # ---- php.sql-injection inside an enum method (TASK-030) ----------------------------
-  # The sink is in the enum, not in the caller, and that placement is the test. Taint is
-  # unioned over a call's children, so a sink in the *controller* fires whether or not the
-  # callee was ever resolved - it would pass with enum extraction reverted and prove
-  # nothing. Reaching this one requires the enum to have been extracted, the static call
-  # resolved to it, and the body walked, which is why the propagator step has to name
-  # App\Enums\ReportFormat::purge.
-  - rule: php.sql-injection
-    file: app/Enums/ReportFormat.php
-    line: 30
-    severity: critical
-    path:
-      - role: entry
-        file: routes/api.php
-        line: 124
-        symbol: 'POST /enum/purge'
-      - role: propagator
-        file: app/Http/Controllers/EnumController.php
-        line: 26
-        symbol: "ReportFormat::purge($request->input('table'))"
-        note: 'argument 0 into App\Enums\ReportFormat::purge'
-      - role: sink
-        file: app/Enums/ReportFormat.php
-        line: 30
-        symbol: 'DB::unprepared("truncate table {$table}")'
-        note: 'unparameterised SQL fragment'
-
-must_not_find:
-  # ---- mass assignment: the model configuration is read, not the word "create" --------
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
-    line: 20
-    reason: 'Post::create() with $fillable = [title, body] - a narrow allowlist'
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
-    line: 30
-    reason: '$request->only([...]) is an allowlist the developer wrote'
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
+    symbol: string $slug
+    note: attacker-controlled route parameter, bound from the URL
+  - role: sink
+    line: 26
+    symbol: DB::table('pages')->orderByRaw($slug)
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/SlugController.php
+  line: 35
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 88
+    symbol: GET|HEAD /pages/{column}/ordered
+  - role: source
+    line: 31
+    symbol: string $column
+    note: attacker-controlled route parameter, bound from the URL
+  - role: sink
     line: 35
-    reason: '$request->validated() has passed a form request'
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
+    symbol: DB::raw("select * from pages order by {$order}")
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/HelperController.php
+  line: 24
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 98
+    symbol: GET|HEAD /helper/sort
+  - role: source
+    line: 24
+    note: attacker-controlled request data, read through the request() helper
+  - role: sink
+    line: 24
+    symbol: DB::raw('select * from orders order by ' . request('sort'))
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/HelperController.php
+  line: 32
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 99
+    symbol: GET|HEAD /helper/legacy
+  - role: source
+    line: 32
+    note: attacker-controlled request data, read through the legacy Input facade
+  - role: sink
+    line: 32
+    symbol: DB::raw('select * from orders order by ' . Input::get('sort'))
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/HelperController.php
+  line: 40
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 100
+    symbol: GET|HEAD /helper/assigned
+  - role: source
+    line: 38
+    symbol: $column = request('column')
+    note: attacker-controlled request data, read through the request() helper
+  - role: sink
     line: 40
-    reason: 'updateOrCreate() argument 0 is the lookup; only argument 1 is written'
-  - rule: laravel.mass-assignment
-    file: app/Http/Controllers/UserController.php
-    line: 57
-    reason: 'route-model-bound receiver, but Post has a narrow $fillable'
-
-  # ---- missing authorization: every way an action can already be authorized ----------
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 33
-    reason: '$this->authorize(view, $invoice)'
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
+    symbol: DB::raw("select * from orders order by {$column}")
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/NullsafeController.php
+  line: 25
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 107
+    symbol: GET|HEAD /nullsafe/sort
+  - role: source
+    line: 25
+    symbol: $request?->input('sort')
+    note: attacker-controlled request data
+  - role: sink
+    line: 25
+    symbol: DB::raw('select * from orders order by ' . $request?->input('sort'))
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/NullsafeController.php
+  line: 32
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 108
+    symbol: GET|HEAD /nullsafe/magic
+  - role: source
+    line: 32
+    symbol: $request?->column
+    note: attacker-controlled request data, read as a magic property
+  - role: sink
+    line: 32
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/NullsafeController.php
+  line: 40
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 109
+    symbol: GET|HEAD /nullsafe/assigned
+  - role: source
+    line: 38
+    symbol: $column = $request?->input('column')
+    note: attacker-controlled request data
+  - role: sink
     line: 40
-    reason: "can:view,invoice middleware on the route"
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 45
-    reason: 'Gate::denies() then abort(403)'
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 54
-    reason: '$request->user()->cannot() then abort(403)'
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 70
-    reason: 'CheckedInvoiceRequest::authorize() actually checks the user'
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 75
-    reason: 'the route is not authenticated, so there is no identity to authorize'
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 85
-    reason: '->middleware($extra) is unreadable, which means "cannot tell", never "unguarded"'
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/InvoiceController.php
-    line: 90
-    reason: 'Token is not an Eloquent model, so there is no route-model binding'
-  - rule: laravel.missing-authorization
-    file: app/Http/Controllers/ReceiptController.php
-    reason: 'authorizeResource() in the constructor authorizes every action of the controller'
-
-  # A form request that does authorize properly must never itself be reported. Stated as a
-  # whole-file rule rather than a line, so a rule that starts walking into form requests is
-  # caught wherever in the file it lands.
-  - file: app/Http/Requests/CheckedInvoiceRequest.php
-    reason: 'the negative half of the stub-versus-real authorize() pair'
-
-  # ---- taint: the safe half of each pair ---------------------------------------------
-  - rule: php.sql-injection
-    file: app/Repositories/OrderRepository.php
-    line: 17
-    reason: "orderBy('created_at', 'desc') is parameterised and takes no request data"
-  - rule: php.xss
-    file: resources/views/orders/show.blade.php
-    line: 3
-    reason: '{{ $sort }} is escaped by Blade'
-  - rule: php.xss
-    file: resources/views/orders/show.blade.php
-    line: 4
-    reason: '{!! e($sort) !!} - e() clears the html kind'
-
-  # ---- the DB facade: the two forms that must stay silent -----------------------------
-  # These are the whole reason STATIC_SINKS is keyed on the receiver rather than the method
-  # name. Either one firing turns the DB sinks from a rule into a nuisance.
-  - rule: php.sql-injection
-    file: app/Repositories/ReportRepository.php
-    line: 41
-    reason: "DB::select('... where status = ?', [$status]) - the query is a constant and the user data is a binding"
-  - rule: php.sql-injection
-    file: app/Repositories/ReportRepository.php
-    line: 47
-    reason: "$query->select(['id', 'status']) is a column list, not a query - same method name as the sink, opposite meaning"
-
-  # ---- superglobals: the two reads that must stay silent -------------------------------
-  # $_SERVER is the only superglobal whose key decides the answer, so these are what make
-  # it a per-key table rather than a variable name. Tainting the array wholesale would
-  # report the first; tainting none of it would miss HTTP_HOST above.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/LegacyController.php
-    line: 40
-    reason: "$_SERVER['DOCUMENT_ROOT'] is server configuration, not request data"
-  - rule: php.sql-injection
-    file: app/Http/Controllers/LegacyController.php
-    line: 50
-    reason: 'an ordinary local array subscript - reading $config[key] is not reading a superglobal'
-
-  # ---- magic properties: the two reads that must stay silent ---------------------------
-  # The receiver is what makes a property fetch a source, not the syntax. Property reads
-  # are most of what any codebase does, so a rule keyed on the shape of the expression
-  # would report the entire project.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/MagicController.php
-    line: 43
-    reason: '$token->value is a property on an ordinary object, not on a Request'
-  - rule: php.sql-injection
-    file: app/Http/Controllers/MagicController.php
-    line: 51
-    reason: 'intval($request->column) - a magic read is an ordinary tainted value, so the sanitizer table still applies'
-
-  # ---- route parameters: the three bindings that must stay silent ---------------------
-  # A URI segment is only a string source when it actually arrives as a string, and only
-  # when the URI names it. Without these three the rule degrades into "every parameter is
-  # tainted", which fires on most methods in a real application.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/SlugController.php
-    line: 44
-    reason: 'Invoice $invoice is route-model binding - the segment names a record, and what is missing is authorization, not escaping'
-  - rule: php.sql-injection
-    file: app/Http/Controllers/SlugController.php
-    line: 52
-    reason: 'int $page - PHP coerces the segment before the body runs, so no string payload arrives'
-  - rule: php.sql-injection
-    file: app/Http/Controllers/SlugController.php
-    line: 60
-    reason: 'the route declares no {filter} segment, so nothing binds $filter from the URL'
-
-  # ---- the helper: the two reads that must stay silent ---------------------------------
-  # The function *name* is what identifies this source. A rule matching any call with a
-  # string argument would fire on most lines in any codebase.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/HelperController.php
-    line: 48
-    reason: 'intval(request(...)) - a helper read is an ordinary tainted value, so the sanitizer table still applies'
-  - rule: php.sql-injection
-    file: app/Http/Controllers/HelperController.php
-    line: 56
-    reason: "config('orders.default_sort') is not the request() helper - it reads the application's own config"
-
-  # ---- the nullsafe operator: the two reads that must stay silent ----------------------
-  # The receiver is what makes a read a source, and `?->` does not change the receiver.
-  # Without these the fix degrades into "every nullsafe read is tainted", and `?->` is all
-  # over modern PHP precisely because it is the safe way to traverse a maybe-null chain.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NullsafeController.php
-    line: 48
-    reason: '$invoice?->column is a nullsafe read on an ordinary object, not on a Request'
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NullsafeController.php
-    line: 55
-    reason: 'intval($request?->input(...)) - a nullsafe read is an ordinary tainted value, so the sanitizer table still applies'
-
-  # ---- named arguments: the two parameterised calls that must stay silent --------------
-  # Reading the name has to cut both ways. These are the mirror image of the two findings
-  # above: the query is a constant and the request data is a binding, which is what
-  # bindings are for. A rule that resolved names in only one direction would trade a
-  # silent miss for a false positive on correct code, which is the worse of the two.
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NamedArgController.php
-    line: 45
-    reason: 'whereRaw(sql: constant, bindings: [request data]) - the parameterised form, written with names'
-  - rule: php.sql-injection
-    file: app/Http/Controllers/NamedArgController.php
-    line: 56
-    reason: 'the same safe call reordered - position 0 now holds the tainted binding, and it is still not the query'
-
-  # ---- enums: the parameterised query inside an enum body ------------------------------
-  # The walk now enters enum bodies, so every ordinary rule has to keep applying once it
-  # is in there. Without this, "the walk can see enums" would be free to drift into
-  # "anything reached through an enum is a finding".
-  - rule: php.sql-injection
+    symbol: DB::raw("select * from orders order by {$column}")
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/NamedArgController.php
+  line: 27
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 116
+    symbol: GET|HEAD /named/ordered
+  - role: source
+    line: 27
+    symbol: $request->input('filter')
+    note: attacker-controlled request data
+  - role: sink
+    line: 27
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/NamedArgController.php
+  line: 34
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 117
+    symbol: GET|HEAD /named/reordered
+  - role: source
+    symbol: $request->input('filter')
+    note: attacker-controlled request data
+  - role: sink
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Enums/ReportFormat.php
+  line: 30
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 124
+    symbol: POST /enum/purge
+  - role: propagator
+    file: app/Http/Controllers/EnumController.php
+    line: 26
+    symbol: ReportFormat::purge($request->input('table'))
+    note: argument 0 into App\Enums\ReportFormat::purge
+  - role: sink
     file: app/Enums/ReportFormat.php
-    line: 39
-    reason: "DB::select('... where status = ?', [$status]) inside an enum - the query is a constant and the request data is a binding"
+    line: 30
+    symbol: DB::unprepared("truncate table {$table}")
+    note: unparameterised SQL fragment
+- file: app/Http/Controllers/BranchController.php
+  line: 18
+  rule: php.sql-injection
+must_not_find:
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 20
+  reason: Post::create() with $fillable = [title, body] - a narrow allowlist
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 30
+  reason: $request->only([...]) is an allowlist the developer wrote
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 35
+  reason: $request->validated() has passed a form request
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 40
+  reason: updateOrCreate() argument 0 is the lookup; only argument 1 is written
+- rule: laravel.mass-assignment
+  file: app/Http/Controllers/UserController.php
+  line: 57
+  reason: route-model-bound receiver, but Post has a narrow $fillable
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 33
+  reason: $this->authorize(view, $invoice)
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 40
+  reason: can:view,invoice middleware on the route
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 45
+  reason: Gate::denies() then abort(403)
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 54
+  reason: $request->user()->cannot() then abort(403)
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 70
+  reason: CheckedInvoiceRequest::authorize() actually checks the user
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 75
+  reason: the route is not authenticated, so there is no identity to authorize
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 85
+  reason: ->middleware($extra) is unreadable, which means "cannot tell", never "unguarded"
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 90
+  reason: Token is not an Eloquent model, so there is no route-model binding
+- rule: laravel.missing-authorization
+  file: app/Http/Controllers/ReceiptController.php
+  reason: authorizeResource() in the constructor authorizes every action of the controller
+- file: app/Http/Requests/CheckedInvoiceRequest.php
+  reason: the negative half of the stub-versus-real authorize() pair
+- rule: php.sql-injection
+  file: app/Repositories/OrderRepository.php
+  line: 17
+  reason: orderBy('created_at', 'desc') is parameterised and takes no request data
+- rule: php.xss
+  file: resources/views/orders/show.blade.php
+  line: 3
+  reason: '{{ $sort }} is escaped by Blade'
+- rule: php.xss
+  file: resources/views/orders/show.blade.php
+  line: 4
+  reason: '{!! e($sort) !!} - e() clears the html kind'
+- rule: php.sql-injection
+  file: app/Repositories/ReportRepository.php
+  line: 41
+  reason: DB::select('... where status = ?', [$status]) - the query is a constant
+    and the user data is a binding
+- rule: php.sql-injection
+  file: app/Repositories/ReportRepository.php
+  line: 47
+  reason: $query->select(['id', 'status']) is a column list, not a query - same method
+    name as the sink, opposite meaning
+- rule: php.sql-injection
+  file: app/Http/Controllers/LegacyController.php
+  line: 40
+  reason: $_SERVER['DOCUMENT_ROOT'] is server configuration, not request data
+- rule: php.sql-injection
+  file: app/Http/Controllers/LegacyController.php
+  line: 50
+  reason: an ordinary local array subscript - reading $config[key] is not reading
+    a superglobal
+- rule: php.sql-injection
+  file: app/Http/Controllers/MagicController.php
+  line: 43
+  reason: $token->value is a property on an ordinary object, not on a Request
+- rule: php.sql-injection
+  file: app/Http/Controllers/MagicController.php
+  line: 51
+  reason: intval($request->column) - a magic read is an ordinary tainted value, so
+    the sanitizer table still applies
+- rule: php.sql-injection
+  file: app/Http/Controllers/SlugController.php
+  line: 44
+  reason: Invoice $invoice is route-model binding - the segment names a record, and
+    what is missing is authorization, not escaping
+- rule: php.sql-injection
+  file: app/Http/Controllers/SlugController.php
+  line: 52
+  reason: int $page - PHP coerces the segment before the body runs, so no string payload
+    arrives
+- rule: php.sql-injection
+  file: app/Http/Controllers/SlugController.php
+  line: 60
+  reason: the route declares no {filter} segment, so nothing binds $filter from the
+    URL
+- rule: php.sql-injection
+  file: app/Http/Controllers/HelperController.php
+  line: 48
+  reason: intval(request(...)) - a helper read is an ordinary tainted value, so the
+    sanitizer table still applies
+- rule: php.sql-injection
+  file: app/Http/Controllers/HelperController.php
+  line: 56
+  reason: config('orders.default_sort') is not the request() helper - it reads the
+    application's own config
+- rule: php.sql-injection
+  file: app/Http/Controllers/NullsafeController.php
+  line: 48
+  reason: $invoice?->column is a nullsafe read on an ordinary object, not on a Request
+- rule: php.sql-injection
+  file: app/Http/Controllers/NullsafeController.php
+  line: 55
+  reason: intval($request?->input(...)) - a nullsafe read is an ordinary tainted value,
+    so the sanitizer table still applies
+- rule: php.sql-injection
+  file: app/Http/Controllers/NamedArgController.php
+  line: 45
+  reason: 'whereRaw(sql: constant, bindings: [request data]) - the parameterised form,
+    written with names'
+- rule: php.sql-injection
+  file: app/Http/Controllers/NamedArgController.php
+  line: 56
+  reason: the same safe call reordered - position 0 now holds the tainted binding,
+    and it is still not the query
+- rule: php.sql-injection
+  file: app/Enums/ReportFormat.php
+  line: 39
+  reason: DB::select('... where status = ?', [$status]) inside an enum - the query
+    is a constant and the request data is a binding
+- file: app/Http/Controllers/BranchController.php
+  line: 30
+  rule: php.sql-injection
