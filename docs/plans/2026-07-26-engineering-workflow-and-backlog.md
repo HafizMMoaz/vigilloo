@@ -1330,7 +1330,7 @@ invariant 7. Every task writes the negative fixture first. 16 tasks.
 - **Difficulty:** S
 - **Tests:** Assert every field populated for all four existing rules.
 
-### TASK-067
+### [COMPLETED] TASK-067
 - **Goal:** Evidence-based severity adjustment.
 - **Description:** Implement the adjustment table from docs/13-security-engine
   section Taint rules: unauthenticated route +1, console-only -1,
@@ -1343,7 +1343,7 @@ invariant 7. Every task writes the negative fixture first. 16 tasks.
 - **Difficulty:** L
 - **Tests:** One fixture per adjustment row.
 
-### TASK-068
+### [COMPLETED] TASK-068
 - **Goal:** laravel.raw-query as its own rule.
 - **Description:** The spec's rule table lists it separately from php.sql-injection:
   *Raw and DB::raw reached by taint in the non-binding argument,
@@ -1358,7 +1358,7 @@ invariant 7. Every task writes the negative fixture first. 16 tasks.
 - **Difficulty:** M
 - **Tests:** Assert exactly one finding per raw-query site.
 
-### TASK-069
+### [COMPLETED] TASK-069
 - **Goal:** laravel.blade-raw-echo as its own rule.
 - **Description:** Same decision as TASK-068 for {!! $tainted !!} versus the existing
   php.xss.

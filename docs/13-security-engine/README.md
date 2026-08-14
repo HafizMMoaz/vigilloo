@@ -43,6 +43,8 @@ sanitizers: [php.intval, laravel.query.binding, php.cast.int]
 require_reachable_from: [route, command, job]
 ```
 
+> **Note on Framework-Specific Aliases**: Highly specific framework sinks such as `DB::raw` and `{!! !!}` are implemented as *distinct* rule IDs (`laravel.raw-query` and `laravel.blade-raw-echo`) rather than aliasing back to the generic `php.sql-injection` or `php.xss`. This ensures that remediation guidance is precisely tailored to the framework mechanism without generating duplicate findings (which violates Invariant 7 where rule IDs are permanent and suppressible).
+
 Severity is then adjusted by real evidence:
 
 | Evidence | Adjustment |

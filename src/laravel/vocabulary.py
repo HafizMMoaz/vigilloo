@@ -211,7 +211,9 @@ _TAINTED_SERVER_PREFIX = "HTTP_"
 # Permanent per invariant 7: these ship in users' baselines and vigilloo-ignore
 # comments.
 SQL_INJECTION_RULE = "php.sql-injection"
+LARAVEL_RAW_QUERY_RULE = "laravel.raw-query"
 XSS_RULE = "php.xss"
+LARAVEL_BLADE_RAW_ECHO_RULE = "laravel.blade-raw-echo"
 COMMAND_INJECTION_RULE = "php.command-injection"
 CODE_EXECUTION_RULE = "php.code-execution"
 PATH_TRAVERSAL_RULE = "php.path-traversal"
@@ -255,13 +257,13 @@ def eloquent_write(method: str) -> tuple[int, bool] | None:
 # argument 0 is dangerous.
 #
 SINKS: dict[str, tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]]] = {
-    "orderByRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
-    "whereRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
-    "orWhereRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
-    "havingRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
-    "groupByRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
-    "selectRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
-    "fromRaw": (0, TaintKind.SQL, SQL_INJECTION_RULE),
+    "orderByRaw": (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE),
+    "whereRaw": (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE),
+    "orWhereRaw": (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE),
+    "havingRaw": (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE),
+    "groupByRaw": (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE),
+    "selectRaw": (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE),
+    "fromRaw": (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE),
     "exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
     "shell_exec": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
     "system": (0, TaintKind.SHELL, COMMAND_INJECTION_RULE),
@@ -366,10 +368,13 @@ STATIC_SINKS: Mapping[
     tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]],
 ] = (
     {
+        (facade, "raw"): (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE)
+        for facade in DB_FACADE_FQNS
+    }
+    | {
         (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
         for facade in DB_FACADE_FQNS
         for method in (
-            "raw",
             "statement",
             "unprepared",
             "select",

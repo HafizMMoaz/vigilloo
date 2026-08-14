@@ -10,6 +10,8 @@ from .graph import Project
 from .laravel.vocabulary import (
     CODE_EXECUTION_RULE,
     COMMAND_INJECTION_RULE,
+    LARAVEL_BLADE_RAW_ECHO_RULE,
+    LARAVEL_RAW_QUERY_RULE,
     LDAP_INJECTION_RULE,
     LOG_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
@@ -57,6 +59,25 @@ SQL_INJECTION = Rule(
     ),
 )
 
+
+LARAVEL_RAW_QUERY = Rule(
+    id=LARAVEL_RAW_QUERY_RULE,
+    title="Raw Query Injection",
+    severity="critical",
+    confidence=1.0,
+    cwe=("CWE-89",),
+    owasp=("A03:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Use query bindings instead of string interpolation for the non-binding argument "
+        "of raw builder methods (like whereRaw or DB::raw). For example, "
+        "use whereRaw('price > ?', [$price])."
+    ),
+)
+
+
 XSS = Rule(
     id=XSS_RULE,
     title="Cross-Site Scripting",
@@ -71,6 +92,23 @@ XSS = Rule(
         "Render the value with {{ }} instead of {!! !!}. Blade escapes {{ }} "
         "automatically. Reach for {!! !!} only for markup you generated "
         "yourself, never for anything derived from a request."
+    ),
+)
+
+
+LARAVEL_BLADE_RAW_ECHO = Rule(
+    id=LARAVEL_BLADE_RAW_ECHO_RULE,
+    title="Blade Raw Echo XSS",
+    severity="high",
+    confidence=1.0,
+    cwe=("CWE-79",),
+    owasp=("A03:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Use {{ }} instead of {!! !!} to echo user-controlled data. Blade escapes {{ }} "
+        "automatically, whereas {!! !!} renders the data raw, leading to Cross-Site Scripting."
     ),
 )
 
@@ -253,7 +291,9 @@ _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
         SQL_INJECTION,
+        LARAVEL_RAW_QUERY,
         XSS,
+        LARAVEL_BLADE_RAW_ECHO,
         COMMAND_INJECTION,
         CODE_EXECUTION,
         PATH_TRAVERSAL,
@@ -333,10 +373,11 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
             for path in group_paths
         )
         has_http_entry = any(
-            path[0].role == "entry" and str(path[0].note).startswith("HTTP") for path in group_paths
+            path[0].role == "entry" and str(path[0].note).startswith("HTTP") 
+            for path in group_paths
         )
         has_unauth_http_entry = any(
-            path[0].role == "entry" and "unauthenticated" in str(path[0].note)
+            path[0].role == "entry" and "unauthenticated" in str(path[0].note) 
             for path in group_paths
         )
 
@@ -354,11 +395,11 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
         def path_sort_key(path):
             min_conf = min((getattr(step, "confidence", 1.0) for step in path), default=1.0)
             return (-min_conf, len(path), str(path))
-
+            
         group_paths.sort(key=path_sort_key)
-
+        
         primary_path = group_paths[0]
-
+        
         if "vendor/" in str(primary_path[-1].span.file):
             continue
 

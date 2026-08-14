@@ -136,7 +136,7 @@ findings:
     symbol: App\Models\User
   - role: sink
     symbol: $user->update($request->all())
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Repositories/OrderRepository.php
   line: 12
   severity: critical
@@ -155,7 +155,7 @@ findings:
   - role: sink
     symbol: orderByRaw
     note: unparameterised SQL fragment
-- rule: php.xss
+- rule: laravel.blade-raw-echo
   file: resources/views/orders/show.blade.php
   line: 2
   severity: critical
@@ -191,7 +191,7 @@ findings:
     line: 16
     symbol: DB::select("select * from orders
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Repositories/ReportRepository.php
   line: 29
   severity: critical
@@ -227,7 +227,7 @@ findings:
     line: 35
     symbol: DB::unprepared("truncate table {$table}")
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/LegacyController.php
   line: 23
   severity: critical
@@ -243,7 +243,7 @@ findings:
   - role: sink
     symbol: DB::raw('select * from orders order by ' . $_GET['sort'])
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/LegacyController.php
   line: 32
   severity: critical
@@ -260,7 +260,7 @@ findings:
     line: 32
     symbol: DB::raw("select * from sites where host
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/MagicController.php
   line: 25
   severity: critical
@@ -274,7 +274,7 @@ findings:
     note: attacker-controlled request data, read as a magic property
   - role: sink
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/MagicController.php
   line: 34
   severity: critical
@@ -288,7 +288,7 @@ findings:
     note: attacker-controlled request data, read as a magic property
   - role: sink
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/SlugController.php
   line: 26
   severity: critical
@@ -306,7 +306,7 @@ findings:
     line: 26
     symbol: DB::table('pages')->orderByRaw($slug)
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/SlugController.php
   line: 35
   severity: critical
@@ -323,7 +323,7 @@ findings:
     line: 35
     symbol: DB::raw("select * from pages order by {$order}")
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/HelperController.php
   line: 24
   severity: critical
@@ -339,7 +339,7 @@ findings:
     line: 24
     symbol: DB::raw('select * from orders order by ' . request('sort'))
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/HelperController.php
   line: 32
   severity: critical
@@ -355,7 +355,7 @@ findings:
     line: 32
     symbol: DB::raw('select * from orders order by ' . Input::get('sort'))
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/HelperController.php
   line: 40
   severity: critical
@@ -372,7 +372,7 @@ findings:
     line: 40
     symbol: DB::raw("select * from orders order by {$column}")
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NullsafeController.php
   line: 25
   severity: critical
@@ -389,7 +389,7 @@ findings:
     line: 25
     symbol: DB::raw('select * from orders order by ' . $request?->input('sort'))
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NullsafeController.php
   line: 32
   severity: critical
@@ -405,7 +405,7 @@ findings:
   - role: sink
     line: 32
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NullsafeController.php
   line: 40
   severity: critical
@@ -422,7 +422,7 @@ findings:
     line: 40
     symbol: DB::raw("select * from orders order by {$column}")
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NamedArgController.php
   line: 27
   severity: critical
@@ -438,7 +438,7 @@ findings:
   - role: sink
     line: 27
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NamedArgController.php
   line: 34
   severity: critical
@@ -473,7 +473,7 @@ findings:
     note: unparameterised SQL fragment
 - file: app/Http/Controllers/BranchController.php
   line: 18
-  rule: php.sql-injection
+  rule: laravel.raw-query
 - rule: php.sql-injection
   file: app/Console/Commands/VulnerableCommand.php
   line: 13

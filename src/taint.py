@@ -26,6 +26,7 @@ from .laravel.views import extract_view_bindings, template_path
 from .laravel.vocabulary import (
     CODE_EXECUTION_RULE,
     COMMAND_INJECTION_RULE,
+    LARAVEL_BLADE_RAW_ECHO_RULE,
     MAGIC_PROPERTY_KINDS,
     MASS_ASSIGNMENT_RULE,
     ROUTE_PARAM_KINDS,
@@ -918,10 +919,13 @@ def _walk_template(
     paths: list[list[PathStep]] = []
 
     # 1. Direct raw echos in this template
+    is_blade = str(parsed.path).endswith(".blade.php")
     for stmt in find_all(parsed.tree.root_node, "echo_statement"):
         if TaintKind.HTML not in expr_kinds(stmt, parsed.source, local_state):
             continue
         line = stmt.start_point[0] + 1
+        
+        rule_id = LARAVEL_BLADE_RAW_ECHO_RULE if is_blade else XSS_RULE
         paths.append(
             prefix
             + [
@@ -930,7 +934,7 @@ def _walk_template(
                     span=node_span(stmt, parsed.path),
                     snippet=project.blade_line(parsed.path, line),
                     note="raw echo, no HTML escaping",
-                    rule_id=XSS_RULE,
+                    rule_id=rule_id,
                 )
             ]
         )
