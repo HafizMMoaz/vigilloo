@@ -174,7 +174,9 @@ class Finding:
     cwe: tuple[str, ...]
     span: Span
     evidence_path: tuple[PathStep, ...]
+    alternative_paths: tuple[tuple[PathStep, ...], ...] = ()
     remediation: str = ""
+    needs_review: bool = False
 
     def __post_init__(self) -> None:
         if not self.evidence_path:

@@ -54,3 +54,17 @@ def test_fingerprint_is_independent_of_how_the_root_was_spelled() -> None:
     relative = scan_project(load_project(FIXTURE))
     absolute = scan_project(load_project(FIXTURE.resolve()))
     assert [f.fingerprint for f in relative] == [f.fingerprint for f in absolute]
+
+
+def test_rule_dataclass_shape_is_fully_populated() -> None:
+    for rule in _BY_ID.values():
+        assert rule.id
+        assert rule.title
+        assert rule.severity in {"critical", "high", "medium", "low", "info"}
+        assert 0.0 <= rule.confidence <= 1.0
+        assert rule.cwe
+        assert rule.owasp
+        assert rule.kind in {"TAINT", "STRUCTURAL", "CONFIG", "DEPENDENCY", "SECRET"}
+        assert rule.languages
+        assert rule.frameworks
+        assert rule.remediation

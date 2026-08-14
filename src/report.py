@@ -83,8 +83,9 @@ def render(findings: list[Finding], console: Console) -> None:
 
     for finding in findings:
         style = _SEVERITY_STYLE.get(finding.severity, "white")
+        review_tag = " (Needs Review)" if finding.needs_review else ""
         console.print()
-        console.print(f"[{style}]{finding.severity.upper()}[/{style}] - {finding.title}")
+        console.print(f"[{style}]{finding.severity.upper()}[/{style}]{review_tag} - {finding.title}")
         console.print(
             f"  [dim]{finding.span.file}:{finding.span.start_line} · "
             f"{' '.join(finding.cwe)} · {finding.rule_id}[/dim]"
@@ -102,6 +103,11 @@ def render(findings: list[Finding], console: Console) -> None:
                 console.print(f"     [dim]{step.note}[/dim]")
 
         console.print()
+        if finding.alternative_paths:
+            count = len(finding.alternative_paths)
+            plural = "s" if count != 1 else ""
+            console.print(f"  [dim]+ {count} alternative path{plural} reached this sink[/dim]")
+            console.print()
         console.print(f"  [bold]Fix:[/bold] {finding.remediation}")
 
     counts: dict[str, int] = {}

@@ -46,6 +46,7 @@ from .laravel.vocabulary import (
 )
 from .models import PathStep, Route, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, find_any, node_span, node_text, walk
+from .structural import authenticated_by
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
 
@@ -337,7 +338,7 @@ def expr_kinds(
     return _union_of_children(node, source, local, request_vars, resolve, validated_fields)
 
 
-def _request_like_params(project: Project, fqn: str) -> frozenset[str]:
+def _request_like_params(project: Project, fqn: str, route: Route | None = None) -> frozenset[str]:
     """Parameter names of this method that plausibly hold a Request.
 
     A parameter counts when its declared type's last namespace segment ends
@@ -353,11 +354,18 @@ def _request_like_params(project: Project, fqn: str) -> frozenset[str]:
     symbol = project.method(fqn)
     if symbol is None:
         return frozenset()
+        
+    route_params: set[str] = set()
+    if route is not None:
+        route_params = set(uri_params(route.uri))
+        
     names: set[str] = set()
     for param_name, param_type in zip(symbol.params, symbol.param_types, strict=True):
         if param_name == "request":
             names.add(param_name)
         elif param_type is not None and param_type.rsplit("\\", 1)[-1].endswith("Request"):
+            names.add(param_name)
+        elif not param_type and param_name not in route_params and route is not None:
             names.add(param_name)
     return frozenset(names)
 
@@ -996,6 +1004,7 @@ def _walk_method(
     stats: WalkStats | None = None,
     receiver_fqn: str | None = None,
     visited: frozenset[tuple[str, frozenset[tuple[str, frozenset[TaintKind]]]]] | None = None,
+    route: Route | None = None,
 ) -> list[list[PathStep]]:
     if depth > max_depth:
         return []
@@ -1025,7 +1034,7 @@ def _walk_method(
 
         while True:
             inner_paths = _walk_method_ast(
-                project, fqn, tainted, depth, max_depth, stats, receiver_fqn, new_visited
+                project, fqn, tainted, depth, max_depth, stats, receiver_fqn, new_visited, route
             )
             print(f"DEBUG: inner_paths length: {len(inner_paths)}")
             if len(inner_paths) == len(summary.paths_by_taint[cache_key]):
@@ -1124,6 +1133,7 @@ def _walk_method_ast(
     stats: WalkStats | None = None,
     receiver_fqn: str | None = None,
     visited: frozenset[tuple[str, frozenset[tuple[str, frozenset[TaintKind]]]]] | None = None,
+    route: Route | None = None,
 ) -> list[list[PathStep]]:
     """Walk one method body, returning every completed source-to-sink path.
 
@@ -1148,7 +1158,7 @@ def _walk_method_ast(
     # What `self::` means: the class or trait whose file this body is in.
     lexical_class = symbol.fqn.rpartition("::")[0] if symbol is not None else requested_class
     paths: list[list[PathStep]] = []
-    request_vars = _request_like_params(project, fqn)
+    request_vars = _request_like_params(project, fqn, route if depth == 0 else None)
 
     # Bound to this file, because a class name means whatever this file's namespace and
     # imports say it means. `use App\\Support\\Input;` and Laravel's `Input` facade are
@@ -1817,16 +1827,22 @@ def find_taint_paths(
             _giveup(stats)
             continue
         _followed(stats)
+        
+        auth_middleware = authenticated_by(route)
+        note = "HTTP entry point"
+        if auth_middleware is None:
+            note = "HTTP entry point (unauthenticated)"
+
         entry = PathStep(
             role="entry",
             span=route.span,
             snippet=f"{'|'.join(route.verbs)} {route.uri} -> {route.action_fqn}",
-            note="HTTP entry point",
+            note=note,
         )
         seeded, source_steps = _route_param_sources(project, route)
         paths.extend(
             _walk_method(
-                project, route.action_fqn, seeded, [entry, *source_steps], 0, max_depth, stats
+                project, route.action_fqn, seeded, [entry, *source_steps], 0, max_depth, stats, route=route
             )
         )
 

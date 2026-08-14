@@ -147,7 +147,7 @@ findings:
     symbol: POST /orders/search
   - role: source
     file: app/Http/Controllers/OrderController.php
-    line: 17
+    line: 18
     symbol: $sort = $request->input('sort')
   - role: propagator
     symbol: $this->orders->search($sort)
@@ -158,7 +158,7 @@ findings:
 - rule: php.xss
   file: resources/views/orders/show.blade.php
   line: 2
-  severity: high
+  severity: critical
   path:
   - role: entry
     file: routes/api.php
@@ -166,7 +166,7 @@ findings:
     symbol: GET|HEAD /orders/display
   - role: source
     file: app/Http/Controllers/OrderController.php
-    line: 29
+    line: 30
   - role: propagator
     symbol: view('orders.show', compact('sort'))
     note: view data into resources/views/orders/show.blade.php
@@ -474,6 +474,67 @@ findings:
 - file: app/Http/Controllers/BranchController.php
   line: 18
   rule: php.sql-injection
+- rule: php.sql-injection
+  file: app/Console/Commands/VulnerableCommand.php
+  line: 13
+  severity: high
+  path:
+  - role: entry
+    file: app/Console/Commands/VulnerableCommand.php
+    line: 11
+    symbol: '[command] App\Console\Commands\VulnerableCommand::handle'
+    note: Command entry point
+  - role: sink
+    file: app/Console/Commands/VulnerableCommand.php
+    line: 13
+    symbol: DB::statement("DELETE FROM users WHERE id = " . $this->payload)
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/OrderController.php
+  line: 43
+  severity: critical
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 133
+    symbol: GET|HEAD /orders/test/weak -> App\Http\Controllers\OrderController::weak
+    note: HTTP entry point (unauthenticated)
+  - role: sanitizer
+    file: app/Http/Controllers/OrderController.php
+    line: 42
+    symbol: strip_tags($request->input('weak_input'))
+    note: weak control
+  - role: source
+    file: app/Http/Controllers/OrderController.php
+    line: 42
+    symbol: $safe = strip_tags($request->input('weak_input'))
+    note: attacker-controlled request data
+  - role: sink
+    file: app/Http/Controllers/OrderController.php
+    line: 43
+    symbol: DB::statement($safe)
+    note: unparameterised SQL fragment
+- rule: php.sql-injection
+  file: app/Http/Controllers/DuckClass.php
+  line: 7
+  severity: high
+  needs_review: true
+  path:
+  - role: entry
+    file: routes/api.php
+    line: 132
+    symbol: GET|HEAD /{dynamic} -> App\Http\Controllers\OrderController::dynamic
+    note: HTTP entry point (unauthenticated)
+  - role: propagator
+    file: app/Http/Controllers/OrderController.php
+    line: 37
+    symbol: $duck->dynamicCall($request->input('dynamic_input'))
+    note: argument 0 into App\Http\Controllers\DuckClass::dynamicCall
+  - role: sink
+    file: app/Http/Controllers/DuckClass.php
+    line: 7
+    symbol: DB::statement($x)
+    note: unparameterised SQL fragment
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 
 use App\Repositories\OrderRepository;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class OrderController
 {
@@ -29,5 +30,22 @@ class OrderController
         $sort = $request->input('sort');
 
         return view('orders.show', compact('sort'));
+    }
+
+    public function dynamic(Request $request, $duck)
+    {
+        $duck->dynamicCall($request->input('dynamic_input'));
+    }
+
+    public function weak(Request $request)
+    {
+        $safe = strip_tags($request->input('weak_input'));
+        DB::statement($safe);
+    }
+
+    public function vendorTest(Request $request)
+    {
+        $v = new my_vendor\VendorSink();
+        $v->doSink($request->input('vendor_input'));
     }
 }

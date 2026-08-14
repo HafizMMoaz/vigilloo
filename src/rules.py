@@ -31,7 +31,12 @@ class Rule:
     id: str
     title: str
     severity: str
+    confidence: float
     cwe: tuple[str, ...]
+    owasp: tuple[str, ...]
+    kind: str
+    languages: tuple[str, ...]
+    frameworks: tuple[str, ...]
     remediation: str
 
 
@@ -39,7 +44,12 @@ SQL_INJECTION = Rule(
     id=SQL_INJECTION_RULE,
     title="SQL Injection",
     severity="critical",
+    confidence=1.0,
     cwe=("CWE-89",),
+    owasp=("A03:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Pass user input as a query binding rather than interpolating it into "
         "the SQL string, or validate it against an allowlist. For an ORDER BY "
@@ -51,7 +61,12 @@ XSS = Rule(
     id=XSS_RULE,
     title="Cross-Site Scripting",
     severity="high",
+    confidence=1.0,
     cwe=("CWE-79",),
+    owasp=("A03:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Render the value with {{ }} instead of {!! !!}. Blade escapes {{ }} "
         "automatically. Reach for {!! !!} only for markup you generated "
@@ -64,7 +79,12 @@ COMMAND_INJECTION = Rule(
     id=COMMAND_INJECTION_RULE,
     title="Command Injection",
     severity="critical",
+    confidence=1.0,
     cwe=("CWE-78",),
+    owasp=("A03:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Avoid building shell commands with raw string interpolation of untrusted input. "
         "Use array arguments with Process::run(['command', $arg]) or "
@@ -77,7 +97,12 @@ CODE_EXECUTION = Rule(
     id=CODE_EXECUTION_RULE,
     title="Code Execution",
     severity="critical",
+    confidence=1.0,
     cwe=("CWE-94", "CWE-502"),
+    owasp=("A03:2021", "A08:2021"),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Never pass untrusted input to eval(), unserialize(), create_function(), "
         "dynamic include/require, or callable callbacks. "
@@ -91,7 +116,12 @@ PATH_TRAVERSAL = Rule(
     id=PATH_TRAVERSAL_RULE,
     title="Path Traversal",
     severity="critical",
+    confidence=1.0,
     cwe=("CWE-22", "CWE-434"),
+    owasp=("A01:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Validate the filename against a strict allowlist, or use basename() to "
         "strip directory components before using it in a filesystem operation. "
@@ -104,7 +134,12 @@ SSRF = Rule(
     id=SSRF_RULE,
     title="Server-Side Request Forgery",
     severity="high",
+    confidence=1.0,
     cwe=("CWE-918",),
+    owasp=("A10:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Validate URLs against a strict allowlist of permitted hosts. "
         "Do not allow arbitrary user input to form the scheme or host of an outbound HTTP request."
@@ -116,7 +151,12 @@ MASS_ASSIGNMENT = Rule(
     id=MASS_ASSIGNMENT_RULE,
     title="Mass Assignment",
     severity="high",
+    confidence=1.0,
     cwe=("CWE-915",),
+    owasp=("A01:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Replace the model's $guarded = [] with an explicit $fillable listing "
         "only the columns a user may set, or pass $request->validated() / "
@@ -128,7 +168,12 @@ MISSING_AUTHORIZATION = Rule(
     id=MISSING_AUTHORIZATION_RULE,
     title="Missing Authorization on Model-Bound Route",
     severity="high",
+    confidence=1.0,
     cwe=("CWE-639",),
+    owasp=("A01:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Add $this->authorize('view', $model) as the first statement of the "
         "action, or attach can:view,model middleware to the route. "
@@ -141,7 +186,12 @@ OPEN_REDIRECT = Rule(
     id=OPEN_REDIRECT_RULE,
     title="Open Redirect",
     severity="medium",
+    confidence=1.0,
     cwe=("CWE-601", "CWE-113"),
+    owasp=("A01:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Validate the redirect URL against a strict allowlist of permitted destinations, "
         "or ensure it is a relative path (e.g. starts_with:/)."
@@ -153,7 +203,12 @@ LDAP_INJECTION = Rule(
     id=LDAP_INJECTION_RULE,
     title="LDAP Injection",
     severity="high",
+    confidence=1.0,
     cwe=("CWE-90",),
+    owasp=("A03:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Escape user input before placing it in an LDAP search filter. "
         "Use ldap_escape() with appropriate flags for DN or filter contexts."
@@ -165,7 +220,12 @@ XPATH_INJECTION = Rule(
     id=XPATH_INJECTION_RULE,
     title="XPath Injection",
     severity="high",
+    confidence=1.0,
     cwe=("CWE-643",),
+    owasp=("A03:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Avoid string concatenation when building XPath queries. Use bound variables if supported, "
         "or strictly validate and cast input to expected types before interpolation."
@@ -177,7 +237,12 @@ LOG_INJECTION = Rule(
     id=LOG_INJECTION_RULE,
     title="Log Injection",
     severity="low",
+    confidence=1.0,
     cwe=("CWE-117",),
+    owasp=("A09:2021",),
+    kind="TAINT",
+    languages=("php",),
+    frameworks=("laravel",),
     remediation=(
         "Sanitize user input before writing it to logs by removing or encoding newline characters "
         "to prevent log forging. Alternatively, use structured logging (e.g. JSON)."
@@ -247,6 +312,13 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
         "low": "info",
         "info": "info",
     }
+    _SEVERITY_UP = {
+        "info": "low",
+        "low": "medium",
+        "medium": "high",
+        "high": "critical",
+        "critical": "critical",
+    }
 
     findings = []
     for (rule_id, _), group_paths in paths_by_sink.items():
@@ -260,27 +332,57 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
             path[0].role == "entry" and str(path[0].note).endswith("entry point")
             for path in group_paths
         )
-        has_http_entry = any(path[0].note == "HTTP entry point" for path in group_paths)
+        has_http_entry = any(
+            path[0].role == "entry" and str(path[0].note).startswith("HTTP") 
+            for path in group_paths
+        )
+        has_unauth_http_entry = any(
+            path[0].role == "entry" and "unauthenticated" in str(path[0].note) 
+            for path in group_paths
+        )
 
         severity = rule.severity
-        if has_entry and not has_http_entry:
-            severity = _SEVERITY_DOWN.get(severity, severity)
+        if rule.kind == "TAINT":
+            if has_unauth_http_entry:
+                severity = _SEVERITY_UP.get(severity, severity)
+            elif has_entry and not has_http_entry:
+                severity = _SEVERITY_DOWN.get(severity, severity)
 
-        for path in group_paths:
-            path_severity = severity
-            if any(getattr(step, "confidence", 1.0) < 0.5 for step in path):
-                path_severity = _SEVERITY_DOWN.get(path_severity, path_severity)
+        # Path confidence is the minimum confidence of any step.
+        # We want highest confidence first (sort by -min_conf),
+        # then shortest length (len(path)),
+        # then deterministic tie-breaker (str(path)).
+        def path_sort_key(path):
+            min_conf = min((getattr(step, "confidence", 1.0) for step in path), default=1.0)
+            return (-min_conf, len(path), str(path))
+            
+        group_paths.sort(key=path_sort_key)
+        
+        primary_path = group_paths[0]
+        
+        if "vendor/" in str(primary_path[-1].span.file):
+            continue
 
-            findings.append(
-                Finding(
-                    rule_id=rule.id,
-                    severity=path_severity,
-                    title=rule.title,
-                    cwe=rule.cwe,
-                    span=path[-1].span,
-                    evidence_path=tuple(path),
-                    remediation=rule.remediation,
-                )
+        alternative_paths = tuple(tuple(p) for p in group_paths[1:])
+
+        path_severity = severity
+        needs_review = False
+        if rule.kind == "TAINT" and any(getattr(step, "confidence", 1.0) < 0.5 for step in primary_path):
+            path_severity = _SEVERITY_DOWN.get(path_severity, path_severity)
+            needs_review = True
+
+        findings.append(
+            Finding(
+                rule_id=rule.id,
+                severity=path_severity,
+                title=rule.title,
+                cwe=rule.cwe,
+                span=primary_path[-1].span,
+                evidence_path=tuple(primary_path),
+                alternative_paths=alternative_paths,
+                remediation=rule.remediation,
+                needs_review=needs_review,
             )
+        )
 
     return sorted(findings, key=lambda f: (str(f.span.file), f.span.start_line, f.rule_id))

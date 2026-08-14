@@ -1295,7 +1295,7 @@ annotated at src/taint.py:3. 5 tasks.
 - **Tests:** Untyped parameter fixture; unresolvable fixture asserting the
   coverage counter increments.
 
-### TASK-065
+### [COMPLETED] TASK-065
 - **Goal:** Findings deduplicate across entry points.
 - **Description:** Per docs/13-security-engine section Deduplication: multiple entry
   points reaching one sink produce one finding with several paths.
@@ -1317,7 +1317,7 @@ docs/08-framework-adapters section Laravel-specific rule set and
 docs/13-security-engine. Rule IDs as spelled in those tables, permanent per
 invariant 7. Every task writes the negative fixture first. 16 tasks.
 
-### TASK-066
+### [COMPLETED] TASK-066
 - **Goal:** The Rule dataclass matches the specified shape.
 - **Description:** Today src/rules.py has id, title, severity, cwe, remediation.
   docs/13-security-engine section Rule shape specifies also

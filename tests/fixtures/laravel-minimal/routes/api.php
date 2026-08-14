@@ -125,3 +125,10 @@ Route::post('/enum/purge', [EnumController::class, 'purge']);
 Route::get('/enum/status', [EnumController::class, 'status']);
 Route::get('/branch', [BranchController::class, 'branchSanitized']);
 Route::get('/branch/safe', [BranchController::class, 'fullySanitized']);
+
+
+
+$dynamic_route = '/orders/dyn';
+Route::get($dynamic_route, [App\Http\Controllers\OrderController::class, 'dynamic']);
+Route::get('/orders/test/weak', [App\Http\Controllers\OrderController::class, 'weak']);
+Route::get('/orders/test/vendor', [App\Http\Controllers\OrderController::class, 'vendorTest']);

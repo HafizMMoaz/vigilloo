@@ -35,7 +35,7 @@ from vigilloo.rules import scan_project
 EXPECTED_FILE = "expected.yml"
 
 _TOP_KEYS = frozenset({"findings", "must_not_find"})
-_FINDING_KEYS = frozenset({"rule", "file", "line", "severity", "path"})
+_FINDING_KEYS = frozenset({"rule", "file", "line", "severity", "needs_review", "path"})
 _FINDING_REQUIRED = ("rule", "file", "line")
 _STEP_KEYS = frozenset({"role", "symbol", "file", "line", "note"})
 _FORBIDDEN_KEYS = frozenset({"rule", "file", "line", "reason"})
@@ -71,7 +71,8 @@ class ExpectedFinding:
     rule: str
     file: str
     line: int
-    severity: str | None = None
+    severity: str | None
+    needs_review: bool
     path: tuple[ExpectedStep, ...] | None = None
 
     @property
@@ -203,6 +204,7 @@ def _finding(raw: Any, where: str) -> ExpectedFinding:
         file=file,
         line=line,
         severity=_text(entry, "severity", where),
+        needs_review=entry.get("needs_review", False),
         path=steps,
     )
 
@@ -285,6 +287,9 @@ def _compare(expected: ExpectedFinding, actual: Finding) -> list[str]:
     problems: list[str] = []
     if expected.severity is not None and actual.severity != expected.severity:
         problems.append(f"{where}: severity is {actual.severity}, expected {expected.severity}")
+    if expected.needs_review != getattr(actual, "needs_review", False):
+        actual_val = getattr(actual, "needs_review", False)
+        problems.append(f"{where}: needs_review is {actual_val}, expected {expected.needs_review}")
     if expected.path is not None:
         problems.extend(_compare_path(where, expected.path, actual.evidence_path))
     return problems
