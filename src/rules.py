@@ -333,11 +333,10 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
             for path in group_paths
         )
         has_http_entry = any(
-            path[0].role == "entry" and str(path[0].note).startswith("HTTP") 
-            for path in group_paths
+            path[0].role == "entry" and str(path[0].note).startswith("HTTP") for path in group_paths
         )
         has_unauth_http_entry = any(
-            path[0].role == "entry" and "unauthenticated" in str(path[0].note) 
+            path[0].role == "entry" and "unauthenticated" in str(path[0].note)
             for path in group_paths
         )
 
@@ -355,11 +354,11 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
         def path_sort_key(path):
             min_conf = min((getattr(step, "confidence", 1.0) for step in path), default=1.0)
             return (-min_conf, len(path), str(path))
-            
+
         group_paths.sort(key=path_sort_key)
-        
+
         primary_path = group_paths[0]
-        
+
         if "vendor/" in str(primary_path[-1].span.file):
             continue
 
@@ -367,7 +366,9 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
 
         path_severity = severity
         needs_review = False
-        if rule.kind == "TAINT" and any(getattr(step, "confidence", 1.0) < 0.5 for step in primary_path):
+        if rule.kind == "TAINT" and any(
+            getattr(step, "confidence", 1.0) < 0.5 for step in primary_path
+        ):
             path_severity = _SEVERITY_DOWN.get(path_severity, path_severity)
             needs_review = True
 

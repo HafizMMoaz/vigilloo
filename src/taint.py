@@ -45,7 +45,7 @@ from .laravel.vocabulary import (
     superglobal_kinds,
 )
 from .models import PathStep, Route, TaintKind, WalkStats
-from .parser import ParsedFile, find_all, find_any, node_span, node_text, walk
+from .parser import ParsedFile, find_all, find_any, node_span, node_text
 from .structural import authenticated_by
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
@@ -354,11 +354,11 @@ def _request_like_params(project: Project, fqn: str, route: Route | None = None)
     symbol = project.method(fqn)
     if symbol is None:
         return frozenset()
-        
+
     route_params: set[str] = set()
     if route is not None:
         route_params = set(uri_params(route.uri))
-        
+
     names: set[str] = set()
     for param_name, param_type in zip(symbol.params, symbol.param_types, strict=True):
         if param_name == "request":
@@ -1145,7 +1145,6 @@ def _walk_method_ast(
     Collapsing them would either lose a consumer's override or bind a trait's
     `self::` to the wrong type.
     """
-    prefix: list[PathStep] = []
     found = project.method_node(fqn)
     if found is None:
         return []
@@ -1207,14 +1206,14 @@ def _walk_method_ast(
             return resolve_ssa_taint(ssa.reads[node.id])
         return initial_tainted.get(name, frozenset())
 
-    local = LocalState(initial_tainted, get_taint)
 
 
     from .laravel.validation import extract_validation_cleared
+
     validated_fields = extract_validation_cleared(method_node, source, parsed)
 
     def explore(
-        block: BasicBlock,
+        block: object,
         current_prefix: list[PathStep],
         visited_edges: frozenset[tuple[int, int]],
         current_linear: dict[str, frozenset[TaintKind]],
@@ -1271,7 +1270,7 @@ def _walk_method_ast(
                     # taint the target carried before this statement no longer
                     # applies.
                     if val:
-                        # Pop isn't strictly necessary since it wouldn't be in ssa_taints yet, but safe.
+                        # Pop isn't strictly necessary since it wouldn't be in ssa_taints yet
                         ssa_taints.pop(val, None)
                     local.linear_state.pop(target, None)
 
@@ -1379,7 +1378,7 @@ def _walk_method_ast(
                                 role="sink",
                                 span=node_span(call, parsed.path),
                                 snippet=node_text(call, source).strip(),
-                                note="preg_replace with /e modifier evaluates replacement as PHP code",
+                                note="preg_replace with /e evaluates replacement as PHP code",
                                 rule_id=CODE_EXECUTION_RULE,
                             )
                         ]
@@ -1561,7 +1560,9 @@ def _walk_method_ast(
 
                     _followed(stats)
                     callee_tainted = {
-                        callee.params[i]: kinds for i, kinds in passed.items() if i < len(callee.params)
+                        callee.params[i]: kinds
+                        for i, kinds in passed.items()
+                        if i < len(callee.params)
                     }
                     if not callee_tainted:
                         continue
@@ -1683,7 +1684,9 @@ def _walk_method_ast(
                 # lost trail when something was being carried into it. `$fn()` and
                 # `$fn($constant)` lose nothing, and `$fn(...)` is a first-class callable
                 # that has not been invoked yet - nothing is passed to any of them.
-                if any(expr_kinds(arg, source, local, request_vars, resolve) for arg in dynamic_args):
+                if any(
+                    expr_kinds(arg, source, local, request_vars, resolve) for arg in dynamic_args
+                ):
                     _giveup(stats)
 
             # 3. view() hands data to a template, where html taint can reach a
@@ -1748,7 +1751,6 @@ def _walk_method_ast(
                                 ]
                             )
 
-
         for edge in block.successors:
             edge_tuple = (block.id, edge.target.id)
             if edge_tuple not in visited_edges:
@@ -1763,7 +1765,7 @@ def _walk_method_ast(
     cfg = CFGBuilder().build(method_node.child_by_field_name("body") or method_node)
     ssa = SSABuilder(cfg, source)
     ssa.build()
-    
+
     if cfg.entry:
         explore(cfg.entry, [], frozenset(), dict(tainted), local_types)
 
@@ -1827,7 +1829,7 @@ def find_taint_paths(
             _giveup(stats)
             continue
         _followed(stats)
-        
+
         auth_middleware = authenticated_by(route)
         note = "HTTP entry point"
         if auth_middleware is None:
@@ -1842,7 +1844,14 @@ def find_taint_paths(
         seeded, source_steps = _route_param_sources(project, route)
         paths.extend(
             _walk_method(
-                project, route.action_fqn, seeded, [entry, *source_steps], 0, max_depth, stats, route=route
+                project,
+                route.action_fqn,
+                seeded,
+                [entry, *source_steps],
+                0,
+                max_depth,
+                stats,
+                route=route,
             )
         )
 

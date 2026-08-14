@@ -85,7 +85,9 @@ def render(findings: list[Finding], console: Console) -> None:
         style = _SEVERITY_STYLE.get(finding.severity, "white")
         review_tag = " (Needs Review)" if finding.needs_review else ""
         console.print()
-        console.print(f"[{style}]{finding.severity.upper()}[/{style}]{review_tag} - {finding.title}")
+        console.print(
+            f"[{style}]{finding.severity.upper()}[/{style}]{review_tag} - {finding.title}"
+        )
         console.print(
             f"  [dim]{finding.span.file}:{finding.span.start_line} · "
             f"{' '.join(finding.cwe)} · {finding.rule_id}[/dim]"
