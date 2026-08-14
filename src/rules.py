@@ -11,6 +11,7 @@ from .laravel.vocabulary import (
     CODE_EXECUTION_RULE,
     COMMAND_INJECTION_RULE,
     LARAVEL_BLADE_RAW_ECHO_RULE,
+    LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_RAW_QUERY_RULE,
     LDAP_INJECTION_RULE,
     LOG_INJECTION_RULE,
@@ -287,6 +288,24 @@ LOG_INJECTION = Rule(
     ),
 )
 
+
+LARAVEL_CSRF_EXCEPT = Rule(
+    id=LARAVEL_CSRF_EXCEPT_RULE,
+    title="CSRF Exception",
+    severity="medium",
+    confidence=1.0,
+    cwe=("CWE-352",),
+    owasp=("A01:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Ensure that CSRF exceptions are absolutely necessary. If required, limit them to exact "
+        "matches or highly constrained patterns. Do not use broad wildcards like `*` or `api/*`."
+    ),
+)
+
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -304,6 +323,7 @@ _BY_ID: dict[str, Rule] = {
         LDAP_INJECTION,
         XPATH_INJECTION,
         LOG_INJECTION,
+        LARAVEL_CSRF_EXCEPT,
     )
 }
 

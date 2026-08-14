@@ -1,4 +1,8 @@
 findings:
+- rule: laravel.csrf-except
+  file: app/Http/Middleware/VerifyCsrfToken.php
+  line: 6
+  severity: medium
 - rule: laravel.missing-authorization
   file: app/Http/Controllers/InvoiceController.php
   line: 22
@@ -605,6 +609,10 @@ must_not_find:
   file: resources/views/orders/show.blade.php
   line: 4
   reason: '{!! e($sort) !!} - e() clears the html kind'
+- rule: laravel.csrf-except
+  file: app/Http/Middleware/VerifyCsrfToken.php
+  line: 7
+  reason: 'webhook/exact is an exact match, not a wildcard'
 - rule: php.sql-injection
   file: app/Repositories/ReportRepository.php
   line: 41

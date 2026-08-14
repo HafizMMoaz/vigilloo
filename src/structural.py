@@ -19,9 +19,12 @@ from .laravel.middleware import authenticated_by, is_gated
 from .laravel.models import is_model
 from .laravel.policies import find_policy
 from .laravel.routes import uri_params
-from .laravel.vocabulary import MISSING_AUTHORIZATION_RULE
-from .models import PathStep, Route
-from .parser import ParsedFile, find_all, node_text
+from .laravel.vocabulary import (
+    LARAVEL_CSRF_EXCEPT_RULE,
+    MISSING_AUTHORIZATION_RULE,
+)
+from .models import PathStep, Route, Span
+from .parser import ParsedFile, find_all, node_span, node_text
 
 _AUTHORIZE_METHODS = frozenset(
     {
@@ -217,6 +220,82 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
     return steps
 
 
+def _is_state_changing(project: Project, path_str: str) -> bool:
+    if "*" in path_str:
+        return True
+    
+    normalized_path = "/" + path_str.lstrip("/")
+    state_changing_verbs = {"POST", "PUT", "PATCH", "DELETE"}
+    
+    for route in project.routes:
+        route_uri = "/" + route.uri.lstrip("/")
+        if route_uri == normalized_path:
+            if any(verb in state_changing_verbs for verb in route.verbs):
+                return True
+    return False
+
+
+def _extract_csrf_except(project: Project) -> list[tuple[Span, str]]:
+    results = []
+    
+    # 1. VerifyCsrfToken::$except (Laravel 10-)
+    for fqn, class_info in project.classes.items():
+        if "VerifyCsrfToken" in fqn or (class_info.parent and "VerifyCsrfToken" in class_info.parent):
+            parsed = project.files.get(class_info.span.file)
+            if not parsed:
+                continue
+            
+            for prop in find_all(parsed.tree.root_node, "property_declaration"):
+                for elem in find_all(prop, "property_element"):
+                    if node_text(elem.child_by_field_name("name"), parsed.source) == "$except":
+                        default_value = elem.child_by_field_name("default_value")
+                        if default_value and default_value.type == "array_creation_expression":
+                            for child in default_value.children:
+                                if child.type == "array_element_initializer":
+                                    val_node = child.children[0]
+                                    if val_node.type in ("string", "encapsed_string"):
+                                        val = parsed.source[val_node.start_byte:val_node.end_byte].decode("utf-8").strip("'\"")
+                                        results.append((node_span(val_node, parsed.path), val))
+
+    # 2. bootstrap/app.php validateCsrfTokens(except: [...]) (Laravel 11+)
+    for path, parsed in project.files.items():
+        if path.name == "app.php" and path.parent.name == "bootstrap":
+            for call in find_all(parsed.tree.root_node, "member_call_expression"):
+                name = call.child_by_field_name("name")
+                if name and node_text(name, parsed.source) == "validateCsrfTokens":
+                    args = call.child_by_field_name("arguments")
+                    if args:
+                        for arg in args.children:
+                            if arg.type == "argument":
+                                arg_name = arg.child_by_field_name("name")
+                                if arg_name and node_text(arg_name, parsed.source) == "except":
+                                    val = arg.child_by_field_name("value")
+                                    if val and val.type == "array_creation_expression":
+                                        for child in val.children:
+                                            if child.type == "array_element_initializer":
+                                                val_node = child.children[0]
+                                                if val_node.type in ("string", "encapsed_string"):
+                                                    s = parsed.source[val_node.start_byte:val_node.end_byte].decode("utf-8").strip("'\"")
+                                                    results.append((node_span(val_node, parsed.path), s))
+    return results
+
+
+def _csrf_except_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    for span, path_str in _extract_csrf_except(project):
+        if _is_state_changing(project, path_str):
+            reason = "wildcard" if "*" in path_str else "state-changing route"
+            step = PathStep(
+                role="gap",
+                span=span,
+                snippet=path_str,
+                note=f"disables CSRF protection for a {reason}",
+                rule_id=LARAVEL_CSRF_EXCEPT_RULE
+            )
+            paths.append([step])
+    return paths
+
+
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
     paths = [
@@ -224,4 +303,6 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
         for route in project.routes
         if (steps := _missing_authorization(project, route)) is not None
     ]
+    for except_path in _csrf_except_paths(project):
+        paths.append(except_path)
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))
