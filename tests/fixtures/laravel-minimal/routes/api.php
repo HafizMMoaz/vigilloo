@@ -133,3 +133,7 @@ Route::get($dynamic_route, [App\Http\Controllers\OrderController::class, 'dynami
 Route::get('/orders/test/weak', [App\Http\Controllers\OrderController::class, 'weak']);
 Route::get('/orders/test/vendor', [App\Http\Controllers\OrderController::class, 'vendorTest']);
 Route::post('/login', [App\Http\Controllers\UserController::class, 'login']);
+
+Route::get('/unsubscribe', [App\Http\Controllers\UserController::class, 'unsubscribe']);
+Route::get('/confirm', [App\Http\Controllers\UserController::class, 'confirm'])->middleware('signed');
+Route::get('/approve', [App\Http\Controllers\UserController::class, 'approve'])->middleware('auth');

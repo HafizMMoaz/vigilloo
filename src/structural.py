@@ -15,7 +15,7 @@ import re
 from tree_sitter import Node
 
 from .graph import Project
-from .laravel.middleware import authenticated_by, is_gated, is_rate_limited
+from .laravel.middleware import authenticated_by, is_gated, is_rate_limited, is_signed
 from .laravel.models import is_model
 from .laravel.policies import find_policy
 from .laravel.routes import uri_params
@@ -23,6 +23,7 @@ from .laravel.vocabulary import (
     LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
+    LARAVEL_UNSIGNED_ROUTE_RULE,
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
@@ -362,6 +363,30 @@ def _no_throttle_paths(route: Route) -> list[PathStep] | None:
     ]
 
 
+def _unsigned_route_paths(route: Route) -> list[PathStep] | None:
+    action_keywords = {"unsubscribe", "confirm", "approve"}
+    normalized_uri = route.uri.lower()
+    
+    if not any(keyword in normalized_uri for keyword in action_keywords):
+        return None
+        
+    if authenticated_by(route) is not None:
+        return None
+        
+    if is_signed(route):
+        return None
+        
+    return [
+        PathStep(
+            role="gap",
+            span=route.span,
+            snippet=f"{'|'.join(route.verbs)} {route.uri}",
+            note="public action route missing signed middleware",
+            rule_id=LARAVEL_UNSIGNED_ROUTE_RULE
+        )
+    ]
+
+
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
     paths = [
@@ -373,6 +398,8 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
         if (steps := _unauthenticated_route_paths(route)) is not None:
             paths.append(steps)
         if (steps := _no_throttle_paths(route)) is not None:
+            paths.append(steps)
+        if (steps := _unsigned_route_paths(route)) is not None:
             paths.append(steps)
             
     for except_path in _csrf_except_paths(project):

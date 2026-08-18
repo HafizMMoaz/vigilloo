@@ -651,6 +651,14 @@ findings:
   - role: gap
     symbol: POST /login
     note: authentication route with no rate limiting middleware
+- rule: laravel.unsigned-route
+  file: routes/api.php
+  line: 137
+  severity: medium
+  path:
+  - role: gap
+    symbol: GET|HEAD /unsubscribe
+    note: public action route missing signed middleware
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
