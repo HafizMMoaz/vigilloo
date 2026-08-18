@@ -20,6 +20,8 @@ from .laravel.models import is_model
 from .laravel.policies import find_policy
 from .laravel.routes import uri_params
 from .laravel.vocabulary import (
+    LARAVEL_DEBUG_ENABLED_RULE,
+    LARAVEL_APP_KEY_RULE,
     LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
@@ -680,8 +682,75 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
         paths.append(auth_path)
     for auth_path in _validated_bypass_paths(project):
         paths.append(auth_path)
+    paths.extend(_config_rules_paths(project))
     paths.extend(_env_outside_config_paths(project))
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))
+
+
+from pathlib import Path
+def _config_rules_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    config = project.config
+    
+    # laravel.debug-enabled
+    app_debug = config.env_vars.get("APP_DEBUG", "").lower() in ("true", "1")
+    if not app_debug and config.get("app.debug") is True:
+        app_debug = True
+        
+    app_env = config.env_vars.get("APP_ENV", "").lower()
+    if not app_env:
+        app_env = config.get("app.env", "")
+        
+    # We only fire if APP_DEBUG=true and it's a real environment (not from .env.example)
+    # The requirement: APP_DEBUG=true in a .env.example does not fire.
+    is_real_env = config.env_file_exists or not config.env_example_exists
+    
+    if app_debug and is_real_env and app_env == "production":
+        paths.append([
+            PathStep(
+                role="gap",
+                span=Span(file=Path(".env"), start_line=1, start_col=1, end_line=1, end_col=1),
+                snippet="APP_DEBUG=true",
+                note="Debug mode is enabled",
+                rule_id=LARAVEL_DEBUG_ENABLED_RULE,
+            )
+        ])
+
+    # laravel.app-key
+    app_key_val = config.get_value_object("app.key")
+    is_deferred = False
+    app_key_str = ""
+    if app_key_val:
+        app_key_str = app_key_val.value or ""
+        if not isinstance(app_key_str, str):
+            app_key_str = str(app_key_str)
+        is_deferred = app_key_val.env_var is not None
+
+    env_app_key = config.env_vars.get("APP_KEY", "")
+
+    # Check for hardcoded insecure key in config/app.php
+    hardcoded_insecure = False
+    if app_key_val and not is_deferred:
+        if not app_key_str or app_key_str.startswith("base64:SomeRandomString") or app_key_str == "SomeRandomString":
+            hardcoded_insecure = True
+
+    # Check if .env is committed
+    env_committed = config.env_file_exists
+
+    should_fire_app_key = env_committed or hardcoded_insecure
+
+    if should_fire_app_key:
+        paths.append([
+            PathStep(
+                role="gap",
+                span=Span(file=Path(".env" if env_committed else "config/app.php"), start_line=1, start_col=1, end_line=1, end_col=1),
+                snippet="APP_KEY",
+                note="APP_KEY is missing, default, or committed",
+                rule_id=LARAVEL_APP_KEY_RULE,
+            )
+        ])
+        
+    return paths
 
 def _env_outside_config_paths(project: Project) -> list[list[PathStep]]:
     paths = []

@@ -1,0 +1,5 @@
+must_not_find:
+  - rule: laravel.debug-enabled
+    file: .env.example
+  - rule: laravel.app-key
+    file: .env.example
