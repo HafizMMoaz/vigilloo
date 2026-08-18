@@ -35,6 +35,17 @@ class UserController
         return User::create($request->validated());
     }
 
+    public function storeValidatedBypass(App\Http\Requests\StubInvoiceRequest $request)
+    {
+        return User::create($request->all());
+    }
+
+    public function storeValidatedBypassInline(Request $request)
+    {
+        $request->validate(['name' => 'required']);
+        return User::create($request->all());
+    }
+
     public function lookup(Request $request)
     {
         return User::updateOrCreate($request->all(), ['status' => 'active']);

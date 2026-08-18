@@ -13,6 +13,7 @@ from .laravel.vocabulary import (
     LARAVEL_BLADE_RAW_ECHO_RULE,
     LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
+    LARAVEL_VALIDATED_BYPASS_RULE,
     LARAVEL_RAW_QUERY_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
@@ -397,6 +398,23 @@ LARAVEL_INCONSISTENT_AUTHORIZATION = Rule(
 )
 
 
+LARAVEL_VALIDATED_BYPASS = Rule(
+    id=LARAVEL_VALIDATED_BYPASS_RULE,
+    title="Validated Data Bypass",
+    severity="medium",
+    confidence=1.0,
+    cwe=("CWE-20",),
+    owasp=("A03:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Using `$request->all()` after validation bypasses the validation filtering. "
+        "Use `$request->validated()` instead."
+    ),
+)
+
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -420,6 +438,7 @@ _BY_ID: dict[str, Rule] = {
         LARAVEL_UNSIGNED_ROUTE,
         LARAVEL_DEAD_AUTHORIZATION,
         LARAVEL_INCONSISTENT_AUTHORIZATION,
+        LARAVEL_VALIDATED_BYPASS,
     )
 }
 

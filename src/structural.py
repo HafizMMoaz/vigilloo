@@ -26,6 +26,7 @@ from .laravel.vocabulary import (
     LARAVEL_UNSIGNED_ROUTE_RULE,
     LARAVEL_DEAD_AUTHORIZATION_RULE,
     LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
+    LARAVEL_VALIDATED_BYPASS_RULE,
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
@@ -553,6 +554,76 @@ def _inconsistent_authorization_paths(project: Project) -> list[list[PathStep]]:
     return paths
 
 
+def _validated_bypass_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    
+    from .laravel.validation import extract_validation_cleared
+    
+    for fqn, class_info in project.classes.items():
+        for method_name, symbol in class_info.methods.items():
+            found = project.method_node(f"{fqn}::{method_name}")
+            if not found:
+                continue
+                
+            method_node, parsed = found
+            
+            # Check if this method performs validation
+            performs_validation = False
+            
+            # 1. Inline validation: $request->validate() or Validator::make()
+            cleared = extract_validation_cleared(method_node, parsed.source)
+            if cleared:
+                performs_validation = True
+                
+            # 2. FormRequest parameter
+            if not performs_validation:
+                for param_type in symbol.param_types:
+                    if not param_type:
+                        continue
+                    if param_type == "Illuminate\\Http\\Request" or param_type == "Request":
+                        continue
+                    if param_type.endswith("Request") and param_type in project.classes:
+                        performs_validation = True
+                        break
+                    if project.method_node(f"{param_type}::rules"):
+                        performs_validation = True
+                        break
+            
+            if not performs_validation:
+                continue
+                
+            # Method performs validation. Does it call ->all()?
+            for call in find_all(method_node, "member_call_expression"):
+                name_node = call.child_by_field_name("name")
+                if not name_node or node_text(name_node, parsed.source) != "all":
+                    continue
+                    
+                obj_node = call.child_by_field_name("object")
+                if not obj_node:
+                    continue
+                    
+                obj_text = node_text(obj_node, parsed.source)
+                
+                is_request = False
+                if obj_text == "$request":
+                    is_request = True
+                elif obj_node.type == "call_expression":
+                    call_name = obj_node.child_by_field_name("function")
+                    if call_name and node_text(call_name, parsed.source) == "request":
+                        is_request = True
+                        
+                if is_request:
+                    step = PathStep(
+                        role="gap",
+                        span=node_span(call, parsed.path),
+                        snippet=node_text(call, parsed.source),
+                        note="uses all() after validation instead of validated()",
+                        rule_id=LARAVEL_VALIDATED_BYPASS_RULE
+                    )
+                    paths.append([step])
+                    
+    return paths
+
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
     paths = [
@@ -574,5 +645,7 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
     for auth_path in _dead_authorization_paths(project):
         paths.append(auth_path)
     for auth_path in _inconsistent_authorization_paths(project):
+        paths.append(auth_path)
+    for auth_path in _validated_bypass_paths(project):
         paths.append(auth_path)
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))

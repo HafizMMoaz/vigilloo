@@ -105,17 +105,17 @@ findings:
     symbol: Profile::create($request->all())
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
-  line: 47
+  line: 58
   severity: high
   path:
   - role: entry
     file: routes/api.php
     line: 28
   - role: source
-    line: 45
+    line: 56
     symbol: Post::find($request->input('id'))
   - role: source
-    line: 47
+    line: 58
     symbol: $request->all()
   - role: model
     file: app/Models/Post.php
@@ -125,7 +125,7 @@ findings:
     symbol: $post->forceFill($request->all())
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
-  line: 52
+  line: 63
   severity: high
   path:
   - role: entry
@@ -674,7 +674,8 @@ findings:
   path:
   - role: gap
     symbol: public function show(Invoice $invoice)
-    note: action lacks authorization, but other actions in InvoiceController have it
+    note: action lacks authorization, but other actions in InvoiceController have
+      it
 - rule: laravel.inconsistent-authorization
   file: app/Http/Controllers/InvoiceController.php
   line: 28
@@ -682,7 +683,8 @@ findings:
   path:
   - role: gap
     symbol: public function showReceipt(Receipt $receipt)
-    note: action lacks authorization, but other actions in InvoiceController have it
+    note: action lacks authorization, but other actions in InvoiceController have
+      it
 - rule: laravel.inconsistent-authorization
   file: app/Http/Controllers/InvoiceController.php
   line: 65
@@ -690,7 +692,8 @@ findings:
   path:
   - role: gap
     symbol: public function viaStubRequest(StubInvoiceRequest $request, Invoice $invoice)
-    note: action lacks authorization, but other actions in InvoiceController have it
+    note: action lacks authorization, but other actions in InvoiceController have
+      it
 - rule: laravel.inconsistent-authorization
   file: app/Http/Controllers/InvoiceController.php
   line: 75
@@ -698,7 +701,8 @@ findings:
   path:
   - role: gap
     symbol: public function publicShow(Invoice $invoice)
-    note: action lacks authorization, but other actions in InvoiceController have it
+    note: action lacks authorization, but other actions in InvoiceController have
+      it
 - rule: laravel.inconsistent-authorization
   file: app/Http/Controllers/InvoiceController.php
   line: 80
@@ -706,7 +710,8 @@ findings:
   path:
   - role: gap
     symbol: public function inGroup(Invoice $invoice)
-    note: action lacks authorization, but other actions in InvoiceController have it
+    note: action lacks authorization, but other actions in InvoiceController have
+      it
 - rule: laravel.inconsistent-authorization
   file: app/Http/Controllers/InvoiceController.php
   line: 90
@@ -714,7 +719,22 @@ findings:
   path:
   - role: gap
     symbol: public function nonModel(Token $token)
-    note: action lacks authorization, but other actions in InvoiceController have it
+    note: action lacks authorization, but other actions in InvoiceController have
+      it
+- rule: laravel.validated-bypass
+  file: app/Http/Controllers/UserController.php
+  line: 40
+  path:
+  - role: gap
+    symbol: $request->all()
+    note: uses all() after validation instead of validated()
+- rule: laravel.validated-bypass
+  file: app/Http/Controllers/UserController.php
+  line: 46
+  path:
+  - role: gap
+    symbol: $request->all()
+    note: uses all() after validation instead of validated()
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
@@ -730,11 +750,11 @@ must_not_find:
   reason: $request->validated() has passed a form request
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
-  line: 40
+  line: 51
   reason: updateOrCreate() argument 0 is the lookup; only argument 1 is written
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
-  line: 57
+  line: 68
   reason: route-model-bound receiver, but Post has a narrow $fillable
 - rule: laravel.missing-authorization
   file: app/Http/Controllers/InvoiceController.php
@@ -788,7 +808,7 @@ must_not_find:
 - rule: laravel.csrf-except
   file: app/Http/Middleware/VerifyCsrfToken.php
   line: 7
-  reason: 'webhook/exact is an exact match, not a wildcard'
+  reason: webhook/exact is an exact match, not a wildcard
 - rule: php.sql-injection
   file: app/Repositories/ReportRepository.php
   line: 41
@@ -869,3 +889,11 @@ must_not_find:
 - file: app/Http/Controllers/BranchController.php
   line: 30
   rule: php.sql-injection
+- rule: laravel.validated-bypass
+  file: app/Http/Controllers/UserController.php
+  line: 36
+  reason: Uses validated() instead of all()
+- rule: laravel.validated-bypass
+  file: app/Http/Controllers/UserController.php
+  line: 15
+  reason: Does not perform validation
