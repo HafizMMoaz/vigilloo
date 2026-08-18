@@ -15,13 +15,14 @@ import re
 from tree_sitter import Node
 
 from .graph import Project
-from .laravel.middleware import authenticated_by, is_gated
+from .laravel.middleware import authenticated_by, is_gated, is_rate_limited
 from .laravel.models import is_model
 from .laravel.policies import find_policy
 from .laravel.routes import uri_params
 from .laravel.vocabulary import (
     LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
+    LARAVEL_NO_THROTTLE_RULE,
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
@@ -316,6 +317,51 @@ def _unauthenticated_route_paths(route: Route) -> list[PathStep] | None:
     ]
 
 
+def _no_throttle_paths(route: Route) -> list[PathStep] | None:
+    if "POST" not in route.verbs:
+        return None
+        
+    auth_uris = {
+        "login", 
+        "register", 
+        "password/email", 
+        "password/reset", 
+        "forgot-password", 
+        "reset-password"
+    }
+    normalized_uri = route.uri.strip("/")
+    
+    action = route.action_fqn or ""
+    is_auth_route = normalized_uri in auth_uris or any(
+        x in action for x in (
+            "LoginController", 
+            "RegisterController", 
+            "ResetPasswordController", 
+            "ForgotPasswordController", 
+            "NewPasswordController",
+            "AuthenticatedSessionController",
+            "RegisteredUserController",
+            "PasswordResetLinkController"
+        )
+    )
+    
+    if not is_auth_route:
+        return None
+        
+    if is_rate_limited(route):
+        return None
+        
+    return [
+        PathStep(
+            role="gap",
+            span=route.span,
+            snippet=f"{'|'.join(route.verbs)} {route.uri}",
+            note="authentication route with no rate limiting middleware",
+            rule_id=LARAVEL_NO_THROTTLE_RULE
+        )
+    ]
+
+
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
     paths = [
@@ -325,6 +371,8 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
     ]
     for route in project.routes:
         if (steps := _unauthenticated_route_paths(route)) is not None:
+            paths.append(steps)
+        if (steps := _no_throttle_paths(route)) is not None:
             paths.append(steps)
             
     for except_path in _csrf_except_paths(project):

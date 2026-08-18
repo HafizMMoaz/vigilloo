@@ -14,6 +14,7 @@ from .laravel.vocabulary import (
     LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_RAW_QUERY_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
+    LARAVEL_NO_THROTTLE_RULE,
     LDAP_INJECTION_RULE,
     LOG_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
@@ -324,6 +325,23 @@ LARAVEL_UNAUTHENTICATED_ROUTE = Rule(
 )
 
 
+LARAVEL_NO_THROTTLE = Rule(
+    id=LARAVEL_NO_THROTTLE_RULE,
+    title="Authentication Route Missing Rate Limiting",
+    severity="medium",
+    confidence=1.0,
+    cwe=("CWE-307",),
+    owasp=("A07:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Attach the 'throttle' middleware to login, register, and password reset routes "
+        "to protect against brute-force and credential stuffing attacks."
+    ),
+)
+
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -343,6 +361,7 @@ _BY_ID: dict[str, Rule] = {
         LOG_INJECTION,
         LARAVEL_CSRF_EXCEPT,
         LARAVEL_UNAUTHENTICATED_ROUTE,
+        LARAVEL_NO_THROTTLE,
     )
 }
 

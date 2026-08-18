@@ -635,6 +635,22 @@ findings:
   - role: gap
     symbol: POST /enum/purge
     note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 135
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /login
+    note: state-changing route with no auth middleware
+- rule: laravel.no-throttle
+  file: routes/api.php
+  line: 135
+  severity: medium
+  path:
+  - role: gap
+    symbol: POST /login
+    note: authentication route with no rate limiting middleware
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php

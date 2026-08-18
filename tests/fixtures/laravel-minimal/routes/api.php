@@ -132,3 +132,4 @@ $dynamic_route = '/orders/dyn';
 Route::get($dynamic_route, [App\Http\Controllers\OrderController::class, 'dynamic']);
 Route::get('/orders/test/weak', [App\Http\Controllers\OrderController::class, 'weak']);
 Route::get('/orders/test/vendor', [App\Http\Controllers\OrderController::class, 'vendorTest']);
+Route::post('/login', [App\Http\Controllers\UserController::class, 'login']);
