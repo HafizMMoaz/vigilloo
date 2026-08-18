@@ -539,6 +539,102 @@ findings:
     line: 7
     symbol: DB::statement($x)
     note: unparameterised SQL fragment
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 18
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /orders/search
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 22
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /users
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 23
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /posts
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 24
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /profiles
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 25
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /users/narrowed
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 26
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /users/validated
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 27
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /users/lookup
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 28
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /posts/force
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 29
+  severity: high
+  path:
+  - role: gap
+    symbol: PUT /users/{user}
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 30
+  severity: high
+  path:
+  - role: gap
+    symbol: PUT /posts/{post}
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 64
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /reports/purge
+    note: state-changing route with no auth middleware
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 124
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /enum/purge
+    note: state-changing route with no auth middleware
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php

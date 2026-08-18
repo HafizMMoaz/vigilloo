@@ -81,6 +81,12 @@ findings:
       - role: source
       - role: model
       - role: sink
+  - rule: laravel.unauthenticated-route
+    file: routes/api.php
+    line: 6
+    severity: high
+    path:
+      - role: gap
 """
 
 

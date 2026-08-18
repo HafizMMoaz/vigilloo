@@ -21,6 +21,7 @@ from .laravel.policies import find_policy
 from .laravel.routes import uri_params
 from .laravel.vocabulary import (
     LARAVEL_CSRF_EXCEPT_RULE,
+    LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
@@ -296,6 +297,25 @@ def _csrf_except_paths(project: Project) -> list[list[PathStep]]:
     return paths
 
 
+def _unauthenticated_route_paths(route: Route) -> list[PathStep] | None:
+    if authenticated_by(route) is not None:
+        return None
+        
+    state_changing_verbs = {"POST", "PUT", "PATCH", "DELETE"}
+    if not any(verb in state_changing_verbs for verb in route.verbs):
+        return None
+        
+    return [
+        PathStep(
+            role="gap",
+            span=route.span,
+            snippet=f"{'|'.join(route.verbs)} {route.uri}",
+            note="state-changing route with no auth middleware",
+            rule_id=LARAVEL_UNAUTHENTICATED_ROUTE_RULE
+        )
+    ]
+
+
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
     paths = [
@@ -303,6 +323,10 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
         for route in project.routes
         if (steps := _missing_authorization(project, route)) is not None
     ]
+    for route in project.routes:
+        if (steps := _unauthenticated_route_paths(route)) is not None:
+            paths.append(steps)
+            
     for except_path in _csrf_except_paths(project):
         paths.append(except_path)
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))

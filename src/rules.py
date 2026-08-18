@@ -13,6 +13,7 @@ from .laravel.vocabulary import (
     LARAVEL_BLADE_RAW_ECHO_RULE,
     LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_RAW_QUERY_RULE,
+    LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LDAP_INJECTION_RULE,
     LOG_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
@@ -306,6 +307,23 @@ LARAVEL_CSRF_EXCEPT = Rule(
 )
 
 
+LARAVEL_UNAUTHENTICATED_ROUTE = Rule(
+    id=LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
+    title="Unauthenticated State-Changing Route",
+    severity="high",
+    confidence=1.0,
+    cwe=("CWE-306",),
+    owasp=("A07:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Attach an authentication middleware (e.g. 'auth') to this route to ensure "
+        "only logged-in users can perform state-changing operations."
+    ),
+)
+
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -324,6 +342,7 @@ _BY_ID: dict[str, Rule] = {
         XPATH_INJECTION,
         LOG_INJECTION,
         LARAVEL_CSRF_EXCEPT,
+        LARAVEL_UNAUTHENTICATED_ROUTE,
     )
 }
 
