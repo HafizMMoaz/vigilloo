@@ -54,7 +54,10 @@ def test_the_main_fixture_parses_completely() -> None:
     # Counted from the tree rather than written down. A literal here is a second place the
     # fixture's size is recorded, and adding one file to the fixture would fail this test
     # for a reason that has nothing to do with what it is checking.
-    on_disk = sum(1 for path in FIXTURE.rglob("*.php"))
+    on_disk = sum(
+        1 for path in FIXTURE.rglob("*.php")
+        if "vendor" not in path.parts
+    )
     assert result.files_discovered == on_disk
     assert result.parse_success_rate == 1.0
     assert result.call_resolution_rate == 1.0
@@ -218,7 +221,7 @@ def test_an_unreadable_file_counts_against_the_parse_rate() -> None:
 def test_both_rates_appear_in_the_scan_output(fixture_project: Path) -> None:
     result = runner.invoke(app, ["scan", str(fixture_project)])
 
-    on_disk = sum(1 for path in Path(fixture_project).rglob("*.php"))
+    on_disk = sum(1 for path in Path(fixture_project).rglob("*.php") if "vendor" not in path.parts)
     assert f"{on_disk}/{on_disk} files parsed (100.0%)" in result.stdout
     assert "call sites resolved (100.0%)" in result.stdout
 
@@ -228,7 +231,7 @@ def test_coverage_is_printed_before_the_findings(fixture_project: Path) -> None:
     who stops at the first result must already have seen the blind spot."""
     out = runner.invoke(app, ["scan", str(fixture_project)]).stdout
 
-    assert out.index("Coverage:") < out.index("SQL Injection")
+    assert out.index("Coverage:") < out.index("Raw Query Injection")
 
 
 def test_a_partial_scan_still_reports_its_rates(tmp_path: Path) -> None:

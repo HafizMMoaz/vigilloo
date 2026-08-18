@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from vigilloo.rules import XSS_RULE
+from vigilloo.laravel.vocabulary import (
+    LARAVEL_BLADE_RAW_ECHO_RULE,
+    SQL_INJECTION_RULE,
+    XSS_RULE,
+)
 
 
 def _minimal_project(tmp_path: Path, view_body: str) -> Path:

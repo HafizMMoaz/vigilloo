@@ -954,7 +954,7 @@ def _walk_template(
                             span=node_span(call, parsed.path),
                             snippet=project.blade_line(parsed.path, line),
                             note="echo inside JS context without JS escaping",
-                            rule_id=XSS_RULE,
+                            rule_id=LARAVEL_BLADE_RAW_ECHO_RULE if is_blade else XSS_RULE,
                         )
                     ]
                 )

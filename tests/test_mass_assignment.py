@@ -54,17 +54,17 @@ def test_update_or_create_lookup_argument_is_not_reported() -> None:
 
 def test_force_fill_is_reported_even_on_a_guarded_model() -> None:
     """forceFill bypasses both $fillable and $guarded, which is its purpose."""
-    assert 47 in _mass_assignment_lines()
+    assert 58 in _mass_assignment_lines()
 
 
 def test_route_model_bound_receiver_is_resolved() -> None:
     """$user->update($request->all()) where $user comes from the signature."""
-    assert 52 in _mass_assignment_lines()
+    assert 63 in _mass_assignment_lines()
 
 
 def test_route_model_bound_guarded_model_is_not_reported() -> None:
     """The same shape as above against a model with a narrow $fillable."""
-    assert 57 not in _mass_assignment_lines()
+    assert 68 not in _mass_assignment_lines()
 
 
 def test_the_evidence_path_names_the_model_and_the_line_to_edit() -> None:

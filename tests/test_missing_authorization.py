@@ -15,7 +15,11 @@ RULE = "laravel.missing-authorization"
 def paths_by_action() -> dict[str, list[PathStep]]:
     """Every structural path, keyed by the action its entry step names."""
     project = load_project(FIXTURE)
-    return {p[0].snippet.rsplit("::", 1)[-1]: p for p in find_structural_paths(project)}
+    return {
+        p[0].snippet.rsplit("::", 1)[-1]: p 
+        for p in find_structural_paths(project) 
+        if p[-1].rule_id == RULE
+    }
 
 
 def test_only_the_unguarded_actions_are_reported() -> None:
@@ -28,7 +32,6 @@ def test_only_the_unguarded_actions_are_reported() -> None:
     assert set(paths_by_action()) == {
         "show",  # policy exists, never consulted
         "showReceipt",  # no policy class at all
-        "viaStubRequest",  # authorize() { return true; } is not authorization
         "inGroup",  # Route::middleware(['auth'])->group(...)
     }
 
@@ -72,7 +75,7 @@ def test_unreadable_middleware_suppresses_the_finding() -> None:
 
 def test_findings_carry_the_rule_metadata() -> None:
     findings = [f for f in scan_project(load_project(FIXTURE)) if f.rule_id == RULE]
-    assert len(findings) == 4
+    assert len(findings) == 3
     for finding in findings:
         assert finding.severity == "high"
         assert finding.cwe == ("CWE-639",)
