@@ -39,14 +39,15 @@ findings, ≥90% precision on real applications, clean runs on 10 open-source La
   PHP framework, reusing the entire v0.1 pipeline. Doubles as the proof that
   `FrameworkAdapter` is genuinely framework-neutral rather than Laravel-shaped.
 
-## v1.0 - Integration and breadth
+## v1.0 - Integration and SCA
 
-The version where Vigilloo becomes part of a team's workflow rather than a tool someone runs.
+The version where Vigilloo becomes part of a team's workflow and tracks external dependencies.
 
 - **MCP server** - the agent workflow ([12-mcp](../12-mcp/README.md))
 - SARIF 2.1.0 + GitHub code scanning
 - GitHub App / Action, GitLab CI, generic CI recipes; PR review comments
 - Pre-commit hooks
+- **Deep Software Composition Analysis (SCA)**: Uses the Vigilloo call graph to verify *reachability* of vulnerable open-source packages (e.g. from NVD/OSV), dropping false positives.
 - **Second language: Python** (Django, FastAPI, Flask)
 - More PHP frameworks: Symfony, CodeIgniter
 - Plugin SDK published, documented, versioned
@@ -60,32 +61,34 @@ The version where Vigilloo becomes part of a team's workflow rather than a tool 
 - Cross-stack flows: a taint path from a React form through an API route into a Laravel sink,
   in one graph
 
-## v2.0 - Desktop and runtime
+## v2.0 - Attack Surface Monitoring (ASM) and Desktop
 
+- **Attack Surface Monitoring (ASM)** ([25-attack-surface-monitoring](../25-attack-surface-monitoring/README.md)): Subdomain enumeration, port scanning, and exposed endpoint mapping, augmenting the static route table.
 - PySide6 desktop application ([20-desktop](../20-desktop/README.md))
 - Runtime monitoring ([15-runtime](../15-runtime/README.md)) with graph correlation
 - Server, container and Kubernetes auditing (`vigilloo server`)
 - Java/Kotlin (Spring Boot) and C# (ASP.NET Core)
 - PDF reporting
 
-## v3.0 - Cloud
+## v3.0 - Autonomous Red Teaming
 
-- Hosted platform ([21-cloud](../21-cloud/README.md)): organisations, teams, SSO, RBAC
-- Continuous monitoring, trends, policy enforcement
-- The commercial tier; the CLI stays open source and fully capable offline
-
-## v4.0 - Attack engine
-
+- **Attack Engine / Hacking Agent** ([26-autonomous-red-teaming](../26-autonomous-red-teaming/README.md)): A multi-agent framework (similar to Decepticon) that generates Engagement Plans, executes real exploits against target environments in a sandbox, and validates static findings.
 - Safe, authorization-gated exploit validation ([14-attack-engine](../14-attack-engine/README.md))
 - Static findings upgraded from "likely" to "confirmed" with request/response evidence
 - Attack path chaining across the graph
 
-## v5.0 - Autonomous security engineering
+## v4.0 - Offensive Vaccine & Continuous Defense
 
+- **Offensive Vaccine Loop**: Exploit successes from the Red Team engine automatically generate verifiable patching suggestions and regression tests (SAST rules) to immunize the codebase.
 - Continuous autonomous review across an organisation's repositories
 - Threat intelligence correlation
 - Compliance automation (SOC 2, ISO 27001, PCI DSS evidence collection)
-- Security copilot over the full graph
+
+## v5.0 - Cloud and Enterprise Management
+
+- Hosted platform ([21-cloud](../21-cloud/README.md)): organisations, teams, SSO, RBAC
+- Continuous monitoring, trends, policy enforcement
+- The commercial tier; the CLI stays open source and fully capable offline
 
 ## Sequencing rules
 
@@ -97,7 +100,7 @@ unproven pipeline just doubles the debt.
 forces the deterministic engine to be genuinely good, rather than letting an LLM paper over its
 gaps.
 
-**Nothing intrusive before v4.0.** The attack engine is last, not because it is hardest, but
+**Nothing intrusive before v3.0.** The attack engine is late, not because it is hardest, but
 because shipping it early to a small team with an immature authorization model is how a security
 tool becomes an incident.
 
