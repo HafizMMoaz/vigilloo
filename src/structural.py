@@ -24,6 +24,7 @@ from .laravel.vocabulary import (
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
     LARAVEL_UNSIGNED_ROUTE_RULE,
+    LARAVEL_DEAD_AUTHORIZATION_RULE,
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
@@ -387,6 +388,92 @@ def _unsigned_route_paths(route: Route) -> list[PathStep] | None:
     ]
 
 
+def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    policy_fqns = set(project.policies.values())
+    for fqn in project.classes:
+        if fqn.endswith("Policy"):
+            policy_fqns.add(fqn)
+
+    if not policy_fqns:
+        return paths
+
+    abilities = set()
+    has_authorize_resource = False
+
+    can_re = re.compile(r'@can(?:not|any)?\(\s*[\'"]([^\'"]+)[\'"]')
+    for text_lines in project.blade_lines.values():
+        for line in text_lines:
+            for match in can_re.finditer(line):
+                abilities.add(match.group(1))
+
+    authorize_methods = {"authorize", "can", "cannot", "allows", "denies", "check"}
+    
+    for parsed in project.files.values():
+        for call in find_all(parsed.tree.root_node, "call_expression"):
+            name_node = None
+            if call.type == "member_call_expression":
+                name_node = call.child_by_field_name("name")
+            elif call.type == "scoped_call_expression":
+                name_node = call.child_by_field_name("name")
+            
+            if name_node is None:
+                continue
+
+            name_text = node_text(name_node, parsed.source)
+            if name_text == "authorizeResource":
+                has_authorize_resource = True
+                continue
+
+            if name_text in authorize_methods:
+                args_node = call.child_by_field_name("arguments")
+                if args_node is not None:
+                    real_args = [c for c in args_node.children if c.type not in ("(", ")", ",")]
+                    if real_args:
+                        arg_text = node_text(real_args[0], parsed.source).strip()
+                        if arg_text.startswith(("'", '"')):
+                            abilities.add(arg_text.strip("'\""))
+
+    for route in project.routes:
+        for mw in route.middleware:
+            if mw.startswith("can:"):
+                params = mw[4:].split(",")
+                if params:
+                    abilities.add(params[0])
+
+    if has_authorize_resource:
+        abilities.update({"viewAny", "view", "create", "update", "delete", "restore", "forceDelete"})
+
+    for fqn in sorted(policy_fqns):
+        class_info = project.classes.get(fqn)
+        if not class_info:
+            continue
+        
+        for method_name, symbol in class_info.methods.items():
+            if method_name.startswith("__"):
+                continue
+            if method_name == "before":
+                continue
+            
+            if method_name not in abilities:
+                method_node_data = project.method_node(f"{fqn}::{method_name}")
+                if not method_node_data:
+                    continue
+
+                method_node, parsed = method_node_data
+                snippet = _signature(method_node, parsed)
+                step = PathStep(
+                    role="gap",
+                    span=symbol.span,
+                    snippet=snippet,
+                    note="policy method is never referenced",
+                    rule_id=LARAVEL_DEAD_AUTHORIZATION_RULE
+                )
+                paths.append([step])
+
+    return paths
+
+
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
     paths = [
@@ -404,4 +491,8 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
             
     for except_path in _csrf_except_paths(project):
         paths.append(except_path)
+        
+    for auth_path in _dead_authorization_paths(project):
+        paths.append(auth_path)
+
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))

@@ -659,6 +659,14 @@ findings:
   - role: gap
     symbol: GET|HEAD /unsubscribe
     note: public action route missing signed middleware
+- rule: laravel.dead-authorization
+  file: app/Policies/InvoicePolicy.php
+  line: 15
+  severity: medium
+  path:
+  - role: gap
+    symbol: public function delete($user, Invoice $invoice)
+    note: policy method is never referenced
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php

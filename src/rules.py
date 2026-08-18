@@ -16,6 +16,7 @@ from .laravel.vocabulary import (
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
     LARAVEL_UNSIGNED_ROUTE_RULE,
+    LARAVEL_DEAD_AUTHORIZATION_RULE,
     LDAP_INJECTION_RULE,
     LOG_INJECTION_RULE,
     MASS_ASSIGNMENT_RULE,
@@ -360,6 +361,23 @@ LARAVEL_UNSIGNED_ROUTE = Rule(
 )
 
 
+LARAVEL_DEAD_AUTHORIZATION = Rule(
+    id=LARAVEL_DEAD_AUTHORIZATION_RULE,
+    title="Dead Authorization Policy",
+    severity="medium",
+    confidence=1.0,
+    cwe=("CWE-285",),
+    owasp=("A01:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Remove this unreferenced policy method or wire it up to a route or action. "
+        "A written but unwired policy is a strong oversight signal."
+    ),
+)
+
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -381,6 +399,7 @@ _BY_ID: dict[str, Rule] = {
         LARAVEL_UNAUTHENTICATED_ROUTE,
         LARAVEL_NO_THROTTLE,
         LARAVEL_UNSIGNED_ROUTE,
+        LARAVEL_DEAD_AUTHORIZATION,
     )
 }
 

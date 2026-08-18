@@ -11,4 +11,9 @@ class InvoicePolicy
     {
         return $user->id === $invoice->user_id;
     }
+
+    public function delete($user, Invoice $invoice)
+    {
+        return $user->id === $invoice->user_id;
+    }
 }
