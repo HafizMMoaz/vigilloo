@@ -1,0 +1,11 @@
+findings:
+  - rule: laravel.app-key
+    file: .env
+    line: 1
+must_not_find:
+  - rule: laravel.trusted-proxies
+    file: config/trustedproxy.php
+    line: 1
+  - rule: laravel.session-cookie
+    file: config/session.php
+    line: 1

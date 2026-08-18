@@ -16,6 +16,10 @@ from .laravel.vocabulary import (
     LARAVEL_VALIDATED_BYPASS_RULE,
     LARAVEL_FORM_REQUEST_TRUE_RULE,
     LARAVEL_ENV_OUTSIDE_CONFIG_RULE,
+    LARAVEL_DEBUG_ENABLED_RULE,
+    LARAVEL_APP_KEY_RULE,
+    LARAVEL_TRUSTED_PROXIES_RULE,
+    LARAVEL_SESSION_COOKIE_RULE,
     LARAVEL_RAW_QUERY_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
@@ -452,6 +456,74 @@ LARAVEL_FORM_REQUEST_TRUE = Rule(
 )
 
 
+LARAVEL_DEBUG_ENABLED = Rule(
+    id=LARAVEL_DEBUG_ENABLED_RULE,
+    title="Laravel Debug Mode Enabled in Production",
+    severity="critical",
+    confidence=1.0,
+    cwe=(),
+    owasp=(),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "APP_DEBUG=true is enabled, exposing stack traces and environment variables, which can lead to RCE (Ignition, CVE-2021-3129). "
+        "Set APP_DEBUG=false in production environments."
+    ),
+)
+
+
+LARAVEL_APP_KEY = Rule(
+    id=LARAVEL_APP_KEY_RULE,
+    title="Laravel APP_KEY Missing or Insecure",
+    severity="critical",
+    confidence=1.0,
+    cwe=(),
+    owasp=(),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "APP_KEY is missing, empty, framework-default, or committed to version control. This breaks session encryption and can lead to RCE (CVE-2018-15133). "
+        "Generate a unique APP_KEY using `php artisan key:generate` and do not commit the .env file."
+    ),
+)
+
+
+LARAVEL_TRUSTED_PROXIES = Rule(
+    id=LARAVEL_TRUSTED_PROXIES_RULE,
+    title="Insecure TrustedProxies Configuration",
+    severity="high",
+    confidence=1.0,
+    cwe=("CWE-348",),
+    owasp=("A05:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Trusting all proxies ('*') allows attackers to spoof the client IP address (e.g. via X-Forwarded-For), "
+        "bypassing IP-based restrictions and throttling. Specify a strict list of trusted proxy IPs."
+    ),
+)
+
+
+LARAVEL_SESSION_COOKIE = Rule(
+    id=LARAVEL_SESSION_COOKIE_RULE,
+    title="Insecure Session Cookie Flags",
+    severity="medium",
+    confidence=1.0,
+    cwe=("CWE-614",),
+    owasp=("A05:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Session cookies must have 'secure', 'http_only', and a strong 'same_site' policy to prevent "
+        "interception, XSS theft, and CSRF attacks. Ensure these flags are properly configured in config/session.php."
+    ),
+)
+
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -478,6 +550,10 @@ _BY_ID: dict[str, Rule] = {
         LARAVEL_VALIDATED_BYPASS,
         LARAVEL_FORM_REQUEST_TRUE,
         LARAVEL_ENV_OUTSIDE_CONFIG,
+        LARAVEL_DEBUG_ENABLED,
+        LARAVEL_APP_KEY,
+        LARAVEL_TRUSTED_PROXIES,
+        LARAVEL_SESSION_COOKIE,
     )
 }
 

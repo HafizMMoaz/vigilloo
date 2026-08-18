@@ -22,6 +22,8 @@ from .laravel.routes import uri_params
 from .laravel.vocabulary import (
     LARAVEL_DEBUG_ENABLED_RULE,
     LARAVEL_APP_KEY_RULE,
+    LARAVEL_TRUSTED_PROXIES_RULE,
+    LARAVEL_SESSION_COOKIE_RULE,
     LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
@@ -749,6 +751,74 @@ def _config_rules_paths(project: Project) -> list[list[PathStep]]:
                 rule_id=LARAVEL_APP_KEY_RULE,
             )
         ])
+
+    # laravel.trusted-proxies
+    tp_val = config.get_value_object("trustedproxy.proxies")
+    trusted_proxies = config.env_vars.get("TRUSTED_PROXIES")
+    tp_file = Path(".env")
+    if not trusted_proxies:
+        if tp_val:
+            trusted_proxies = tp_val.value
+            tp_file = tp_val.file_path or Path("config/trustedproxy.php")
+
+    if str(trusted_proxies).strip() == "*":
+        paths.append([
+            PathStep(
+                role="gap",
+                span=Span(file=tp_file, start_line=1, start_col=1, end_line=1, end_col=1),
+                snippet="*",
+                note="TrustedProxy is set to trust all proxies ('*')",
+                rule_id=LARAVEL_TRUSTED_PROXIES_RULE,
+            )
+        ])
+
+    # laravel.session-cookie
+    session_secure_val = config.get_value_object("session.secure")
+    session_http_only_val = config.get_value_object("session.http_only")
+    session_same_site_val = config.get_value_object("session.same_site")
+
+    is_prod = app_env == "production"
+
+    if session_secure_val is not None:
+        val = str(session_secure_val.value).lower()
+        if is_prod and val in ("false", "0", ""):
+            paths.append([
+                PathStep(
+                    role="gap",
+                    span=Span(file=session_secure_val.file_path or Path("config/session.php"), start_line=1, start_col=1, end_line=1, end_col=1),
+                    snippet="false",
+                    note="Session cookies are not marked as secure in production",
+                    rule_id=LARAVEL_SESSION_COOKIE_RULE,
+                )
+            ])
+
+    if session_http_only_val is not None:
+        val = str(session_http_only_val.value).lower()
+        if val in ("false", "0", ""):
+            paths.append([
+                PathStep(
+                    role="gap",
+                    span=Span(file=session_http_only_val.file_path or Path("config/session.php"), start_line=1, start_col=1, end_line=1, end_col=1),
+                    snippet="false",
+                    note="Session cookies are not marked as HTTP Only",
+                    rule_id=LARAVEL_SESSION_COOKIE_RULE,
+                )
+            ])
+
+    if session_same_site_val is not None:
+        val = str(session_same_site_val.value).lower()
+        if val == "none":
+            paths.append([
+                PathStep(
+                    role="gap",
+                    span=Span(file=session_same_site_val.file_path or Path("config/session.php"), start_line=1, start_col=1, end_line=1, end_col=1),
+                    snippet="none",
+                    note="Session cookies have SameSite set to None",
+                    rule_id=LARAVEL_SESSION_COOKIE_RULE,
+                )
+            ])
+
+
         
     return paths
 
