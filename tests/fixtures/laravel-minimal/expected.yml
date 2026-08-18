@@ -737,6 +737,14 @@ findings:
   - role: gap
     symbol: public function authorize()
     note: unconditionally returns true, bypassing authorization
+- rule: laravel.env-outside-config
+  file: app/Http/Controllers/UserController.php
+  line: 74
+  severity: medium
+  path:
+  - role: gap
+    symbol: env('DB_HOST', 'localhost')
+    note: env() is called outside the config/ directory
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php

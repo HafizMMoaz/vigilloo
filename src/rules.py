@@ -15,6 +15,7 @@ from .laravel.vocabulary import (
     LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
     LARAVEL_VALIDATED_BYPASS_RULE,
     LARAVEL_FORM_REQUEST_TRUE_RULE,
+    LARAVEL_ENV_OUTSIDE_CONFIG_RULE,
     LARAVEL_RAW_QUERY_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
@@ -416,6 +417,23 @@ LARAVEL_VALIDATED_BYPASS = Rule(
 )
 
 
+LARAVEL_ENV_OUTSIDE_CONFIG = Rule(
+    id=LARAVEL_ENV_OUTSIDE_CONFIG_RULE,
+    title="env() Outside Config",
+    severity="medium",
+    confidence=1.0,
+    cwe=(),
+    owasp=(),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Calling env() outside config/ directories returns null when configuration is cached. "
+        "Move the env() call to a config file and use config() to read it instead."
+    ),
+)
+
+
 LARAVEL_FORM_REQUEST_TRUE = Rule(
     id=LARAVEL_FORM_REQUEST_TRUE_RULE,
     title="Form Request Bypasses Authorization",
@@ -459,6 +477,7 @@ _BY_ID: dict[str, Rule] = {
         LARAVEL_INCONSISTENT_AUTHORIZATION,
         LARAVEL_VALIDATED_BYPASS,
         LARAVEL_FORM_REQUEST_TRUE,
+        LARAVEL_ENV_OUTSIDE_CONFIG,
     )
 }
 

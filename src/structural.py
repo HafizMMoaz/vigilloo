@@ -28,6 +28,7 @@ from .laravel.vocabulary import (
     LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
     LARAVEL_VALIDATED_BYPASS_RULE,
     LARAVEL_FORM_REQUEST_TRUE_RULE,
+    LARAVEL_ENV_OUTSIDE_CONFIG_RULE,
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
@@ -679,4 +680,28 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
         paths.append(auth_path)
     for auth_path in _validated_bypass_paths(project):
         paths.append(auth_path)
+    paths.extend(_env_outside_config_paths(project))
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))
+
+def _env_outside_config_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    
+    for path, parsed in project.files.items():
+        if path.parts and path.parts[0] == "config":
+            continue
+            
+        for call in find_all(parsed.tree.root_node, "function_call_expression"):
+            fn = call.child_by_field_name("function")
+            if fn and node_text(fn, parsed.source) == "env":
+                steps = [
+                    PathStep(
+                        role="gap",
+                        span=node_span(call, path),
+                        snippet=node_text(call, parsed.source),
+                        note="env() is called outside the config/ directory",
+                        rule_id=LARAVEL_ENV_OUTSIDE_CONFIG_RULE,
+                    )
+                ]
+                paths.append(steps)
+                
+    return paths

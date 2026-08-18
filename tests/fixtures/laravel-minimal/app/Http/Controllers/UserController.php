@@ -68,3 +68,9 @@ class UserController
         return $post->update($request->all());
     }
 }
+
+    public function someEnvCall()
+    {
+        $db = env('DB_HOST', 'localhost');
+        return $db;
+    }
