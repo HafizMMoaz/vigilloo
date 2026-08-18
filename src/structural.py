@@ -25,6 +25,7 @@ from .laravel.vocabulary import (
     LARAVEL_NO_THROTTLE_RULE,
     LARAVEL_UNSIGNED_ROUTE_RULE,
     LARAVEL_DEAD_AUTHORIZATION_RULE,
+    LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
@@ -474,6 +475,84 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
     return paths
 
 
+def _inconsistent_authorization_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    
+    # Map controller FQN to unique action_fqns and their Route
+    controller_actions: dict[str, dict[str, Route]] = {}
+    for route in project.routes:
+        if not route.action_fqn or "::" not in route.action_fqn:
+            continue
+        
+        fqn, method = route.action_fqn.split("::", 1)
+        if fqn not in controller_actions:
+            controller_actions[fqn] = {}
+        # Keep the first route for this action
+        if route.action_fqn not in controller_actions[fqn]:
+            controller_actions[fqn][route.action_fqn] = route
+            
+    for fqn, actions in controller_actions.items():
+        if len(actions) < 2:
+            continue
+            
+        if _controller_authorizes(project, fqn):
+            continue
+            
+        authorized_actions = []
+        unauthorized_actions = []
+        
+        for action_fqn, route in actions.items():
+            if is_gated(project, route):
+                authorized_actions.append(action_fqn)
+                continue
+                
+            found = project.method_node(action_fqn)
+            if not found:
+                unauthorized_actions.append(action_fqn)
+                continue
+                
+            method_node, method_parsed = found
+            if _calls_authorization(method_node, method_parsed.source):
+                authorized_actions.append(action_fqn)
+                continue
+                
+            symbol = project.method(action_fqn)
+            if symbol:
+                is_auth = False
+                for declared in symbol.param_types:
+                    if declared and _form_request_authorizes(project, declared):
+                        is_auth = True
+                        break
+                if is_auth:
+                    authorized_actions.append(action_fqn)
+                    continue
+                    
+            unauthorized_actions.append(action_fqn)
+            
+        if authorized_actions and unauthorized_actions:
+            for action_fqn in sorted(unauthorized_actions):
+                route = actions[action_fqn]
+                symbol = project.method(action_fqn)
+                span = symbol.span if symbol else route.span
+                
+                snippet = ""
+                found = project.method_node(action_fqn)
+                if found:
+                    snippet = _signature(found[0], found[1])
+                
+                controller_short = fqn.split("\\")[-1]
+                step = PathStep(
+                    role="gap",
+                    span=span,
+                    snippet=snippet,
+                    note=f"action lacks authorization, but other actions in {controller_short} have it",
+                    rule_id=LARAVEL_INCONSISTENT_AUTHORIZATION_RULE
+                )
+                paths.append([step])
+                
+    return paths
+
+
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
     paths = [
@@ -494,5 +573,6 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
         
     for auth_path in _dead_authorization_paths(project):
         paths.append(auth_path)
-
+    for auth_path in _inconsistent_authorization_paths(project):
+        paths.append(auth_path)
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))

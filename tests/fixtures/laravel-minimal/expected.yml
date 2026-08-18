@@ -667,6 +667,54 @@ findings:
   - role: gap
     symbol: public function delete($user, Invoice $invoice)
     note: policy method is never referenced
+- rule: laravel.inconsistent-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 22
+  severity: medium
+  path:
+  - role: gap
+    symbol: public function show(Invoice $invoice)
+    note: action lacks authorization, but other actions in InvoiceController have it
+- rule: laravel.inconsistent-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 28
+  severity: medium
+  path:
+  - role: gap
+    symbol: public function showReceipt(Receipt $receipt)
+    note: action lacks authorization, but other actions in InvoiceController have it
+- rule: laravel.inconsistent-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 65
+  severity: medium
+  path:
+  - role: gap
+    symbol: public function viaStubRequest(StubInvoiceRequest $request, Invoice $invoice)
+    note: action lacks authorization, but other actions in InvoiceController have it
+- rule: laravel.inconsistent-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 75
+  severity: medium
+  path:
+  - role: gap
+    symbol: public function publicShow(Invoice $invoice)
+    note: action lacks authorization, but other actions in InvoiceController have it
+- rule: laravel.inconsistent-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 80
+  severity: medium
+  path:
+  - role: gap
+    symbol: public function inGroup(Invoice $invoice)
+    note: action lacks authorization, but other actions in InvoiceController have it
+- rule: laravel.inconsistent-authorization
+  file: app/Http/Controllers/InvoiceController.php
+  line: 90
+  severity: medium
+  path:
+  - role: gap
+    symbol: public function nonModel(Token $token)
+    note: action lacks authorization, but other actions in InvoiceController have it
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php

@@ -12,6 +12,7 @@ from .laravel.vocabulary import (
     COMMAND_INJECTION_RULE,
     LARAVEL_BLADE_RAW_ECHO_RULE,
     LARAVEL_CSRF_EXCEPT_RULE,
+    LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
     LARAVEL_RAW_QUERY_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
@@ -378,6 +379,24 @@ LARAVEL_DEAD_AUTHORIZATION = Rule(
 )
 
 
+LARAVEL_INCONSISTENT_AUTHORIZATION = Rule(
+    id=LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
+    title="Inconsistent Authorization",
+    severity="medium",
+    confidence=1.0,
+    cwe=("CWE-285",),
+    owasp=("A01:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "A resource controller has authorization checks in some actions but not others. "
+        "This is a strong signal of an overlooked authorization check rather than "
+        "intentional public access."
+    ),
+)
+
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -400,6 +419,7 @@ _BY_ID: dict[str, Rule] = {
         LARAVEL_NO_THROTTLE,
         LARAVEL_UNSIGNED_ROUTE,
         LARAVEL_DEAD_AUTHORIZATION,
+        LARAVEL_INCONSISTENT_AUTHORIZATION,
     )
 }
 
