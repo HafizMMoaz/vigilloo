@@ -38,21 +38,6 @@ findings:
     note: no policy is defined for App\Models\Receipt
 - rule: laravel.missing-authorization
   file: app/Http/Controllers/InvoiceController.php
-  line: 65
-  severity: high
-  path:
-  - role: entry
-    file: routes/api.php
-    line: 43
-    note: 'authenticated by: auth'
-  - role: binding
-    symbol: Invoice $invoice
-  - role: policy
-    symbol: App\Policies\InvoicePolicy
-  - role: gap
-    symbol: viaStubRequest(StubInvoiceRequest $request, Invoice $invoice)
-- rule: laravel.missing-authorization
-  file: app/Http/Controllers/InvoiceController.php
   line: 80
   severity: high
   path:
@@ -735,6 +720,23 @@ findings:
   - role: gap
     symbol: $request->all()
     note: uses all() after validation instead of validated()
+- rule: laravel.form-request-true
+  file: app/Http/Requests/StubInvoiceRequest.php
+  line: 13
+  severity: high
+  path:
+  - role: entry
+    symbol: GET|HEAD /invoices/{invoice}/stub -> App\Http\Controllers\InvoiceController::viaStubRequest
+    note: 'authenticated by: auth'
+  - role: binding
+    symbol: Invoice $invoice
+    note: '{invoice} is resolved from the URL by route-model binding'
+  - role: policy
+    symbol: App\Policies\InvoicePolicy
+    note: exists and this action never consults it
+  - role: gap
+    symbol: public function authorize()
+    note: unconditionally returns true, bypassing authorization
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php

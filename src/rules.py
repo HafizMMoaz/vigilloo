@@ -14,6 +14,7 @@ from .laravel.vocabulary import (
     LARAVEL_CSRF_EXCEPT_RULE,
     LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
     LARAVEL_VALIDATED_BYPASS_RULE,
+    LARAVEL_FORM_REQUEST_TRUE_RULE,
     LARAVEL_RAW_QUERY_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
@@ -415,6 +416,24 @@ LARAVEL_VALIDATED_BYPASS = Rule(
 )
 
 
+LARAVEL_FORM_REQUEST_TRUE = Rule(
+    id=LARAVEL_FORM_REQUEST_TRUE_RULE,
+    title="Form Request Bypasses Authorization",
+    severity="high",
+    confidence=1.0,
+    cwe=("CWE-285",),
+    owasp=("A01:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "A FormRequest guarding a state-changing model-bound action unconditionally returns true "
+        "from its authorize() method. This disables authorization for the action. "
+        "Implement a proper authorization check using policies."
+    ),
+)
+
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -439,6 +458,7 @@ _BY_ID: dict[str, Rule] = {
         LARAVEL_DEAD_AUTHORIZATION,
         LARAVEL_INCONSISTENT_AUTHORIZATION,
         LARAVEL_VALIDATED_BYPASS,
+        LARAVEL_FORM_REQUEST_TRUE,
     )
 }
 

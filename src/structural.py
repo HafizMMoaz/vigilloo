@@ -27,6 +27,7 @@ from .laravel.vocabulary import (
     LARAVEL_DEAD_AUTHORIZATION_RULE,
     LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
     LARAVEL_VALIDATED_BYPASS_RULE,
+    LARAVEL_FORM_REQUEST_TRUE_RULE,
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
@@ -88,6 +89,18 @@ def _form_request_authorizes(project: Project, param_type: str) -> bool:
     if body is None:
         return False
     return not _RETURNS_TRUE.match(" ".join(node_text(body, parsed.source).split()))
+
+def _form_request_returns_true(project: Project, param_type: str) -> tuple[Node, ParsedFile] | None:
+    found = project.method_node(f"{param_type}::authorize")
+    if found is None:
+        return None
+    method, parsed = found
+    body = method.child_by_field_name("body")
+    if body is None:
+        return None
+    if _RETURNS_TRUE.match(" ".join(node_text(body, parsed.source).split())):
+        return method, parsed
+    return None
 
 
 def _controller_authorizes(project: Project, class_fqn: str) -> bool:
@@ -174,9 +187,15 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
 
     symbol = project.method(route.action_fqn)
     assert symbol is not None  # method_node already resolved it
+    
+    form_request_true = None
     for declared in symbol.param_types:
-        if declared and _form_request_authorizes(project, declared):
+        if not declared:
+            continue
+        if _form_request_authorizes(project, declared):
             return None
+        if form_request_true is None:
+            form_request_true = _form_request_returns_true(project, declared)
 
     model_short = model_fqn.rsplit("\\", 1)[-1]
     steps = [
@@ -214,15 +233,27 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
     else:
         gap_note = f"no policy is defined for {model_fqn}, and nothing else authorizes this action"
 
-    steps.append(
-        PathStep(
-            role="gap",
-            span=symbol.span,
-            snippet=_signature(method, parsed),
-            note=gap_note,
-            rule_id=MISSING_AUTHORIZATION_RULE,
+    if form_request_true:
+        auth_method, auth_parsed = form_request_true
+        steps.append(
+            PathStep(
+                role="gap",
+                span=node_span(auth_method, auth_parsed.path),
+                snippet=_signature(auth_method, auth_parsed),
+                note="unconditionally returns true, bypassing authorization",
+                rule_id=LARAVEL_FORM_REQUEST_TRUE_RULE,
+            )
         )
-    )
+    else:
+        steps.append(
+            PathStep(
+                role="gap",
+                span=symbol.span,
+                snippet=_signature(method, parsed),
+                note=gap_note,
+                rule_id=MISSING_AUTHORIZATION_RULE,
+            )
+        )
     return steps
 
 
