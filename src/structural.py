@@ -11,6 +11,7 @@ its rule, so rules.py consumes them identically and Finding needs no new field.
 """
 
 import re
+from pathlib import Path
 
 from tree_sitter import Node
 
@@ -20,24 +21,24 @@ from .laravel.models import is_model
 from .laravel.policies import find_policy
 from .laravel.routes import uri_params
 from .laravel.vocabulary import (
-    LARAVEL_DEBUG_ENABLED_RULE,
     LARAVEL_APP_KEY_RULE,
-    LARAVEL_TRUSTED_PROXIES_RULE,
-    LARAVEL_SESSION_COOKIE_RULE,
     LARAVEL_CSRF_EXCEPT_RULE,
-    LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
-    LARAVEL_NO_THROTTLE_RULE,
-    LARAVEL_UNSIGNED_ROUTE_RULE,
     LARAVEL_DEAD_AUTHORIZATION_RULE,
-    LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
-    LARAVEL_VALIDATED_BYPASS_RULE,
-    LARAVEL_FORM_REQUEST_TRUE_RULE,
-    LARAVEL_ENV_OUTSIDE_CONFIG_RULE,
-    MISSING_AUTHORIZATION_RULE,
-    LARAVEL_UNSAFE_UPLOAD_RULE,
     LARAVEL_DEBUG_ARTIFACT_RULE,
+    LARAVEL_DEBUG_ENABLED_RULE,
+    LARAVEL_ENV_OUTSIDE_CONFIG_RULE,
+    LARAVEL_FORM_REQUEST_TRUE_RULE,
+    LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
+    LARAVEL_NO_THROTTLE_RULE,
+    LARAVEL_SESSION_COOKIE_RULE,
+    LARAVEL_TRUSTED_PROXIES_RULE,
+    LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
+    LARAVEL_UNSAFE_UPLOAD_RULE,
+    LARAVEL_UNSIGNED_ROUTE_RULE,
+    LARAVEL_VALIDATED_BYPASS_RULE,
     LARAVEL_WEAK_HASH_RULE,
     LARAVEL_WEAK_RANDOMNESS_RULE,
+    MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
 from .parser import ParsedFile, find_all, node_span, node_text
@@ -98,6 +99,7 @@ def _form_request_authorizes(project: Project, param_type: str) -> bool:
     if body is None:
         return False
     return not _RETURNS_TRUE.match(" ".join(node_text(body, parsed.source).split()))
+
 
 def _form_request_returns_true(project: Project, param_type: str) -> tuple[Node, ParsedFile] | None:
     found = project.method_node(f"{param_type}::authorize")
@@ -196,7 +198,7 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
 
     symbol = project.method(route.action_fqn)
     assert symbol is not None  # method_node already resolved it
-    
+
     form_request_true = None
     for declared in symbol.param_types:
         if not declared:
@@ -269,10 +271,10 @@ def _missing_authorization(project: Project, route: Route) -> list[PathStep] | N
 def _is_state_changing(project: Project, path_str: str) -> bool:
     if "*" in path_str:
         return True
-    
+
     normalized_path = "/" + path_str.lstrip("/")
     state_changing_verbs = {"POST", "PUT", "PATCH", "DELETE"}
-    
+
     for route in project.routes:
         route_uri = "/" + route.uri.lstrip("/")
         if route_uri == normalized_path:
@@ -283,14 +285,16 @@ def _is_state_changing(project: Project, path_str: str) -> bool:
 
 def _extract_csrf_except(project: Project) -> list[tuple[Span, str]]:
     results = []
-    
+
     # 1. VerifyCsrfToken::$except (Laravel 10-)
     for fqn, class_info in project.classes.items():
-        if "VerifyCsrfToken" in fqn or (class_info.parent and "VerifyCsrfToken" in class_info.parent):
+        if "VerifyCsrfToken" in fqn or (
+            class_info.parent and "VerifyCsrfToken" in class_info.parent
+        ):
             parsed = project.files.get(class_info.span.file)
             if not parsed:
                 continue
-            
+
             for prop in find_all(parsed.tree.root_node, "property_declaration"):
                 for elem in find_all(prop, "property_element"):
                     if node_text(elem.child_by_field_name("name"), parsed.source) == "$except":
@@ -300,7 +304,11 @@ def _extract_csrf_except(project: Project) -> list[tuple[Span, str]]:
                                 if child.type == "array_element_initializer":
                                     val_node = child.children[0]
                                     if val_node.type in ("string", "encapsed_string"):
-                                        val = parsed.source[val_node.start_byte:val_node.end_byte].decode("utf-8").strip("'\"")
+                                        val = (
+                                            parsed.source[val_node.start_byte : val_node.end_byte]
+                                            .decode("utf-8")
+                                            .strip("'\"")
+                                        )
                                         results.append((node_span(val_node, parsed.path), val))
 
     # 2. bootstrap/app.php validateCsrfTokens(except: [...]) (Laravel 11+)
@@ -321,8 +329,16 @@ def _extract_csrf_except(project: Project) -> list[tuple[Span, str]]:
                                             if child.type == "array_element_initializer":
                                                 val_node = child.children[0]
                                                 if val_node.type in ("string", "encapsed_string"):
-                                                    s = parsed.source[val_node.start_byte:val_node.end_byte].decode("utf-8").strip("'\"")
-                                                    results.append((node_span(val_node, parsed.path), s))
+                                                    s = (
+                                                        parsed.source[
+                                                            val_node.start_byte : val_node.end_byte
+                                                        ]
+                                                        .decode("utf-8")
+                                                        .strip("'\"")
+                                                    )
+                                                    results.append(
+                                                        (node_span(val_node, parsed.path), s)
+                                                    )
     return results
 
 
@@ -336,7 +352,7 @@ def _csrf_except_paths(project: Project) -> list[list[PathStep]]:
                 span=span,
                 snippet=path_str,
                 note=f"disables CSRF protection for a {reason}",
-                rule_id=LARAVEL_CSRF_EXCEPT_RULE
+                rule_id=LARAVEL_CSRF_EXCEPT_RULE,
             )
             paths.append([step])
     return paths
@@ -345,21 +361,21 @@ def _csrf_except_paths(project: Project) -> list[list[PathStep]]:
 def _unauthenticated_route_paths(route: Route) -> list[PathStep] | None:
     if authenticated_by(route) is not None:
         return None
-        
+
     state_changing_verbs = {"POST", "PUT", "PATCH", "DELETE"}
     if not any(verb in state_changing_verbs for verb in route.verbs):
         return None
-        
+
     if is_signed(route):
         return None
-        
+
     return [
         PathStep(
             role="gap",
             span=route.span,
             snippet=f"{'|'.join(route.verbs)} {route.uri}",
             note="state-changing route with no auth middleware",
-            rule_id=LARAVEL_UNAUTHENTICATED_ROUTE_RULE
+            rule_id=LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
         )
     ]
 
@@ -367,44 +383,45 @@ def _unauthenticated_route_paths(route: Route) -> list[PathStep] | None:
 def _no_throttle_paths(route: Route) -> list[PathStep] | None:
     if "POST" not in route.verbs:
         return None
-        
+
     auth_uris = {
-        "login", 
-        "register", 
-        "password/email", 
-        "password/reset", 
-        "forgot-password", 
-        "reset-password"
+        "login",
+        "register",
+        "password/email",
+        "password/reset",
+        "forgot-password",
+        "reset-password",
     }
     normalized_uri = route.uri.strip("/")
-    
+
     action = route.action_fqn or ""
     is_auth_route = normalized_uri in auth_uris or any(
-        x in action for x in (
-            "LoginController", 
-            "RegisterController", 
-            "ResetPasswordController", 
-            "ForgotPasswordController", 
+        x in action
+        for x in (
+            "LoginController",
+            "RegisterController",
+            "ResetPasswordController",
+            "ForgotPasswordController",
             "NewPasswordController",
             "AuthenticatedSessionController",
             "RegisteredUserController",
-            "PasswordResetLinkController"
+            "PasswordResetLinkController",
         )
     )
-    
+
     if not is_auth_route:
         return None
-        
+
     if is_rate_limited(route):
         return None
-        
+
     return [
         PathStep(
             role="gap",
             span=route.span,
             snippet=f"{'|'.join(route.verbs)} {route.uri}",
             note="authentication route with no rate limiting middleware",
-            rule_id=LARAVEL_NO_THROTTLE_RULE
+            rule_id=LARAVEL_NO_THROTTLE_RULE,
         )
     ]
 
@@ -412,23 +429,23 @@ def _no_throttle_paths(route: Route) -> list[PathStep] | None:
 def _unsigned_route_paths(route: Route) -> list[PathStep] | None:
     action_keywords = {"unsubscribe", "confirm", "approve"}
     normalized_uri = route.uri.lower()
-    
+
     if not any(keyword in normalized_uri for keyword in action_keywords):
         return None
-        
+
     if authenticated_by(route) is not None:
         return None
-        
+
     if is_signed(route):
         return None
-        
+
     return [
         PathStep(
             role="gap",
             span=route.span,
             snippet=f"{'|'.join(route.verbs)} {route.uri}",
             note="public action route missing signed middleware",
-            rule_id=LARAVEL_UNSIGNED_ROUTE_RULE
+            rule_id=LARAVEL_UNSIGNED_ROUTE_RULE,
         )
     ]
 
@@ -453,7 +470,7 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
                 abilities.add(match.group(1))
 
     authorize_methods = {"authorize", "can", "cannot", "allows", "denies", "check"}
-    
+
     for parsed in project.files.values():
         for call in find_all(parsed.tree.root_node, "call_expression"):
             name_node = None
@@ -461,7 +478,7 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
                 name_node = call.child_by_field_name("name")
             elif call.type == "scoped_call_expression":
                 name_node = call.child_by_field_name("name")
-            
+
             if name_node is None:
                 continue
 
@@ -487,19 +504,21 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
                     abilities.add(params[0])
 
     if has_authorize_resource:
-        abilities.update({"viewAny", "view", "create", "update", "delete", "restore", "forceDelete"})
+        abilities.update(
+            {"viewAny", "view", "create", "update", "delete", "restore", "forceDelete"}
+        )
 
     for fqn in sorted(policy_fqns):
         class_info = project.classes.get(fqn)
         if not class_info:
             continue
-        
+
         for method_name, symbol in class_info.methods.items():
             if method_name.startswith("__"):
                 continue
             if method_name == "before":
                 continue
-            
+
             if method_name not in abilities:
                 method_node_data = project.method_node(f"{fqn}::{method_name}")
                 if not method_node_data:
@@ -512,7 +531,7 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
                     span=symbol.span,
                     snippet=snippet,
                     note="policy method is never referenced",
-                    rule_id=LARAVEL_DEAD_AUTHORIZATION_RULE
+                    rule_id=LARAVEL_DEAD_AUTHORIZATION_RULE,
                 )
                 paths.append([step])
 
@@ -521,45 +540,45 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
 
 def _inconsistent_authorization_paths(project: Project) -> list[list[PathStep]]:
     paths = []
-    
+
     # Map controller FQN to unique action_fqns and their Route
     controller_actions: dict[str, dict[str, Route]] = {}
     for route in project.routes:
         if not route.action_fqn or "::" not in route.action_fqn:
             continue
-        
+
         fqn, method = route.action_fqn.split("::", 1)
         if fqn not in controller_actions:
             controller_actions[fqn] = {}
         # Keep the first route for this action
         if route.action_fqn not in controller_actions[fqn]:
             controller_actions[fqn][route.action_fqn] = route
-            
+
     for fqn, actions in controller_actions.items():
         if len(actions) < 2:
             continue
-            
+
         if _controller_authorizes(project, fqn):
             continue
-            
+
         authorized_actions = []
         unauthorized_actions = []
-        
+
         for action_fqn, route in actions.items():
             if is_gated(project, route):
                 authorized_actions.append(action_fqn)
                 continue
-                
+
             found = project.method_node(action_fqn)
             if not found:
                 unauthorized_actions.append(action_fqn)
                 continue
-                
+
             method_node, method_parsed = found
             if _calls_authorization(method_node, method_parsed.source):
                 authorized_actions.append(action_fqn)
                 continue
-                
+
             symbol = project.method(action_fqn)
             if symbol:
                 is_auth = False
@@ -570,54 +589,57 @@ def _inconsistent_authorization_paths(project: Project) -> list[list[PathStep]]:
                 if is_auth:
                     authorized_actions.append(action_fqn)
                     continue
-                    
+
             unauthorized_actions.append(action_fqn)
-            
+
         if authorized_actions and unauthorized_actions:
             for action_fqn in sorted(unauthorized_actions):
                 route = actions[action_fqn]
                 symbol = project.method(action_fqn)
                 span = symbol.span if symbol else route.span
-                
+
                 snippet = ""
                 found = project.method_node(action_fqn)
                 if found:
                     snippet = _signature(found[0], found[1])
-                
+
                 controller_short = fqn.split("\\")[-1]
                 step = PathStep(
                     role="gap",
                     span=span,
                     snippet=snippet,
-                    note=f"action lacks authorization, but other actions in {controller_short} have it",
-                    rule_id=LARAVEL_INCONSISTENT_AUTHORIZATION_RULE
+                    note=(
+                        f"action lacks authorization, but other actions in "
+                        f"{controller_short} have it"
+                    ),
+                    rule_id=LARAVEL_INCONSISTENT_AUTHORIZATION_RULE,
                 )
                 paths.append([step])
-                
+
     return paths
 
 
 def _validated_bypass_paths(project: Project) -> list[list[PathStep]]:
     paths = []
-    
+
     from .laravel.validation import extract_validation_cleared
-    
+
     for fqn, class_info in project.classes.items():
         for method_name, symbol in class_info.methods.items():
             found = project.method_node(f"{fqn}::{method_name}")
             if not found:
                 continue
-                
+
             method_node, parsed = found
-            
+
             # Check if this method performs validation
             performs_validation = False
-            
+
             # 1. Inline validation: $request->validate() or Validator::make()
             cleared = extract_validation_cleared(method_node, parsed.source)
             if cleared:
                 performs_validation = True
-                
+
             # 2. FormRequest parameter
             if not performs_validation:
                 for param_type in symbol.param_types:
@@ -631,22 +653,22 @@ def _validated_bypass_paths(project: Project) -> list[list[PathStep]]:
                     if project.method_node(f"{param_type}::rules"):
                         performs_validation = True
                         break
-            
+
             if not performs_validation:
                 continue
-                
+
             # Method performs validation. Does it call ->all()?
             for call in find_all(method_node, "member_call_expression"):
                 name_node = call.child_by_field_name("name")
                 if not name_node or node_text(name_node, parsed.source) != "all":
                     continue
-                    
+
                 obj_node = call.child_by_field_name("object")
                 if not obj_node:
                     continue
-                    
+
                 obj_text = node_text(obj_node, parsed.source)
-                
+
                 is_request = False
                 if obj_text == "$request":
                     is_request = True
@@ -654,18 +676,19 @@ def _validated_bypass_paths(project: Project) -> list[list[PathStep]]:
                     call_name = obj_node.child_by_field_name("function")
                     if call_name and node_text(call_name, parsed.source) == "request":
                         is_request = True
-                        
+
                 if is_request:
                     step = PathStep(
                         role="gap",
                         span=node_span(call, parsed.path),
                         snippet=node_text(call, parsed.source),
                         note="uses all() after validation instead of validated()",
-                        rule_id=LARAVEL_VALIDATED_BYPASS_RULE
+                        rule_id=LARAVEL_VALIDATED_BYPASS_RULE,
                     )
                     paths.append([step])
-                    
+
     return paths
+
 
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
@@ -692,10 +715,10 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
         paths.extend(rule_paths)
     if (rule_paths := _weak_randomness_paths(project)) is not None:
         paths.extend(rule_paths)
-        
+
     for except_path in _csrf_except_paths(project):
         paths.append(except_path)
-        
+
     for auth_path in _dead_authorization_paths(project):
         paths.append(auth_path)
     for auth_path in _inconsistent_authorization_paths(project):
@@ -707,34 +730,35 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))
 
 
-from pathlib import Path
 def _config_rules_paths(project: Project) -> list[list[PathStep]]:
     paths = []
     config = project.config
-    
+
     # laravel.debug-enabled
     app_debug = config.env_vars.get("APP_DEBUG", "").lower() in ("true", "1")
     if not app_debug and config.get("app.debug") is True:
         app_debug = True
-        
+
     app_env = config.env_vars.get("APP_ENV", "").lower()
     if not app_env:
         app_env = config.get("app.env", "")
-        
+
     # We only fire if APP_DEBUG=true and it's a real environment (not from .env.example)
     # The requirement: APP_DEBUG=true in a .env.example does not fire.
     is_real_env = config.env_file_exists or not config.env_example_exists
-    
+
     if app_debug and is_real_env and app_env == "production":
-        paths.append([
-            PathStep(
-                role="gap",
-                span=Span(file=Path(".env"), start_line=1, start_col=1, end_line=1, end_col=1),
-                snippet="APP_DEBUG=true",
-                note="Debug mode is enabled",
-                rule_id=LARAVEL_DEBUG_ENABLED_RULE,
-            )
-        ])
+        paths.append(
+            [
+                PathStep(
+                    role="gap",
+                    span=Span(file=Path(".env"), start_line=1, start_col=1, end_line=1, end_col=1),
+                    snippet="APP_DEBUG=true",
+                    note="Debug mode is enabled",
+                    rule_id=LARAVEL_DEBUG_ENABLED_RULE,
+                )
+            ]
+        )
 
     # laravel.app-key
     app_key_val = config.get_value_object("app.key")
@@ -746,12 +770,14 @@ def _config_rules_paths(project: Project) -> list[list[PathStep]]:
             app_key_str = str(app_key_str)
         is_deferred = app_key_val.env_var is not None
 
-    env_app_key = config.env_vars.get("APP_KEY", "")
-
     # Check for hardcoded insecure key in config/app.php
     hardcoded_insecure = False
     if app_key_val and not is_deferred:
-        if not app_key_str or app_key_str.startswith("base64:SomeRandomString") or app_key_str == "SomeRandomString":
+        if (
+            not app_key_str
+            or app_key_str.startswith("base64:SomeRandomString")
+            or app_key_str == "SomeRandomString"
+        ):
             hardcoded_insecure = True
 
     # Check if .env is committed
@@ -760,15 +786,23 @@ def _config_rules_paths(project: Project) -> list[list[PathStep]]:
     should_fire_app_key = env_committed or hardcoded_insecure
 
     if should_fire_app_key:
-        paths.append([
-            PathStep(
-                role="gap",
-                span=Span(file=Path(".env" if env_committed else "config/app.php"), start_line=1, start_col=1, end_line=1, end_col=1),
-                snippet="APP_KEY",
-                note="APP_KEY is missing, default, or committed",
-                rule_id=LARAVEL_APP_KEY_RULE,
-            )
-        ])
+        paths.append(
+            [
+                PathStep(
+                    role="gap",
+                    span=Span(
+                        file=Path(".env" if env_committed else "config/app.php"),
+                        start_line=1,
+                        start_col=1,
+                        end_line=1,
+                        end_col=1,
+                    ),
+                    snippet="APP_KEY",
+                    note="APP_KEY is missing, default, or committed",
+                    rule_id=LARAVEL_APP_KEY_RULE,
+                )
+            ]
+        )
 
     # laravel.trusted-proxies
     tp_val = config.get_value_object("trustedproxy.proxies")
@@ -780,15 +814,17 @@ def _config_rules_paths(project: Project) -> list[list[PathStep]]:
             tp_file = tp_val.file_path or Path("config/trustedproxy.php")
 
     if str(trusted_proxies).strip() == "*":
-        paths.append([
-            PathStep(
-                role="gap",
-                span=Span(file=tp_file, start_line=1, start_col=1, end_line=1, end_col=1),
-                snippet="*",
-                note="TrustedProxy is set to trust all proxies ('*')",
-                rule_id=LARAVEL_TRUSTED_PROXIES_RULE,
-            )
-        ])
+        paths.append(
+            [
+                PathStep(
+                    role="gap",
+                    span=Span(file=tp_file, start_line=1, start_col=1, end_line=1, end_col=1),
+                    snippet="*",
+                    note="TrustedProxy is set to trust all proxies ('*')",
+                    rule_id=LARAVEL_TRUSTED_PROXIES_RULE,
+                )
+            ]
+        )
 
     # laravel.session-cookie
     session_secure_val = config.get_value_object("session.secure")
@@ -800,53 +836,76 @@ def _config_rules_paths(project: Project) -> list[list[PathStep]]:
     if session_secure_val is not None:
         val = str(session_secure_val.value).lower()
         if is_prod and val in ("false", "0", ""):
-            paths.append([
-                PathStep(
-                    role="gap",
-                    span=Span(file=session_secure_val.file_path or Path("config/session.php"), start_line=1, start_col=1, end_line=1, end_col=1),
-                    snippet="false",
-                    note="Session cookies are not marked as secure in production",
-                    rule_id=LARAVEL_SESSION_COOKIE_RULE,
-                )
-            ])
+            paths.append(
+                [
+                    PathStep(
+                        role="gap",
+                        span=Span(
+                            file=session_secure_val.file_path or Path("config/session.php"),
+                            start_line=1,
+                            start_col=1,
+                            end_line=1,
+                            end_col=1,
+                        ),
+                        snippet="false",
+                        note="Session cookies are not marked as secure in production",
+                        rule_id=LARAVEL_SESSION_COOKIE_RULE,
+                    )
+                ]
+            )
 
     if session_http_only_val is not None:
         val = str(session_http_only_val.value).lower()
         if val in ("false", "0", ""):
-            paths.append([
-                PathStep(
-                    role="gap",
-                    span=Span(file=session_http_only_val.file_path or Path("config/session.php"), start_line=1, start_col=1, end_line=1, end_col=1),
-                    snippet="false",
-                    note="Session cookies are not marked as HTTP Only",
-                    rule_id=LARAVEL_SESSION_COOKIE_RULE,
-                )
-            ])
+            paths.append(
+                [
+                    PathStep(
+                        role="gap",
+                        span=Span(
+                            file=session_http_only_val.file_path or Path("config/session.php"),
+                            start_line=1,
+                            start_col=1,
+                            end_line=1,
+                            end_col=1,
+                        ),
+                        snippet="false",
+                        note="Session cookies are not marked as HTTP Only",
+                        rule_id=LARAVEL_SESSION_COOKIE_RULE,
+                    )
+                ]
+            )
 
     if session_same_site_val is not None:
         val = str(session_same_site_val.value).lower()
         if val == "none":
-            paths.append([
-                PathStep(
-                    role="gap",
-                    span=Span(file=session_same_site_val.file_path or Path("config/session.php"), start_line=1, start_col=1, end_line=1, end_col=1),
-                    snippet="none",
-                    note="Session cookies have SameSite set to None",
-                    rule_id=LARAVEL_SESSION_COOKIE_RULE,
-                )
-            ])
+            paths.append(
+                [
+                    PathStep(
+                        role="gap",
+                        span=Span(
+                            file=session_same_site_val.file_path or Path("config/session.php"),
+                            start_line=1,
+                            start_col=1,
+                            end_line=1,
+                            end_col=1,
+                        ),
+                        snippet="none",
+                        note="Session cookies have SameSite set to None",
+                        rule_id=LARAVEL_SESSION_COOKIE_RULE,
+                    )
+                ]
+            )
 
-
-        
     return paths
+
 
 def _env_outside_config_paths(project: Project) -> list[list[PathStep]]:
     paths = []
-    
+
     for path, parsed in project.files.items():
         if path.parts and path.parts[0] == "config":
             continue
-            
+
         for call in find_all(parsed.tree.root_node, "function_call_expression"):
             fn = call.child_by_field_name("function")
             if fn and node_text(fn, parsed.source) == "env":
@@ -860,7 +919,7 @@ def _env_outside_config_paths(project: Project) -> list[list[PathStep]]:
                     )
                 ]
                 paths.append(steps)
-                
+
     return paths
 
 
@@ -872,15 +931,17 @@ def _unsafe_upload_paths(project: Project) -> list[list[PathStep]]:
         for call in find_all(parsed.tree.root_node, "member_call_expression"):
             name_node = call.child_by_field_name("name")
             if name_node and node_text(name_node, parsed.source) == "getClientOriginalName":
-                paths.append([
-                    PathStep(
-                        role="gap",
-                        span=node_span(call, path),
-                        snippet=node_text(call, parsed.source),
-                        note="uses getClientOriginalName() for file upload",
-                        rule_id=LARAVEL_UNSAFE_UPLOAD_RULE
-                    )
-                ])
+                paths.append(
+                    [
+                        PathStep(
+                            role="gap",
+                            span=node_span(call, path),
+                            snippet=node_text(call, parsed.source),
+                            note="uses getClientOriginalName() for file upload",
+                            rule_id=LARAVEL_UNSAFE_UPLOAD_RULE,
+                        )
+                    ]
+                )
     return paths
 
 
@@ -894,15 +955,17 @@ def _debug_artifact_paths(project: Project) -> list[list[PathStep]]:
             if fn:
                 fn_name = node_text(fn, parsed.source)
                 if fn_name in ("dd", "dump", "ray", "var_dump"):
-                    paths.append([
-                        PathStep(
-                            role="gap",
-                            span=node_span(call, path),
-                            snippet=node_text(call, parsed.source),
-                            note=f"debug artifact {fn_name}() found in production code",
-                            rule_id=LARAVEL_DEBUG_ARTIFACT_RULE
-                        )
-                    ])
+                    paths.append(
+                        [
+                            PathStep(
+                                role="gap",
+                                span=node_span(call, path),
+                                snippet=node_text(call, parsed.source),
+                                note=f"debug artifact {fn_name}() found in production code",
+                                rule_id=LARAVEL_DEBUG_ARTIFACT_RULE,
+                            )
+                        ]
+                    )
     return paths
 
 
@@ -925,15 +988,17 @@ def _weak_hash_paths(project: Project) -> list[list[PathStep]]:
                             if len(parent.children) > 0:
                                 context_text = node_text(parent.children[0], parsed.source).lower()
                     if "password" in context_text:
-                        paths.append([
-                            PathStep(
-                                role="gap",
-                                span=node_span(call, path),
-                                snippet=node_text(call, parsed.source),
-                                note=f"{fn_name}() used for hashing a password",
-                                rule_id=LARAVEL_WEAK_HASH_RULE
-                            )
-                        ])
+                        paths.append(
+                            [
+                                PathStep(
+                                    role="gap",
+                                    span=node_span(call, path),
+                                    snippet=node_text(call, parsed.source),
+                                    note=f"{fn_name}() used for hashing a password",
+                                    rule_id=LARAVEL_WEAK_HASH_RULE,
+                                )
+                            ]
+                        )
     return paths
 
 
@@ -955,15 +1020,21 @@ def _weak_randomness_paths(project: Project) -> list[list[PathStep]]:
                         elif parent.type in ("array_element_initializer", "pair"):
                             if len(parent.children) > 0:
                                 context_text = node_text(parent.children[0], parsed.source).lower()
-                    
-                    if "token" in context_text or "salt" in context_text or "password" in context_text:
-                        paths.append([
-                            PathStep(
-                                role="gap",
-                                span=node_span(call, path),
-                                snippet=node_text(call, parsed.source),
-                                note=f"{fn_name}() used for sensitive randomness",
-                                rule_id=LARAVEL_WEAK_RANDOMNESS_RULE
-                            )
-                        ])
+
+                    if (
+                        "token" in context_text
+                        or "salt" in context_text
+                        or "password" in context_text
+                    ):
+                        paths.append(
+                            [
+                                PathStep(
+                                    role="gap",
+                                    span=node_span(call, path),
+                                    snippet=node_text(call, parsed.source),
+                                    note=f"{fn_name}() used for sensitive randomness",
+                                    rule_id=LARAVEL_WEAK_RANDOMNESS_RULE,
+                                )
+                            ]
+                        )
     return paths

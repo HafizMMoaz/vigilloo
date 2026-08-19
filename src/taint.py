@@ -20,6 +20,7 @@ from .analysis.ssa import PhiNode, SSABuilder, SSAValue
 # over expression_statement alone finds nothing in a typical repository.
 from .graph import Project
 from .laravel.facades import resolve_facade
+from .laravel.middleware import authenticated_by
 from .laravel.models import Protection, model_config
 from .laravel.routes import uri_params
 from .laravel.views import extract_view_bindings, template_path
@@ -47,7 +48,6 @@ from .laravel.vocabulary import (
 )
 from .models import PathStep, Route, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, find_any, node_span, node_text
-from .laravel.middleware import authenticated_by
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
 
@@ -241,7 +241,7 @@ def expr_kinds(
         name = node_text(node.child_by_field_name("name"), source)
         custom_entering: frozenset[TaintKind] = frozenset()
         custom_cleared: frozenset[TaintKind] = frozenset()
-        
+
         obj = node.child_by_field_name("object")
         if obj is not None and local.project and local.local_types:
             obj_text = _var_name(obj, source)
@@ -318,7 +318,7 @@ def expr_kinds(
                     cleared = cleared | custom_clears
                 else:
                     cleared = custom_clears
-                    
+
         if name == "json_encode":
             args_node = node.child_by_field_name("arguments")
             if args_node and "JSON_HEX_TAG" in node_text(args_node, source):
@@ -358,18 +358,28 @@ def expr_kinds(
 
             if resolve is not None:
                 scope_fqn = resolve(scope_text)
-                if local.project and scope_fqn and (scope_fqn, method_text) in local.project.custom_sanitizers:
+                if (
+                    local.project
+                    and scope_fqn
+                    and (scope_fqn, method_text) in local.project.custom_sanitizers
+                ):
                     cleared = frozenset(local.project.custom_sanitizers[(scope_fqn, method_text)])
                     if cleared:
                         args = node.child_by_field_name("arguments")
                         inner = (
-                            _union_of_children(args, source, local, request_vars, resolve, validated_fields)
+                            _union_of_children(
+                                args, source, local, request_vars, resolve, validated_fields
+                            )
                             if args is not None
                             else frozenset()
                         )
                         return inner - cleared
 
-                if local.project and scope_fqn and (scope_fqn, method_text) in local.project.custom_sources:
+                if (
+                    local.project
+                    and scope_fqn
+                    and (scope_fqn, method_text) in local.project.custom_sources
+                ):
                     entering = frozenset(local.project.custom_sources[(scope_fqn, method_text)])
                     if entering:
                         if validated_fields:
@@ -490,7 +500,10 @@ def _source_note(
                 if obj_text in local.local_types:
                     obj_type = local.local_types[obj_text]
                     if (obj_type, name) in local.project.custom_sources:
-                        return f"attacker-controlled data, read through custom source {obj_type}::{name}"
+                        return (
+                            f"attacker-controlled data, read through custom source "
+                            f"{obj_type}::{name}"
+                        )
 
         if is_source(name) and _is_request_receiver(node, source, request_vars):
             return "attacker-controlled request data"
@@ -510,16 +523,21 @@ def _source_note(
     if node.type == "scoped_call_expression" and resolve is not None:
         scope = node.child_by_field_name("scope")
         name_node = node.child_by_field_name("name")
-        if (
-            scope is not None
-            and name_node is not None
-        ):
+        if scope is not None and name_node is not None:
             scope_fqn = resolve(node_text(scope, source))
             method_text = node_text(name_node, source)
-            
-            if local and local.project and scope_fqn and (scope_fqn, method_text) in local.project.custom_sources:
-                return f"attacker-controlled data, read through custom source {scope_fqn}::{method_text}"
-                
+
+            if (
+                local
+                and local.project
+                and scope_fqn
+                and (scope_fqn, method_text) in local.project.custom_sources
+            ):
+                return (
+                    f"attacker-controlled data, read through custom source "
+                    f"{scope_fqn}::{method_text}"
+                )
+
             if input_facade_kinds(scope_fqn, method_text):
                 return "attacker-controlled request data, read through the legacy Input facade"
     for child in node.children:
@@ -1003,7 +1021,7 @@ def _walk_template(
         if TaintKind.HTML not in expr_kinds(stmt, parsed.source, local_state):
             continue
         line = stmt.start_point[0] + 1
-        
+
         rule_id = LARAVEL_BLADE_RAW_ECHO_RULE if is_blade else XSS_RULE
         paths.append(
             prefix
@@ -1119,7 +1137,6 @@ def _walk_method(
             inner_paths = _walk_method_ast(
                 project, fqn, tainted, depth, max_depth, stats, receiver_fqn, new_visited, route
             )
-            print(f"DEBUG: inner_paths length: {len(inner_paths)}")
             if len(inner_paths) == len(summary.paths_by_taint[cache_key]):
                 break
             summary.paths_by_taint[cache_key] = inner_paths
@@ -1288,8 +1305,6 @@ def _walk_method_ast(
         if node.id in ssa.reads:
             return resolve_ssa_taint(ssa.reads[node.id])
         return initial_tainted.get(name, frozenset())
-
-
 
     from .laravel.validation import extract_validation_cleared
 

@@ -11,20 +11,20 @@ def test_every_implemented_rule_fires_on_the_fixture() -> None:
     findings = scan_project(load_project(FIXTURE))
     by_rule = {f.rule_id for f in findings}
     assert by_rule == {
-        'laravel.missing-authorization', 
-        'laravel.no-throttle', 
-        'laravel.env-outside-config', 
-        'laravel.validated-bypass', 
-        'laravel.raw-query', 
-        'laravel.unauthenticated-route', 
-        'laravel.csrf-except', 
-        'laravel.dead-authorization', 
-        'laravel.unsigned-route', 
-        'laravel.blade-raw-echo', 
-        'laravel.inconsistent-authorization', 
-        'laravel.form-request-true', 
-        'laravel.mass-assignment',
-        'vigilloo.bare-ignore'
+        "laravel.missing-authorization",
+        "laravel.no-throttle",
+        "laravel.env-outside-config",
+        "laravel.validated-bypass",
+        "laravel.raw-query",
+        "laravel.unauthenticated-route",
+        "laravel.csrf-except",
+        "laravel.dead-authorization",
+        "laravel.unsigned-route",
+        "laravel.blade-raw-echo",
+        "laravel.inconsistent-authorization",
+        "laravel.form-request-true",
+        "laravel.mass-assignment",
+        "vigilloo.bare-ignore",
     }
 
     minimal_findings = scan_project(load_project(FIXTURE))

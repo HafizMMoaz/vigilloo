@@ -196,12 +196,12 @@ def error_constructs(parsed: ParsedFile) -> tuple[ParseFailure, ...]:
 
 def extract_suppressions(parsed: ParsedFile) -> list[Suppression]:
     """Extract inline suppressions from a parsed file.
-    
+
     Matches `// vigilloo-ignore rule-id -- justification`.
     If the justification or rule ID is missing, `is_invalid` is True.
     """
     suppressions = []
-    
+
     # regex matches:
     # 1. optional whitespace
     # 2. rule id (optional group 1)
@@ -211,26 +211,26 @@ def extract_suppressions(parsed: ParsedFile) -> list[Suppression]:
 
     for node in find_all(parsed.tree.root_node, "comment"):
         text = node_text(node, parsed.source).strip()
-        
+
         # Strip //, /*, #, */
         if text.startswith("//") or text.startswith("/*") or text.startswith("#"):
             text = text.lstrip("/*# \t").rstrip("*/ \t")
-            
+
         if "vigilloo-ignore" in text:
             match = ignore_pattern.search(text)
             if not match:
                 continue
-                
+
             rule_id = match.group(1)
             justification = match.group(2)
-            
+
             is_invalid = False
             if not rule_id or not justification or not justification.strip():
                 is_invalid = True
-                
+
             # Node start row is 0-indexed, so start_point[0] + 1 is the 1-indexed line number.
             line = node.start_point[0] + 1
-            
+
             suppressions.append(
                 Suppression(
                     file=parsed.path,
@@ -240,5 +240,5 @@ def extract_suppressions(parsed: ParsedFile) -> list[Suppression]:
                     is_invalid=is_invalid,
                 )
             )
-            
+
     return suppressions

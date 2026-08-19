@@ -13,5 +13,4 @@ class ProcessOrder {}
 """)
     project = load_project(tmp_path)
     rel_path = Path("app/Jobs/ProcessOrder.php")
-    res = project.resolve_class_name(rel_path, "DB")
-    print("Resolved DB:", res)
+    project.resolve_class_name(rel_path, "DB")

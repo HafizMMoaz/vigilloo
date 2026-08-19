@@ -17,5 +17,4 @@ def test_expr(tmp_path: Path):
 
     expr = find_all(parsed.tree.root_node, "member_access_expression")[0]
     local = LocalState({"this": ALL_KINDS}, None)
-    kinds = expr_kinds(expr, parsed.source, local, frozenset(), lambda x: None)
-    print("Kinds:", kinds)
+    expr_kinds(expr, parsed.source, local, frozenset(), lambda x: None)

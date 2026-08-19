@@ -54,10 +54,7 @@ def test_the_main_fixture_parses_completely() -> None:
     # Counted from the tree rather than written down. A literal here is a second place the
     # fixture's size is recorded, and adding one file to the fixture would fail this test
     # for a reason that has nothing to do with what it is checking.
-    on_disk = sum(
-        1 for path in FIXTURE.rglob("*.php")
-        if "vendor" not in path.parts
-    )
+    on_disk = sum(1 for path in FIXTURE.rglob("*.php") if "vendor" not in path.parts)
     assert result.files_discovered == on_disk
     assert result.parse_success_rate == 1.0
     assert result.call_resolution_rate == 1.0

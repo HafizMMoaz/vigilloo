@@ -362,3 +362,14 @@ Ruleset hash: `520914c8731f4c0d`.
   call, which is a Laravel construct, not a PHP one. It is recorded here because the old ID
   was already announced as shipped. **This is the last rule ID rename.** From the 0.0.1 tag
   onward, invariant 7 binds.
+
+### Fixed
+
+- **The four CI gates pass again.** `main` had been red for seven commits: 20 mypy errors
+  across `taint.py`, `structural.py`, `graph.py` and `rules.py`, 113 ruff errors, and 24
+  files that needed reformatting, while all 398 tests passed throughout. Two of the twenty
+  were more than style. `taint.py` imported `authenticated_by` through `structural.py`
+  rather than from `laravel/middleware.py` where it is defined, which is the taint producer
+  depending on the structural producer that CLAUDE.md keeps apart. And the CFG walk took
+  `block: object`, so every attribute access inside the branch-sensitive walk went
+  unchecked. No rule changed behaviour: the test count is 398 before and after.

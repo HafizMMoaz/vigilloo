@@ -1,8 +1,6 @@
 from pathlib import Path
 
 from vigilloo.laravel.vocabulary import (
-    LARAVEL_BLADE_RAW_ECHO_RULE,
-    SQL_INJECTION_RULE,
     XSS_RULE,
 )
 

@@ -65,11 +65,11 @@ class Span:
 @dataclass(frozen=True)
 class Suppression:
     """An inline suppression extracted from a file.
-    
+
     If `is_invalid` is True, it means the comment was malformed or missing a justification,
     and should produce a finding rather than suppressing one.
     """
-    
+
     file: Path
     line: int
     rule_id: str
