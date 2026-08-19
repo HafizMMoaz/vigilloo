@@ -163,9 +163,13 @@ class LocalState:
         self,
         linear_state: dict[str, frozenset[TaintKind]],
         get_node_taint: Callable[[str, Node], frozenset[TaintKind]] | None = None,
+        project: Project | None = None,
+        local_types: dict[str, str] | None = None,
     ):
         self.linear_state = linear_state
         self.get_node_taint = get_node_taint
+        self.project = project
+        self.local_types = local_types
 
     def get(self, name: str, default: frozenset[TaintKind] = frozenset()) -> frozenset[TaintKind]:
         return self.linear_state.get(name, default)
@@ -235,8 +239,34 @@ def expr_kinds(
 
     if node.type in _MEMBER_CALLS:
         name = node_text(node.child_by_field_name("name"), source)
+        custom_entering = frozenset()
+        custom_cleared = frozenset()
+        
+        obj = node.child_by_field_name("object")
+        if obj is not None and local.project and local.local_types:
+            obj_text = _var_name(obj, source)
+            if obj_text in local.local_types:
+                obj_type = local.local_types[obj_text]
+                if (obj_type, name) in local.project.custom_sources:
+                    custom_entering = frozenset(local.project.custom_sources[(obj_type, name)])
+                if (obj_type, name) in local.project.custom_sanitizers:
+                    custom_cleared = frozenset(local.project.custom_sanitizers[(obj_type, name)])
+
+        if custom_cleared:
+            args = node.child_by_field_name("arguments")
+            inner = (
+                _union_of_children(args, source, local, request_vars, resolve, validated_fields)
+                if args is not None
+                else frozenset()
+            )
+            inner = inner - custom_cleared
+            if custom_entering:
+                return inner | custom_entering
+            return inner
+
         entering = source_kinds(name)
-        if entering and _is_request_receiver(node, source, request_vars):
+        if (entering and _is_request_receiver(node, source, request_vars)) or custom_entering:
+            entering = entering | custom_entering
             if validated_fields and name in ("input", "get", "query", "post", "string"):
                 args = node.child_by_field_name("arguments")
                 field_name = _get_first_string_arg(args, source)
@@ -280,10 +310,22 @@ def expr_kinds(
                     return entering - validated_fields[field_name]
             return entering
         cleared = sanitizer_clears(name)
+        if local.project:
+            func_fqn = name.lstrip("\\")
+            if (func_fqn, "") in local.project.custom_sanitizers:
+                custom_clears = frozenset(local.project.custom_sanitizers[(func_fqn, "")])
+                if cleared:
+                    cleared = cleared | custom_clears
+                else:
+                    cleared = custom_clears
+                    
         if name == "json_encode":
             args_node = node.child_by_field_name("arguments")
             if args_node and "JSON_HEX_TAG" in node_text(args_node, source):
-                cleared = frozenset({TaintKind.JS, TaintKind.HTML})
+                if cleared:
+                    cleared = cleared | frozenset({TaintKind.JS, TaintKind.HTML})
+                else:
+                    cleared = frozenset({TaintKind.JS, TaintKind.HTML})
         if cleared:
             args = node.child_by_field_name("arguments")
             inner = (
@@ -315,7 +357,29 @@ def expr_kinds(
                 return inner - frozenset({TaintKind.JS, TaintKind.HTML})
 
             if resolve is not None:
-                entering = input_facade_kinds(resolve(scope_text), method_text)
+                scope_fqn = resolve(scope_text)
+                if local.project and scope_fqn and (scope_fqn, method_text) in local.project.custom_sanitizers:
+                    cleared = frozenset(local.project.custom_sanitizers[(scope_fqn, method_text)])
+                    if cleared:
+                        args = node.child_by_field_name("arguments")
+                        inner = (
+                            _union_of_children(args, source, local, request_vars, resolve, validated_fields)
+                            if args is not None
+                            else frozenset()
+                        )
+                        return inner - cleared
+
+                if local.project and scope_fqn and (scope_fqn, method_text) in local.project.custom_sources:
+                    entering = frozenset(local.project.custom_sources[(scope_fqn, method_text)])
+                    if entering:
+                        if validated_fields:
+                            args = node.child_by_field_name("arguments")
+                            field_name = _get_first_string_arg(args, source)
+                            if field_name and field_name in validated_fields:
+                                return entering - validated_fields[field_name]
+                        return entering
+
+                entering = input_facade_kinds(scope_fqn, method_text)
                 if entering:
                     if validated_fields:
                         args = node.child_by_field_name("arguments")
@@ -394,6 +458,7 @@ def _source_note(
     source: bytes,
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
+    local: LocalState | None = None,
 ) -> str | None:
     """How this expression reads attacker-controlled data, or None if it does not.
 
@@ -416,12 +481,19 @@ def _source_note(
         # expr_kinds is decisive above.
         if node.type == "subscript_expression":
             return None
-    if (
-        node.type in _MEMBER_CALLS
-        and is_source(node_text(node.child_by_field_name("name"), source))
-        and _is_request_receiver(node, source, request_vars)
-    ):
-        return "attacker-controlled request data"
+    if node.type in _MEMBER_CALLS:
+        name = node_text(node.child_by_field_name("name"), source)
+        if local and local.project and local.local_types:
+            obj = node.child_by_field_name("object")
+            if obj is not None:
+                obj_text = _var_name(obj, source)
+                if obj_text in local.local_types:
+                    obj_type = local.local_types[obj_text]
+                    if (obj_type, name) in local.project.custom_sources:
+                        return f"attacker-controlled data, read through custom source {obj_type}::{name}"
+
+        if is_source(name) and _is_request_receiver(node, source, request_vars):
+            return "attacker-controlled request data"
     if node.type in _MEMBER_ACCESSES and _is_request_receiver(node, source, request_vars):
         # Named apart from the method form deliberately. A developer sent to
         # "request data" goes looking for a call and finds a property, and the
@@ -441,11 +513,17 @@ def _source_note(
         if (
             scope is not None
             and name_node is not None
-            and input_facade_kinds(resolve(node_text(scope, source)), node_text(name_node, source))
         ):
-            return "attacker-controlled request data, read through the legacy Input facade"
+            scope_fqn = resolve(node_text(scope, source))
+            method_text = node_text(name_node, source)
+            
+            if local and local.project and scope_fqn and (scope_fqn, method_text) in local.project.custom_sources:
+                return f"attacker-controlled data, read through custom source {scope_fqn}::{method_text}"
+                
+            if input_facade_kinds(scope_fqn, method_text):
+                return "attacker-controlled request data, read through the legacy Input facade"
     for child in node.children:
-        note = _source_note(child, source, request_vars, resolve)
+        note = _source_note(child, source, request_vars, resolve, local)
         if note is not None:
             return note
     return None
@@ -456,6 +534,7 @@ def _inline_source_steps(
     parsed: ParsedFile,
     request_vars: frozenset[str],
     resolve: ClassResolver | None = None,
+    local: LocalState | None = None,
 ) -> list[PathStep]:
     """The source step for a sink argument that reads the Request directly.
 
@@ -464,7 +543,7 @@ def _inline_source_steps(
     path jumps from the route to the sink and never says where the data
     entered, which is exactly the gap invariant 2 exists to prevent.
     """
-    note = _source_note(arg, parsed.source, request_vars, resolve)
+    note = _source_note(arg, parsed.source, request_vars, resolve, local)
     if note is None:
         return []
     return [
@@ -1226,7 +1305,7 @@ def _walk_method_ast(
         prefix = current_prefix.copy()
         local_types = current_local_types.copy()
         linear_state = current_linear.copy()
-        local = LocalState(linear_state, get_taint)
+        local = LocalState(linear_state, get_taint, project, local_types)
 
         for stmt in block.statements:
             anti_steps = _anti_sanitizer_steps(
@@ -1284,7 +1363,7 @@ def _walk_method_ast(
                 # cleared every kind, because it costs nothing on a path that then
                 # never reaches a sink, and omitting it would drop the source step
                 # from a path where only one kind was cleared.
-                entered = _source_note(right, source, request_vars, resolve)
+                entered = _source_note(right, source, request_vars, resolve, local)
                 if entered is not None:
                     prefix = prefix + [
                         PathStep(
