@@ -40,10 +40,31 @@ from .laravel.vocabulary import (
     XPATH_INJECTION_RULE,
     XSS_RULE,
 )
+import datetime
+import fnmatch
+from pathlib import Path
 from .models import Finding, Span, PathStep, WalkStats
 from .structural import find_structural_paths
 from .taint import find_taint_paths
 
+def _is_suppressed_by_config(project: Project, file_path: Path, rule_id: str) -> bool:
+    for config in project.vigilloo_config.suppress:
+        if config.rule != rule_id:
+            continue
+            
+        if not fnmatch.fnmatch(str(file_path), config.path):
+            continue
+            
+        if config.expires:
+            try:
+                expires_date = datetime.date.fromisoformat(config.expires)
+                if datetime.date.today() > expires_date:
+                    continue  # Suppression has expired
+            except ValueError:
+                pass  # Invalid date format, assume active
+                
+        return True
+    return False
 
 @dataclass(frozen=True)
 class Rule:
@@ -780,6 +801,9 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
             needs_review = True
 
         if (primary_path[-1].span.file, rule.id, primary_path[-1].span.start_line) in valid_suppressions:
+            continue
+            
+        if _is_suppressed_by_config(project, primary_path[-1].span.file, rule.id):
             continue
 
         findings.append(

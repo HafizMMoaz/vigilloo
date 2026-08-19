@@ -1,0 +1,16 @@
+suppress:
+  # Active suppression
+  - rule: laravel.unauthenticated-route
+    path: routes/api.php
+    reason: "Public API by design"
+    
+  # Expired suppression
+  - rule: laravel.raw-query
+    path: app/Http/Controllers/*.php
+    reason: "Will fix by end of 2025"
+    expires: "2025-12-31"
+
+  # Active suppression (future expiry)
+  - rule: laravel.missing-authorization
+    path: app/Http/Controllers/UntypedController.php
+    expires: "2099-12-31"
