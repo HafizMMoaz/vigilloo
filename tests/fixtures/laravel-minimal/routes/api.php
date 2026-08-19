@@ -137,3 +137,11 @@ Route::post('/login', [App\Http\Controllers\UserController::class, 'login']);
 Route::get('/unsubscribe', [App\Http\Controllers\UserController::class, 'unsubscribe']);
 Route::get('/confirm', [App\Http\Controllers\UserController::class, 'confirm'])->middleware('signed');
 Route::get('/approve', [App\Http\Controllers\UserController::class, 'approve'])->middleware('auth');
+
+// Unauthenticated route cases (TASK-071)
+Route::post('/unauth/update', [App\Http\Controllers\UserController::class, 'updateProfile']); // positive
+Route::middleware(['auth'])->group(function () {
+    Route::post('/unauth/grouped-update', [App\Http\Controllers\UserController::class, 'updateProfile']); // negative
+});
+Route::get('/unauth/read', [App\Http\Controllers\UserController::class, 'readProfile']); // negative (GET)
+Route::post('/unauth/signed', [App\Http\Controllers\UserController::class, 'signedUpdate'])->middleware('signed'); // negative (signed)

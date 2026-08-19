@@ -162,7 +162,7 @@ findings:
   - role: sink
     symbol: '{!! $sort !!}'
     note: raw echo, no HTML escaping
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Repositories/ReportRepository.php
   line: 16
   severity: critical
@@ -198,7 +198,7 @@ findings:
     line: 29
     symbol: DB::raw("sum({$column}) as total")
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Repositories/ReportRepository.php
   line: 35
   severity: critical
@@ -441,7 +441,7 @@ findings:
     note: attacker-controlled request data
   - role: sink
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Enums/ReportFormat.php
   line: 30
   severity: critical
@@ -463,7 +463,7 @@ findings:
 - file: app/Http/Controllers/BranchController.php
   line: 18
   rule: laravel.raw-query
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Console/Commands/VulnerableCommand.php
   line: 13
   severity: high
@@ -478,7 +478,7 @@ findings:
     line: 13
     symbol: DB::statement("DELETE FROM users WHERE id = " . $this->payload)
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/OrderController.php
   line: 43
   severity: critical
@@ -503,7 +503,7 @@ findings:
     line: 43
     symbol: DB::statement($safe)
     note: unparameterised SQL fragment
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/DuckClass.php
   line: 7
   severity: high
@@ -739,12 +739,20 @@ findings:
     note: unconditionally returns true, bypassing authorization
 - rule: laravel.env-outside-config
   file: app/Http/Controllers/UserController.php
-  line: 74
+  line: 73
   severity: medium
   path:
   - role: gap
     symbol: env('DB_HOST', 'localhost')
     note: env() is called outside the config/ directory
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 142
+  severity: high
+  path:
+  - role: gap
+    symbol: POST /unauth/update
+    note: state-changing route with no auth middleware
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
@@ -803,7 +811,7 @@ must_not_find:
   reason: authorizeResource() in the constructor authorizes every action of the controller
 - file: app/Http/Requests/CheckedInvoiceRequest.php
   reason: the negative half of the stub-versus-real authorize() pair
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Repositories/OrderRepository.php
   line: 17
   reason: orderBy('created_at', 'desc') is parameterised and takes no request data
@@ -819,79 +827,79 @@ must_not_find:
   file: app/Http/Middleware/VerifyCsrfToken.php
   line: 7
   reason: webhook/exact is an exact match, not a wildcard
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Repositories/ReportRepository.php
   line: 41
   reason: DB::select('... where status = ?', [$status]) - the query is a constant
     and the user data is a binding
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Repositories/ReportRepository.php
   line: 47
   reason: $query->select(['id', 'status']) is a column list, not a query - same method
     name as the sink, opposite meaning
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/LegacyController.php
   line: 40
   reason: $_SERVER['DOCUMENT_ROOT'] is server configuration, not request data
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/LegacyController.php
   line: 50
   reason: an ordinary local array subscript - reading $config[key] is not reading
     a superglobal
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/MagicController.php
   line: 43
   reason: $token->value is a property on an ordinary object, not on a Request
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/MagicController.php
   line: 51
   reason: intval($request->column) - a magic read is an ordinary tainted value, so
     the sanitizer table still applies
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/SlugController.php
   line: 44
   reason: Invoice $invoice is route-model binding - the segment names a record, and
     what is missing is authorization, not escaping
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/SlugController.php
   line: 52
   reason: int $page - PHP coerces the segment before the body runs, so no string payload
     arrives
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/SlugController.php
   line: 60
   reason: the route declares no {filter} segment, so nothing binds $filter from the
     URL
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/HelperController.php
   line: 48
   reason: intval(request(...)) - a helper read is an ordinary tainted value, so the
     sanitizer table still applies
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/HelperController.php
   line: 56
   reason: config('orders.default_sort') is not the request() helper - it reads the
     application's own config
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NullsafeController.php
   line: 48
   reason: $invoice?->column is a nullsafe read on an ordinary object, not on a Request
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NullsafeController.php
   line: 55
   reason: intval($request?->input(...)) - a nullsafe read is an ordinary tainted value,
     so the sanitizer table still applies
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NamedArgController.php
   line: 45
   reason: 'whereRaw(sql: constant, bindings: [request data]) - the parameterised form,
     written with names'
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Http/Controllers/NamedArgController.php
   line: 56
   reason: the same safe call reordered - position 0 now holds the tainted binding,
     and it is still not the query
-- rule: php.sql-injection
+- rule: laravel.raw-query
   file: app/Enums/ReportFormat.php
   line: 39
   reason: DB::select('... where status = ?', [$status]) inside an enum - the query
@@ -907,3 +915,16 @@ must_not_find:
   file: app/Http/Controllers/UserController.php
   line: 15
   reason: Does not perform validation
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 143
+  reason: route is within an auth middleware group
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 145
+  reason: GET request is not state-changing
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 146
+  reason: route is protected by signed middleware
+

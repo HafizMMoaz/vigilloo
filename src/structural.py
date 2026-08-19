@@ -34,6 +34,10 @@ from .laravel.vocabulary import (
     LARAVEL_FORM_REQUEST_TRUE_RULE,
     LARAVEL_ENV_OUTSIDE_CONFIG_RULE,
     MISSING_AUTHORIZATION_RULE,
+    LARAVEL_UNSAFE_UPLOAD_RULE,
+    LARAVEL_DEBUG_ARTIFACT_RULE,
+    LARAVEL_WEAK_HASH_RULE,
+    LARAVEL_WEAK_RANDOMNESS_RULE,
 )
 from .models import PathStep, Route, Span
 from .parser import ParsedFile, find_all, node_span, node_text
@@ -311,9 +315,9 @@ def _extract_csrf_except(project: Project) -> list[tuple[Span, str]]:
                             if arg.type == "argument":
                                 arg_name = arg.child_by_field_name("name")
                                 if arg_name and node_text(arg_name, parsed.source) == "except":
-                                    val = arg.child_by_field_name("value")
-                                    if val and val.type == "array_creation_expression":
-                                        for child in val.children:
+                                    arg_val = arg.child_by_field_name("value")
+                                    if arg_val and arg_val.type == "array_creation_expression":
+                                        for child in arg_val.children:
                                             if child.type == "array_element_initializer":
                                                 val_node = child.children[0]
                                                 if val_node.type in ("string", "encapsed_string"):
@@ -344,6 +348,9 @@ def _unauthenticated_route_paths(route: Route) -> list[PathStep] | None:
         
     state_changing_verbs = {"POST", "PUT", "PATCH", "DELETE"}
     if not any(verb in state_changing_verbs for verb in route.verbs):
+        return None
+        
+    if is_signed(route):
         return None
         
     return [
@@ -675,6 +682,17 @@ def find_structural_paths(project: Project) -> list[list[PathStep]]:
         if (steps := _unsigned_route_paths(route)) is not None:
             paths.append(steps)
             
+    if (steps := _env_outside_config_paths(project)) is not None:
+        paths.extend(steps)
+    if (steps := _unsafe_upload_paths(project)) is not None:
+        paths.extend(steps)
+    if (steps := _debug_artifact_paths(project)) is not None:
+        paths.extend(steps)
+    if (steps := _weak_hash_paths(project)) is not None:
+        paths.extend(steps)
+    if (steps := _weak_randomness_paths(project)) is not None:
+        paths.extend(steps)
+        
     for except_path in _csrf_except_paths(project):
         paths.append(except_path)
         
@@ -843,4 +861,109 @@ def _env_outside_config_paths(project: Project) -> list[list[PathStep]]:
                 ]
                 paths.append(steps)
                 
+    return paths
+
+
+def _unsafe_upload_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    for path, parsed in project.files.items():
+        if path.parts and path.parts[0] == "tests":
+            continue
+        for call in find_all(parsed.tree.root_node, "member_call_expression"):
+            name_node = call.child_by_field_name("name")
+            if name_node and node_text(name_node, parsed.source) == "getClientOriginalName":
+                paths.append([
+                    PathStep(
+                        role="gap",
+                        span=node_span(call, path),
+                        snippet=node_text(call, parsed.source),
+                        note="uses getClientOriginalName() for file upload",
+                        rule_id=LARAVEL_UNSAFE_UPLOAD_RULE
+                    )
+                ])
+    return paths
+
+
+def _debug_artifact_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    for path, parsed in project.files.items():
+        if path.parts and path.parts[0] in ("tests", "vendor"):
+            continue
+        for call in find_all(parsed.tree.root_node, "function_call_expression"):
+            fn = call.child_by_field_name("function")
+            if fn:
+                fn_name = node_text(fn, parsed.source)
+                if fn_name in ("dd", "dump", "ray", "var_dump"):
+                    paths.append([
+                        PathStep(
+                            role="gap",
+                            span=node_span(call, path),
+                            snippet=node_text(call, parsed.source),
+                            note=f"debug artifact {fn_name}() found in production code",
+                            rule_id=LARAVEL_DEBUG_ARTIFACT_RULE
+                        )
+                    ])
+    return paths
+
+
+def _weak_hash_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    for path, parsed in project.files.items():
+        for call in find_all(parsed.tree.root_node, "function_call_expression"):
+            fn = call.child_by_field_name("function")
+            if fn:
+                fn_name = node_text(fn, parsed.source)
+                if fn_name in ("md5", "sha1"):
+                    parent = call.parent
+                    context_text = ""
+                    if parent:
+                        if parent.type == "assignment_expression":
+                            left = parent.child_by_field_name("left")
+                            if left:
+                                context_text = node_text(left, parsed.source).lower()
+                        elif parent.type in ("array_element_initializer", "pair"):
+                            if len(parent.children) > 0:
+                                context_text = node_text(parent.children[0], parsed.source).lower()
+                    if "password" in context_text:
+                        paths.append([
+                            PathStep(
+                                role="gap",
+                                span=node_span(call, path),
+                                snippet=node_text(call, parsed.source),
+                                note=f"{fn_name}() used for hashing a password",
+                                rule_id=LARAVEL_WEAK_HASH_RULE
+                            )
+                        ])
+    return paths
+
+
+def _weak_randomness_paths(project: Project) -> list[list[PathStep]]:
+    paths = []
+    for path, parsed in project.files.items():
+        for call in find_all(parsed.tree.root_node, "function_call_expression"):
+            fn = call.child_by_field_name("function")
+            if fn:
+                fn_name = node_text(fn, parsed.source)
+                if fn_name in ("rand", "mt_rand"):
+                    parent = call.parent
+                    context_text = ""
+                    if parent:
+                        if parent.type == "assignment_expression":
+                            left = parent.child_by_field_name("left")
+                            if left:
+                                context_text = node_text(left, parsed.source).lower()
+                        elif parent.type in ("array_element_initializer", "pair"):
+                            if len(parent.children) > 0:
+                                context_text = node_text(parent.children[0], parsed.source).lower()
+                    
+                    if "token" in context_text or "salt" in context_text or "password" in context_text:
+                        paths.append([
+                            PathStep(
+                                role="gap",
+                                span=node_span(call, path),
+                                snippet=node_text(call, parsed.source),
+                                note=f"{fn_name}() used for sensitive randomness",
+                                rule_id=LARAVEL_WEAK_RANDOMNESS_RULE
+                            )
+                        ])
     return paths

@@ -67,10 +67,25 @@ class UserController
     {
         return $post->update($request->all());
     }
-}
 
     public function someEnvCall()
     {
         $db = env('DB_HOST', 'localhost');
         return $db;
     }
+
+    public function updateProfile()
+    {
+        return response()->json(['status' => 'updated']);
+    }
+
+    public function readProfile()
+    {
+        return response()->json(['status' => 'reading']);
+    }
+
+    public function signedUpdate()
+    {
+        return response()->json(['status' => 'signed-update']);
+    }
+}
