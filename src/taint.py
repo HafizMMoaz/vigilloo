@@ -10,7 +10,7 @@ from pathlib import Path
 
 from tree_sitter import Node
 
-from .analysis.cfg import CFGBuilder
+from .analysis.cfg import BasicBlock, CFGBuilder
 from .analysis.ssa import PhiNode, SSABuilder, SSAValue
 
 # Statement kinds that can carry a source, a propagating call or a sink.
@@ -1296,7 +1296,7 @@ def _walk_method_ast(
     validated_fields = extract_validation_cleared(method_node, source, parsed)
 
     def explore(
-        block: object,
+        block: BasicBlock,
         current_prefix: list[PathStep],
         visited_edges: frozenset[tuple[int, int]],
         current_linear: dict[str, frozenset[TaintKind]],
