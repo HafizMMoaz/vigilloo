@@ -30,6 +30,7 @@ from .models import (
     Span,
     Suppression,
     Symbol,
+    TaintKind,
     WalkStats,
 )
 
@@ -91,8 +92,7 @@ class Project:
     suppressions: list[Suppression] = field(default_factory=list)
 
     @cached_property
-    def custom_sources(self) -> dict[tuple[str, str], "frozenset[TaintKind]"]:
-        from .models import TaintKind
+    def custom_sources(self) -> dict[tuple[str, str], frozenset[TaintKind]]:
         res: dict[tuple[str, str], frozenset[TaintKind]] = {}
         for src in self.vigilloo_config.taint.sources:
             fqn = src.get("fqn")
@@ -107,8 +107,7 @@ class Project:
         return res
 
     @cached_property
-    def custom_sanitizers(self) -> dict[tuple[str, str], "frozenset[TaintKind]"]:
-        from .models import TaintKind
+    def custom_sanitizers(self) -> dict[tuple[str, str], frozenset[TaintKind]]:
         res: dict[tuple[str, str], frozenset[TaintKind]] = {}
         for san in self.vigilloo_config.taint.sanitizers:
             fqn = san.get("fqn")
