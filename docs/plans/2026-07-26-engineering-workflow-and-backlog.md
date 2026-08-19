@@ -1280,7 +1280,7 @@ annotated at src/taint.py:3. 5 tasks.
 - **Tests:** Full expected.yml corpus unchanged, plus a branch fixture where
   only one arm sanitizes.
 
-### TASK-064
+### [COMPLETED] TASK-064
 - **Goal:** Untyped Request parameters are handled or honestly reported.
 - **Description:** Removes the ponytail: at src/taint.py:127: a Request parameter
   that is neither type-hinted nor conventionally named is not
