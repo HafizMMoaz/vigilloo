@@ -47,7 +47,7 @@ from .laravel.vocabulary import (
 )
 from .models import PathStep, Route, TaintKind, WalkStats
 from .parser import ParsedFile, find_all, find_any, node_span, node_text
-from .structural import authenticated_by
+from .laravel.middleware import authenticated_by
 
 _STATEMENT_TYPES = ("expression_statement", "return_statement", "echo_statement")
 
