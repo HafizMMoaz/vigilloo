@@ -127,7 +127,7 @@ The version where Vigilloo becomes part of a team's workflow and tracks external
 
 - Hosted platform ([21-cloud](../21-cloud/README.md)): organisations, teams, SSO, RBAC
 - Continuous monitoring, trends, policy enforcement
-- The commercial tier; the CLI stays open source and fully capable offline
+- The commercial tier; the CLI stays fully capable offline
 
 ## Sequencing rules
 
@@ -151,5 +151,11 @@ gaps.
 because shipping it early to a small team with an immature authorization model is how a security
 tool becomes an incident.
 
-**Open core throughout.** CLI, SDK, plugins, MCP and the graph engine stay open source at every
-version. Only the cloud, collaboration, compliance and fleet-management layers are commercial.
+**Open core is a v3.0 decision, not the current licence.** Vigilloo is proprietary today: see
+[LICENSE](../../LICENSE) and the licence section of [docs/README](../README.md). No part of it
+is published under an open-source licence. What [21-cloud](../21-cloud/README.md) records is
+which layers *could* be opened if that decision is taken - CLI, SDK, plugins, MCP and the graph
+engine - and which would stay commercial regardless: cloud, collaboration, compliance and fleet
+management. That boundary is designed for early so the split stays cheap to make, in the
+direction it can be made. Relicensing proprietary to open is a decision available on any day;
+the reverse is not available at all, because every published version stays licensed forever.
