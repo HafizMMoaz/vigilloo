@@ -1,9 +1,12 @@
 """The document every format renders is sorted before any format sees it."""
 
+import json
 from pathlib import Path
 
 from vigilloo.models import Coverage, Finding, PathStep, Span
 from vigilloo.report.document import SCHEMA_VERSION, build_document
+from vigilloo.report.json_report import render_json
+from vigilloo.report.markdown import render_markdown
 
 
 def _finding(rule_id: str, severity: str, file: str, line: int, col: int = 0) -> Finding:
@@ -110,3 +113,25 @@ def test_metadata_carries_no_timestamp() -> None:
     assert doc.metadata.schema_version == SCHEMA_VERSION
     assert not hasattr(doc.metadata, "duration_ms")
     assert not hasattr(doc.metadata, "timestamp")
+
+
+def test_markdown_and_json_agree_on_finding_count_and_severity_breakdown() -> None:
+    """Both renderers consume one `ReportDocument`, so the data cannot
+    disagree between formats - but nothing asserted that what they render
+    from it agrees too. A developer reading the Markdown report and a
+    pipeline gating on the JSON must reach the same verdict for one scan.
+    """
+    findings = [
+        _finding("php.xss", "critical", "a.php", 10),
+        _finding("php.xss", "high", "b.php", 5),
+        _finding("laravel.raw-query", "critical", "c.php", 1),
+    ]
+    doc = build_document(findings, _coverage(), engine_version="0.1.0", ruleset_hash="abc")
+
+    payload = json.loads(render_json(doc))
+    markdown = render_markdown(doc)
+
+    assert f"{payload['summary']['total']} finding(s)" in markdown
+    assert payload["summary"]["total"] == len(findings)
+    for severity, count in payload["summary"]["by_severity"].items():
+        assert f"{count} {severity}" in markdown

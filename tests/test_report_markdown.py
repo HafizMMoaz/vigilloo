@@ -102,3 +102,83 @@ def test_needs_review_alternative_paths_and_remediation_render() -> None:
     assert "(Needs Review)" in out
     assert "1 alternative path reached this sink." in out
     assert "**Fix** - Bind the parameter." in out
+
+
+def test_snippet_with_a_backtick_run_keeps_the_fence_balanced() -> None:
+    """Invariant 5: `snippet` is untrusted source text, delimited here as
+    data, not instructions. A snippet containing a run of three or more
+    backticks - entirely plausible in a PHP string literal holding a Markdown
+    example, a docblock, or a heredoc - must not be able to close a fixed
+    three-backtick fence early and let whatever follows render as live
+    Markdown. The fence here follows CommonMark's own rule instead: longer
+    than the longest backtick run inside the content.
+    """
+    span = Span(file=Path("app/X.php"), start_line=4, start_col=2, end_line=4, end_col=20)
+    snippet = "$doc = '```markdown```';"
+    finding = Finding(
+        rule_id="laravel.raw-query",
+        severity="critical",
+        title="SQL injection in X",
+        cwe=("CWE-89",),
+        span=span,
+        evidence_path=(PathStep(role="sink", span=span, snippet=snippet),),
+        remediation="Bind the parameter.",
+    )
+    out = render_markdown(_document([finding]))
+    assert snippet in out
+
+    lines = out.splitlines()
+    snippet_index = lines.index(f"   {snippet}")
+    opening = lines[snippet_index - 1].strip()
+    closing = lines[snippet_index + 1].strip()
+    assert opening.endswith("php")
+    fence = opening.removesuffix("php")
+    assert closing == fence
+    assert set(fence) == {"`"}
+    assert len(fence) > 3, "fence must outrun the snippet's own three-backtick run"
+
+
+def test_snippet_with_no_backtick_run_keeps_the_default_three_backtick_fence() -> None:
+    """The fence only grows when the content demands it, so every existing
+    report - none of whose snippets hold a long backtick run - renders
+    byte-identically to before this fix.
+    """
+    out = render_markdown(_document([_finding()]))
+    assert "   ```php" in out
+    assert "   ```" in out
+
+
+def test_note_with_a_newline_does_not_break_the_numbered_list() -> None:
+    """`step.note` is source-derived - `taint.py` builds notes holding
+    template names, `structural.py` builds notes holding route parameter
+    names - and a newline embedded in one must not be able to end the
+    numbered list item early and let text after it render as its own
+    Markdown block (a heading, in this case) instead of note text.
+    """
+    span = Span(file=Path("app/X.php"), start_line=4, start_col=2, end_line=4, end_col=20)
+    injected = "# Fake heading injected via note"
+    finding = Finding(
+        rule_id="laravel.raw-query",
+        severity="critical",
+        title="SQL injection in X",
+        cwe=("CWE-89",),
+        span=span,
+        evidence_path=(
+            PathStep(
+                role="source",
+                span=span,
+                snippet="$r->input('q')",
+                note=f"template\n{injected}",
+            ),
+        ),
+        remediation="Bind the parameter.",
+    )
+    out = render_markdown(_document([finding]))
+    lines = out.splitlines()
+
+    list_lines = [line for line in lines if line.startswith("1. `app/X.php:4`")]
+    assert len(list_lines) == 1
+    assert injected in list_lines[0]
+    assert not any(line == injected for line in lines), (
+        "the injected text must stay inside the list item, not become its own line"
+    )

@@ -19,6 +19,48 @@ _SEVERITY_MARK = {
 }
 
 
+def _fence(snippet: str) -> str:
+    """A backtick fence the snippet cannot close early.
+
+    Invariant 5: `snippet` is untrusted source text pulled from the scanned
+    project, delimited here as data, not instructions. A fixed three-backtick
+    fence is not delimiting - a snippet containing a run of three or more
+    backticks (a PHP docblock, a heredoc, a string literal holding a Markdown
+    example) closes it early, and everything after renders as live Markdown
+    wherever the report lands: a GitHub PR comment, a ticket.
+
+    CommonMark's own answer is to make the fence longer than any backtick run
+    the content contains, so it follows that rule: the fence is one backtick
+    longer than the longest run in `snippet`, with three as the floor so
+    ordinary snippets are unaffected. It is a pure function of the snippet
+    content, so invariant 8 (byte-identical output for identical input) holds
+    without extra care.
+    """
+    longest = 0
+    current = 0
+    for char in snippet:
+        if char == "`":
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return "`" * max(3, longest + 1)
+
+
+def _single_line(text: str) -> str:
+    """Collapse line breaks so a source-derived value cannot end a line early.
+
+    `step.note` is source-derived in places - `taint.py` builds notes holding
+    template names, `structural.py` builds notes holding route parameter
+    names - and it is interpolated into one line of a numbered list. A
+    newline in it would end that Markdown list item and let whatever follows
+    the note render as fresh Markdown instead of the note text it was meant
+    to be, which is the same content-injection shape as an unescaped code
+    fence, just with a line break instead of a backtick run.
+    """
+    return text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+
+
 def _finding_section(finding: Finding) -> list[str]:
     mark = _SEVERITY_MARK.get(finding.severity, "⚪")
     review = " (Needs Review)" if finding.needs_review else ""
@@ -32,14 +74,15 @@ def _finding_section(finding: Finding) -> list[str]:
         "",
     ]
     for number, step in enumerate(finding.evidence_path, start=1):
-        note = f" - {step.note}" if step.note else ""
+        note = f" - {_single_line(step.note)}" if step.note else ""
         lines.append(
             f"{number}. `{step.span.file.as_posix()}:{step.span.start_line}` - {step.role}{note}"
         )
         lines.append("")
-        lines.append("   ```php")
+        fence = _fence(step.snippet)
+        lines.append(f"   {fence}php")
         lines.append(f"   {step.snippet}")
-        lines.append("   ```")
+        lines.append(f"   {fence}")
         lines.append("")
 
     if finding.alternative_paths:
