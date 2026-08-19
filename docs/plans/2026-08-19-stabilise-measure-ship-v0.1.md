@@ -833,6 +833,35 @@ Phase 2 is specified at task level here. Each task gets its own bite-sized plan 
 immediately before it is executed, because the shape of Tasks 10 and 11 depends on what Task 9
 measures.
 
+### Carried forward from Phase 1
+
+Phase 1 executed on branch `phase-1-stabilise` (10 commits, `9217556`..`d857eb4`). All four
+gates are green. A whole-branch review proved detection behaviour unchanged by running the base
+and head engines over all 13 fixtures and comparing every finding, fingerprint and evidence-path
+step byte for byte, backed by an AST-level diff of every changed module. These items were found
+along the way, are not fixed, and belong to Phase 2:
+
+- **Queued jobs are an untested taint entrypoint.** Three separate scratch probes
+  (`tests/test_tmp.py`, deleted; `tests/test_expr.py` and `tests/test_resolve.py`, both since
+  given real assertions) used the same `App\Jobs\ProcessOrder` fixture and were all asking
+  whether taint flows from a queued job's property into a sink. Nothing tests it. A job is an
+  entrypoint exactly as a route is, so this is a coverage gap in the source vocabulary, not a
+  missing test.
+- **`_env_outside_config_paths(project)` is called twice** in `find_structural_paths`
+  (`src/structural.py`, around lines 708 and 729). Confirmed not to duplicate output: paths are
+  grouped into findings on `(rule_id, sink_span)`, both calls produce identical spans, and every
+  downstream consumer of a group is duplicate-insensitive. It is wasted work and a readability
+  trap. Deleting the second call is behaviour-adjacent, so it wants its own commit and its own
+  fixture check, not a drive-by.
+- **`expr_kinds` has no per-property tracking.** A property read on a tainted receiver returns
+  the receiver's full kind set by the union-over-children default, so `$this->orderId` on a
+  fully tainted `$this` yields every kind. `tests/test_expr.py` pins this deliberately and its
+  docstring says so. The imprecision errs toward false positives, which is what the Phase 2
+  precision corpus exists to measure.
+- **The `vigilloo.bare-ignore` remediation string is user-visible output** and feeds
+  `RULESET_HASH`. Editing rule prose moves the hash, so `CHANGELOG.md`'s recorded hash needs
+  updating in the same commit as any rule text change. This was missed once already.
+
 ### Task 8: JSON report format
 
 Blocks everything else in this phase: precision cannot be measured without a stable
