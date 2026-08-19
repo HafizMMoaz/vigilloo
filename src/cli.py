@@ -11,7 +11,7 @@ from rich.console import Console
 
 from . import __version__, store
 from .graph import coverage, load_project
-from .models import WalkStats
+from .models import Coverage, Finding, WalkStats
 from .report import build_document, render, render_coverage, render_json, render_markdown
 from .rules import RULESET_HASH, scan_project
 from .workspace import Workspace
@@ -57,6 +57,38 @@ class OutputFormat(StrEnum):
     markdown = "markdown"
 
 
+def _emit_report(
+    findings: list[Finding],
+    scan_coverage: Coverage,
+    output_format: OutputFormat,
+    machine: bool,
+    console: Console,
+) -> None:
+    """Render findings and coverage in whichever format was asked for.
+
+    The one place format dispatch happens, so the empty-project early exit
+    below and the normal scan path at the end of `scan` cannot drift into two
+    copies of the same if/else - a second copy is exactly the verbatim
+    duplication a reviewer would flag, and the two paths disagreeing about
+    what "json" means is worse than that.
+    """
+    if machine:
+        # print() rather than console.print(): Rich would wrap the JSON at the
+        # terminal width and interpret square brackets as markup, and a report
+        # that changes shape with the width of the window is not a report a
+        # pipeline can diff.
+        document = build_document(
+            findings, scan_coverage, engine_version=__version__, ruleset_hash=RULESET_HASH
+        )
+        if output_format is OutputFormat.json:
+            print(render_json(document), end="")
+        else:
+            print(render_markdown(document), end="")
+    else:
+        render_coverage(scan_coverage, console)
+        render(findings, console)
+
+
 @app.command()
 def scan(
     path: Path = typer.Argument(Path("."), help="Project root to scan."),  # noqa: B008
@@ -96,6 +128,16 @@ def scan(
 
     if not project.files and not project.failed:
         console.print(f"[yellow]No PHP files found under {path}.[/yellow]")
+        # Under a machine format the warning above went to stderr, so stdout
+        # still needs a document: an empty pipe is not "one document with
+        # nothing else in it", it is nothing, and json.loads("") on the other
+        # end of the pipe is a JSONDecodeError instead of the empty result the
+        # scan actually found. The terminal format keeps today's behaviour
+        # exactly - the warning and nothing else - because that path is not
+        # machine-parsed and adding a "No findings." block under it would be a
+        # visible, unrequested behaviour change.
+        if machine:
+            _emit_report([], coverage(project, stats), output_format, machine, console)
         raise typer.Exit(0)
 
     if project.failed:
@@ -155,21 +197,7 @@ def scan(
     # docs/16-reporting puts it second in every format, before them, so a clean
     # result can never be read without the size of the blind spot beside it.
     scan_coverage = coverage(project, stats)
-    if machine:
-        # print() rather than console.print(): Rich would wrap the JSON at the
-        # terminal width and interpret square brackets as markup, and a report
-        # that changes shape with the width of the window is not a report a
-        # pipeline can diff.
-        document = build_document(
-            findings, scan_coverage, engine_version=__version__, ruleset_hash=RULESET_HASH
-        )
-        if output_format is OutputFormat.json:
-            print(render_json(document), end="")
-        else:
-            print(render_markdown(document), end="")
-    else:
-        render_coverage(scan_coverage, console)
-        render(findings, console)
+    _emit_report(findings, scan_coverage, output_format, machine, console)
 
     # The findings are already correct and already on screen; the store is history for the next
     # run, not this run's result, so a full disk or an unwritable database must not turn a good

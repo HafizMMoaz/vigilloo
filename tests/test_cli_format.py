@@ -52,3 +52,32 @@ def test_json_exit_code_matches_the_terminal_run(tmp_path: Path) -> None:
     terminal = runner.invoke(app, ["scan", str(root)])
     as_json = runner.invoke(app, ["scan", str(root), "--format", "json"])
     assert terminal.exit_code == as_json.exit_code == 1
+
+
+def test_empty_project_under_json_still_emits_a_parseable_document(tmp_path: Path) -> None:
+    """A directory with no PHP files must not leave stdout empty under a
+    machine format: `vigilloo scan bad/path --format json | jq .` is an easy
+    way to hit this (a wrong path in CI, a misconfigured scan root), and an
+    empty stdout with exit code 0 makes `json.loads` raise instead of telling
+    the pipeline the scan found nothing.
+    """
+    root = tmp_path / "empty"
+    root.mkdir()
+    result = runner.invoke(app, ["scan", str(root), "--format", "json"], catch_exceptions=False)
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["total"] == 0
+    assert payload["findings"] == []
+
+
+def test_empty_project_under_terminal_format_is_unchanged(tmp_path: Path) -> None:
+    """The terminal path is not machine-parsed, so it keeps today's exact
+    behaviour: the yellow warning and nothing else, no findings block.
+    """
+    root = tmp_path / "empty"
+    root.mkdir()
+    result = runner.invoke(app, ["scan", str(root)])
+    assert result.exit_code == 0
+    assert "No PHP files found" in result.stdout
+    assert "Coverage:" not in result.stdout
+    assert "No findings." not in result.stdout
