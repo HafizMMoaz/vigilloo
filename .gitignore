@@ -29,6 +29,6 @@ scratch/
 scratch.*
 tmp_scratch/
 tmp_test/
-debug_*.py
-fix_*.py
-out.txt
+/debug_*.py
+/fix_*.py
+/out.txt

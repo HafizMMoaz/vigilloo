@@ -21,7 +21,7 @@ been released and gets no dated heading. Everything below is the work accumulate
 backfilled from git history one entry per merged slice. Fix commits inside a slice are folded
 into that slice's entry: there was no release for them to be fixes against.
 
-Ruleset hash: `520914c8731f4c0d`.
+Ruleset hash: `b35162f4d187c91c`.
 
 ### Added
 
@@ -361,7 +361,10 @@ Ruleset hash: `520914c8731f4c0d`.
   rather than reverted because the new ID names what the rule detects: a raw query builder
   call, which is a Laravel construct, not a PHP one. It is recorded here because the old ID
   was already announced as shipped. **This is the last rule ID rename.** From the 0.0.1 tag
-  onward, invariant 7 binds.
+  onward, invariant 7 binds. The `vigilloo.bare-ignore` rule's `remediation` text, which is
+  printed to users in scan reports, cited the old `php.sql-injection` ID in its worked example
+  and has been updated to cite `laravel.raw-query` instead, so users are not told to suppress
+  with an ID that no longer exists.
 
 ### Fixed
 

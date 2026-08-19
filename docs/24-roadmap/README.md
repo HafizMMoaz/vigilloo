@@ -30,7 +30,7 @@ summarises and points here.
 findings, ≥90% precision on real applications, clean runs on 10 open-source Laravel apps.
 
 **Distance to that gate.** The engine is the far side of v0.1; the surface and the evidence are
-not. 30 rules and eleven taint kinds are wired and 399 tests pass over them, but the corpus is
+not. 30 rules and eleven taint kinds are wired and 398 tests pass over them, but the corpus is
 entirely synthetic, so the ≥90% precision criterion has never been evaluated - not failed,
 never run. Of the nine commands in [19-cli](../19-cli/README.md) only `scan` exists, and of the
 three report formats in [16-reporting](../16-reporting/README.md) only the terminal one does,
