@@ -353,3 +353,12 @@ Ruleset hash: `520914c8731f4c0d`.
 - The specification and the engine were consolidated into a single repository, and `src/` was
   made the `vigilloo` package itself rather than a directory containing it. CI builds the wheel
   and installs it into a clean environment so an unregistered subpackage cannot ship missing.
+
+- **Rule `php.sql-injection` is now `laravel.raw-query`** (`529d72d`). This is a rule ID
+  rename, which invariant 7 forbids: IDs ship in users' SARIF, baselines and
+  `// vigilloo-ignore` comments, and renaming one un-suppresses findings everywhere it is
+  used. Nothing has been tagged or published, so no user is affected, and the rename is kept
+  rather than reverted because the new ID names what the rule detects: a raw query builder
+  call, which is a Laravel construct, not a PHP one. It is recorded here because the old ID
+  was already announced as shipped. **This is the last rule ID rename.** From the 0.0.1 tag
+  onward, invariant 7 binds.

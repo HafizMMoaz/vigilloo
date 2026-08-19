@@ -628,7 +628,7 @@ VIGILLOO_BARE_IGNORE = Rule(
     kind="STRUCTURAL",
     languages=("php", "blade"),
     frameworks=("laravel", "generic"),
-    remediation="Provide a valid rule ID and a justification, e.g., // vigilloo-ignore php.sql-injection -- this parameter is an enum",
+    remediation="Provide a valid rule ID and a justification, e.g., // vigilloo-ignore laravel.raw-query -- this parameter is an enum",
 )
 
 _BY_ID: dict[str, Rule] = {
