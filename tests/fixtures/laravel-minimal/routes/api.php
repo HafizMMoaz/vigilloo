@@ -145,3 +145,6 @@ Route::middleware(['auth'])->group(function () {
 });
 Route::get('/unauth/read', [App\Http\Controllers\UserController::class, 'readProfile']); // negative (GET)
 Route::post('/unauth/signed', [App\Http\Controllers\UserController::class, 'signedUpdate'])->middleware('signed'); // negative (signed)
+Route::get('/untyped/sort', [App\Http\Controllers\UntypedController::class, 'sort']);
+Route::get('/untyped/bound/{user}', [App\Http\Controllers\UntypedController::class, 'bound']);
+Route::get('/untyped/ambiguous/{user}', [App\Http\Controllers\UntypedController::class, 'ambiguous']);

@@ -753,6 +753,43 @@ findings:
   - role: gap
     symbol: POST /unauth/update
     note: state-changing route with no auth middleware
+- rule: laravel.raw-query
+  file: app/Http/Controllers/UntypedController.php
+  line: 10
+  severity: critical
+  path:
+  - role: entry
+    symbol: GET|HEAD /untyped/sort
+  - role: source
+    symbol: $r->sort
+  - role: sink
+    symbol: DB::table('orders')->orderByRaw($r->sort)
+- rule: laravel.raw-query
+  file: app/Http/Controllers/UntypedController.php
+  line: 14
+  severity: critical
+  path:
+  - role: entry
+    symbol: GET|HEAD /untyped/bound/{user}
+  - role: source
+    symbol: $user
+  - role: source
+    symbol: $req->sort
+  - role: sink
+    symbol: DB::table('orders')->orderByRaw($req->sort)
+- rule: laravel.raw-query
+  file: app/Http/Controllers/UntypedController.php
+  line: 18
+  severity: critical
+  path:
+  - role: entry
+    symbol: GET|HEAD /untyped/ambiguous/{user}
+  - role: source
+    symbol: $user
+  - role: source
+    symbol: $ponytail->sort
+  - role: sink
+    symbol: DB::table('orders')->orderByRaw($ponytail->sort)
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
