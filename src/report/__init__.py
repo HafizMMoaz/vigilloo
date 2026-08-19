@@ -6,6 +6,15 @@ themselves would eventually disagree about what a scan found, and the one a
 developer reads is not the one CI gates on.
 """
 
+from .document import ReportDocument, ReportMetadata, build_document
+from .json_report import render_json
 from .terminal import render, render_coverage
 
-__all__ = ["render", "render_coverage"]
+__all__ = [
+    "ReportDocument",
+    "ReportMetadata",
+    "build_document",
+    "render",
+    "render_coverage",
+    "render_json",
+]
