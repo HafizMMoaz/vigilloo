@@ -19,6 +19,27 @@ _SEVERITY_MARK = {
 }
 
 
+def _longest_backtick_run(text: str) -> int:
+    """The length of the longest run of consecutive backticks in `text`.
+
+    Sizes a CommonMark delimiter so untrusted content cannot close it early:
+    both `_fence` (a block delimiter) and `_inline_code` (a span delimiter)
+    depend on it, each adding its own floor afterwards. One copy of this
+    count is deliberate, not just tidiness - it is security-relevant logic,
+    and a bug fixed in one copy but not a duplicate would silently leave the
+    other delimiter closable again while its own tests kept passing.
+    """
+    longest = 0
+    current = 0
+    for char in text:
+        if char == "`":
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
 def _fence(snippet: str) -> str:
     """A backtick fence the snippet cannot close early.
 
@@ -36,15 +57,7 @@ def _fence(snippet: str) -> str:
     content, so invariant 8 (byte-identical output for identical input) holds
     without extra care.
     """
-    longest = 0
-    current = 0
-    for char in snippet:
-        if char == "`":
-            current += 1
-            longest = max(longest, current)
-        else:
-            current = 0
-    return "`" * max(3, longest + 1)
+    return "`" * max(3, _longest_backtick_run(snippet) + 1)
 
 
 def _indented_lines(snippet: str, indent: str) -> list[str]:
@@ -82,15 +95,7 @@ def _inline_code(content: str) -> str:
     `content`, with a single backtick as the floor, which is what every
     existing report already renders and keeps rendering unchanged.
     """
-    longest = 0
-    current = 0
-    for char in content:
-        if char == "`":
-            current += 1
-            longest = max(longest, current)
-        else:
-            current = 0
-    delimiter = "`" * max(1, longest + 1)
+    delimiter = "`" * max(1, _longest_backtick_run(content) + 1)
     return f"{delimiter}{content}{delimiter}"
 
 
