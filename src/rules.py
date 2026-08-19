@@ -783,7 +783,7 @@ def scan_project(
         # We want highest confidence first (sort by -min_conf),
         # then shortest length (len(path)),
         # then deterministic tie-breaker (str(path)).
-        def path_sort_key(path):
+        def path_sort_key(path: list[PathStep]) -> tuple[float, int, str]:
             min_conf = min((getattr(step, "confidence", 1.0) for step in path), default=1.0)
             return (-min_conf, len(path), str(path))
             

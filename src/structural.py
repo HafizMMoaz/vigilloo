@@ -434,7 +434,7 @@ def _unsigned_route_paths(route: Route) -> list[PathStep] | None:
 
 
 def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
-    paths = []
+    paths: list[list[PathStep]] = []
     policy_fqns = set(project.policies.values())
     for fqn in project.classes:
         if fqn.endswith("Policy"):

@@ -239,8 +239,8 @@ def expr_kinds(
 
     if node.type in _MEMBER_CALLS:
         name = node_text(node.child_by_field_name("name"), source)
-        custom_entering = frozenset()
-        custom_cleared = frozenset()
+        custom_entering: frozenset[TaintKind] = frozenset()
+        custom_cleared: frozenset[TaintKind] = frozenset()
         
         obj = node.child_by_field_name("object")
         if obj is not None and local.project and local.local_types:
