@@ -670,28 +670,28 @@ def _validated_bypass_paths(project: Project) -> list[list[PathStep]]:
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
     paths = [
-        steps
+        route_steps
         for route in project.routes
-        if (steps := _missing_authorization(project, route)) is not None
+        if (route_steps := _missing_authorization(project, route)) is not None
     ]
     for route in project.routes:
-        if (steps := _unauthenticated_route_paths(route)) is not None:
-            paths.append(steps)
-        if (steps := _no_throttle_paths(route)) is not None:
-            paths.append(steps)
-        if (steps := _unsigned_route_paths(route)) is not None:
-            paths.append(steps)
-            
-    if (steps := _env_outside_config_paths(project)) is not None:
-        paths.extend(steps)
-    if (steps := _unsafe_upload_paths(project)) is not None:
-        paths.extend(steps)
-    if (steps := _debug_artifact_paths(project)) is not None:
-        paths.extend(steps)
-    if (steps := _weak_hash_paths(project)) is not None:
-        paths.extend(steps)
-    if (steps := _weak_randomness_paths(project)) is not None:
-        paths.extend(steps)
+        if (route_steps := _unauthenticated_route_paths(route)) is not None:
+            paths.append(route_steps)
+        if (route_steps := _no_throttle_paths(route)) is not None:
+            paths.append(route_steps)
+        if (route_steps := _unsigned_route_paths(route)) is not None:
+            paths.append(route_steps)
+
+    if (rule_paths := _env_outside_config_paths(project)) is not None:
+        paths.extend(rule_paths)
+    if (rule_paths := _unsafe_upload_paths(project)) is not None:
+        paths.extend(rule_paths)
+    if (rule_paths := _debug_artifact_paths(project)) is not None:
+        paths.extend(rule_paths)
+    if (rule_paths := _weak_hash_paths(project)) is not None:
+        paths.extend(rule_paths)
+    if (rule_paths := _weak_randomness_paths(project)) is not None:
+        paths.extend(rule_paths)
         
     for except_path in _csrf_except_paths(project):
         paths.append(except_path)
