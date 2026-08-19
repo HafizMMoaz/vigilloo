@@ -50,6 +50,31 @@ diff. The plan that closes this is
   PHP framework, reusing the entire v0.1 pipeline. Doubles as the proof that
   `FrameworkAdapter` is genuinely framework-neutral rather than Laravel-shaped.
 
+## v0.7 - Supply Chain
+
+Nothing untrusted lands on a developer's machine without Vigilloo saying so. Fully specified in
+[27-supply-chain](../27-supply-chain/README.md).
+
+- **Tier 1 lockfile differ** across every major ecosystem: Composer, npm/pnpm/yarn, PyPI, Cargo,
+  Go modules, RubyGems, Maven/Gradle, NuGet. Detects; cannot block.
+- **Tier 2 pre-install hooks**, per ecosystem and opt-in: a Composer plugin and an npm wrapper
+  enforcing `ignore-scripts`. The only tier that stops code before it executes.
+- **Verdict engine** over a vendored OSV advisory database, the existing PHP taint engine turned
+  on package source, deterministic typosquat and lifecycle-script heuristics, and an optional
+  reputation signal.
+- **IDE extension vetting** for VS Code and Open VSX, honestly scoped as advisories plus
+  heuristics rather than deep analysis until v1.5 brings a JavaScript engine.
+- `PACKAGE` and `EXTENSION` graph nodes, which v1.0 reachability builds on.
+
+**Vigilloo ships no privileged component here or ever.** Host-level install visibility, where an
+organisation needs it, comes from Santa or osquery which the customer owns.
+
+**Ecosystem breadth here does not contradict depth-before-breadth.** That rule governs the
+analysis engine, where a framework adapter costs the whole
+[08-framework-adapters](../08-framework-adapters/README.md) surface. Supply chain operates on
+package identity, so its per-ecosystem cost is a lockfile parser and an OSV identifier. SAST
+stays Laravel-deep.
+
 ## v1.0 - Integration and SCA
 
 The version where Vigilloo becomes part of a team's workflow and tracks external dependencies.
@@ -58,7 +83,10 @@ The version where Vigilloo becomes part of a team's workflow and tracks external
 - SARIF 2.1.0 + GitHub code scanning
 - GitHub App / Action, GitLab CI, generic CI recipes; PR review comments
 - Pre-commit hooks
-- **Deep Software Composition Analysis (SCA)**: Uses the Vigilloo call graph to verify *reachability* of vulnerable open-source packages (e.g. from NVD/OSV), dropping false positives.
+- **Deep Software Composition Analysis (SCA)**: uses the call graph to verify *reachability* of
+  the vulnerable packages v0.7 identifies, dropping the findings whose vulnerable code no route
+  can reach. v0.7 answers "is this package known-bad"; v1.0 answers "is the bad part reachable
+  from a route in this application". Same advisory database, one deepening the other.
 - **Second language: Python** (Django, FastAPI, Flask)
 - More PHP frameworks: Symfony, CodeIgniter
 - Plugin SDK published, documented, versioned
@@ -103,9 +131,17 @@ The version where Vigilloo becomes part of a team's workflow and tracks external
 
 ## Sequencing rules
 
-**Depth before breadth.** Laravel done properly beats twelve frameworks done shallowly. Language
-two ships only after language one meets its precision targets - a second language built on an
-unproven pipeline just doubles the debt.
+**Depth before breadth, in the analysis engine.** Laravel done properly beats twelve frameworks
+done shallowly. Language two ships only after language one meets its precision targets - a second
+language built on an unproven pipeline just doubles the debt. This rule is scoped to analysis,
+where breadth costs a framework adapter per framework. It does not govern v0.7 supply chain,
+where breadth costs a lockfile parser per ecosystem and buys real coverage immediately; see
+[27-supply-chain](../27-supply-chain/README.md).
+
+**No privileged component, at any version.** Vigilloo never ships a daemon, root helper, kernel
+extension or system extension. Host-level visibility, where it is needed, is read from Santa or
+osquery which the customer installs and owns. A privilege-escalation surface inside a security
+tool is not a tradeoff to be revisited later.
 
 **Deterministic before AI.** v0.1 has no AI dependency at all. This ordering is deliberate: it
 forces the deterministic engine to be genuinely good, rather than letting an LLM paper over its
