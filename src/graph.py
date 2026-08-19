@@ -8,6 +8,7 @@ identity from the same Project would be a second place for the two to drift apar
 
 import hashlib
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,7 @@ from tree_sitter import Node
 
 from .ids import node_id
 from .laravel.blade import to_php
+from .config import VigillooConfig
 from .laravel.config import ProjectConfig, extract_project_config
 from .laravel.detect import Autoload, read_autoload
 from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
@@ -26,6 +28,7 @@ from .models import (
     ParseFailure,
     Route,
     Span,
+    Suppression,
     Symbol,
     WalkStats,
 )
@@ -35,11 +38,13 @@ if TYPE_CHECKING:
 from .parser import (
     ParsedFile,
     error_constructs,
+    extract_suppressions,
     find_all,
     node_span,
     node_text,
     parse_php,
     parse_source,
+    walk,
 )
 from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
 from .workspace import Workspace
@@ -82,6 +87,40 @@ class Project:
     summaries: dict[str, "FunctionSummary"] = field(default_factory=dict)
     schema: dict[str, set[str]] = field(default_factory=dict)
     config: ProjectConfig = field(default_factory=ProjectConfig)
+    vigilloo_config: VigillooConfig = field(default_factory=VigillooConfig)
+    suppressions: list[Suppression] = field(default_factory=list)
+
+    @cached_property
+    def custom_sources(self) -> dict[tuple[str, str], "frozenset[TaintKind]"]:
+        from .models import TaintKind
+        res: dict[tuple[str, str], frozenset[TaintKind]] = {}
+        for src in self.vigilloo_config.taint.sources:
+            fqn = src.get("fqn")
+            if not fqn: continue
+            fqn = fqn.lstrip("\\")
+            if "::" in fqn:
+                cls_fqn, method = fqn.split("::", 1)
+                key = (cls_fqn, method)
+            else:
+                key = (fqn, "")
+            res[key] = frozenset(TaintKind(k) for k in src.get("kinds", []))
+        return res
+
+    @cached_property
+    def custom_sanitizers(self) -> dict[tuple[str, str], "frozenset[TaintKind]"]:
+        from .models import TaintKind
+        res: dict[tuple[str, str], frozenset[TaintKind]] = {}
+        for san in self.vigilloo_config.taint.sanitizers:
+            fqn = san.get("fqn")
+            if not fqn: continue
+            fqn = fqn.lstrip("\\")
+            if "::" in fqn:
+                cls_fqn, method = fqn.split("::", 1)
+                key = (cls_fqn, method)
+            else:
+                key = (fqn, "")
+            res[key] = frozenset(TaintKind(k) for k in san.get("clears", []))
+        return res
 
     def method(self, fqn: str) -> Symbol | None:
         """The method a call to `fqn` actually executes, or None if none does.
@@ -305,9 +344,10 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     from .laravel.container import extract_bindings
     from .laravel.entrypoints import find_entrypoints
 
-    autoload = read_autoload(Workspace.at(root))
+    workspace = Workspace.at(root)
+    autoload = read_autoload(workspace)
     autoload_roots = autoload.prefixes
-    project = Project(root=root, autoload=autoload)
+    project = Project(root=root, autoload=autoload, vigilloo_config=workspace.config)
 
     for path in _php_files(root):
         try:
@@ -336,6 +376,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             project.parse_failures.extend(error_constructs(parsed))
 
         project.files[rel_path] = parsed
+        project.suppressions.extend(extract_suppressions(parsed))
         syms = extract_symbols(parsed, autoload_roots)
         project.symbols[rel_path] = syms
         project.classes.update(syms.classes)
@@ -390,6 +431,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             project.parse_failures.extend(error_constructs(parsed))
 
         project.blade[rel_path] = parsed
+        project.suppressions.extend(extract_suppressions(parsed))
         project.blade_lines[rel_path] = text.splitlines()
 
     project.routes.sort(key=lambda r: (str(r.span.file), r.span.start_line))

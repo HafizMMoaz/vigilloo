@@ -1,0 +1,58 @@
+findings:
+  - rule: laravel.unsafe-upload
+    file: app/Http/Controllers/TestController.php
+    line: 5
+  - rule: laravel.debug-artifact
+    file: app/Http/Controllers/TestController.php
+    line: 8
+  - rule: laravel.debug-artifact
+    file: app/Http/Controllers/TestController.php
+    line: 9
+  - rule: laravel.debug-artifact
+    file: app/Http/Controllers/TestController.php
+    line: 10
+  - rule: laravel.debug-artifact
+    file: app/Http/Controllers/TestController.php
+    line: 11
+  - rule: laravel.weak-hash
+    file: app/Http/Controllers/TestController.php
+    line: 13
+  - rule: laravel.weak-hash
+    file: app/Http/Controllers/TestController.php
+    line: 14
+  - rule: laravel.weak-hash
+    file: app/Http/Controllers/TestController.php
+    line: 23
+  - rule: laravel.weak-randomness
+    file: app/Http/Controllers/TestController.php
+    line: 17
+  - rule: laravel.weak-randomness
+    file: app/Http/Controllers/TestController.php
+    line: 18
+  - rule: laravel.weak-randomness
+    file: app/Http/Controllers/TestController.php
+    line: 19
+  - rule: laravel.weak-randomness
+    file: app/Http/Controllers/TestController.php
+    line: 24
+must_not_find:
+  - rule: laravel.weak-hash
+    file: app/Http/Controllers/TestController.php
+    line: 15
+    reason: md5 for non-password checksum
+  - rule: laravel.weak-randomness
+    file: app/Http/Controllers/TestController.php
+    line: 20
+    reason: rand for non-token
+  - rule: laravel.weak-randomness
+    file: app/Http/Controllers/TestController.php
+    line: 25
+    reason: rand for age
+  - rule: laravel.debug-artifact
+    file: tests/ExampleTest.php
+    line: 4
+    reason: debug allowed in tests
+  - rule: laravel.debug-artifact
+    file: tests/ExampleTest.php
+    line: 5
+    reason: debug allowed in tests

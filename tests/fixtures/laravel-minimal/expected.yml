@@ -790,6 +790,18 @@ findings:
     symbol: $ponytail->sort
   - role: sink
     symbol: DB::table('orders')->orderByRaw($ponytail->sort)
+- rule: vigilloo.bare-ignore
+  file: app/Http/Controllers/SuppressionController.php
+  line: 18
+  severity: medium
+- rule: laravel.raw-query
+  file: app/Http/Controllers/SuppressionController.php
+  line: 19
+  severity: critical
+- rule: laravel.raw-query
+  file: app/Http/Controllers/SuppressionController.php
+  line: 25
+  severity: critical
 must_not_find:
 - rule: laravel.mass-assignment
   file: app/Http/Controllers/UserController.php
@@ -964,4 +976,12 @@ must_not_find:
   file: routes/api.php
   line: 146
   reason: route is protected by signed middleware
-
+- rule: laravel.raw-query
+  file: app/Http/Controllers/SuppressionController.php
+  line: 13
+- rule: laravel.unauthenticated-route
+  file: routes/api.php
+  line: 156
+- rule: laravel.xss
+  file: resources/views/suppression.blade.php
+  line: 3

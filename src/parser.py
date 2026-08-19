@@ -4,6 +4,7 @@ Knows nothing about Laravel or about security. Framework meaning is added in
 vigilloo.laravel, security meaning in vigilloo.rules.
 """
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import cache
@@ -12,7 +13,7 @@ from pathlib import Path
 import tree_sitter_php
 from tree_sitter import Language, Node, Parser, Tree
 
-from .models import ParseFailure, Span
+from .models import ParseFailure, Span, Suppression
 
 
 @cache
@@ -191,3 +192,53 @@ def error_constructs(parsed: ParsedFile) -> tuple[ParseFailure, ...]:
         for node in _error_nodes(parsed.tree.root_node)
     }
     return tuple(sorted(failures))
+
+
+def extract_suppressions(parsed: ParsedFile) -> list[Suppression]:
+    """Extract inline suppressions from a parsed file.
+    
+    Matches `// vigilloo-ignore rule-id -- justification`.
+    If the justification or rule ID is missing, `is_invalid` is True.
+    """
+    suppressions = []
+    
+    # regex matches:
+    # 1. optional whitespace
+    # 2. rule id (optional group 1)
+    # 3. optional whitespace + '--' + optional whitespace + justification (optional group 2)
+    # The prefix `// vigilloo-ignore` or `/* vigilloo-ignore` is handled via a broader match first.
+    ignore_pattern = re.compile(r"vigilloo-ignore\s*([a-z0-9.-]+)?(?:\s*--\s*(.+))?")
+
+    for node in find_all(parsed.tree.root_node, "comment"):
+        text = node_text(node, parsed.source).strip()
+        
+        # Strip //, /*, #, */
+        if text.startswith("//") or text.startswith("/*") or text.startswith("#"):
+            text = text.lstrip("/*# \t").rstrip("*/ \t")
+            
+        if "vigilloo-ignore" in text:
+            match = ignore_pattern.search(text)
+            if not match:
+                continue
+                
+            rule_id = match.group(1)
+            justification = match.group(2)
+            
+            is_invalid = False
+            if not rule_id or not justification or not justification.strip():
+                is_invalid = True
+                
+            # Node start row is 0-indexed, so start_point[0] + 1 is the 1-indexed line number.
+            line = node.start_point[0] + 1
+            
+            suppressions.append(
+                Suppression(
+                    file=parsed.path,
+                    line=line,
+                    rule_id=rule_id or "",
+                    justification=(justification or "").strip(),
+                    is_invalid=is_invalid,
+                )
+            )
+            
+    return suppressions

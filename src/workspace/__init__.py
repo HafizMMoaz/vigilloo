@@ -6,8 +6,10 @@ docs/23-dev-guide section Security makes that question load-bearing: a crafted
 `composer.json` autoload map must not make Vigilloo read outside the project root.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from ..config import VigillooConfig
 
 # The store, the caches and the run manifest live here (docs/17-database). It belongs in
 # .gitignore, unlike vigilloo.yml and the baseline, which are committed.
@@ -20,6 +22,7 @@ class Workspace:
 
     root: Path
     dir: Path
+    config: VigillooConfig = field(default_factory=VigillooConfig)
 
     @classmethod
     def at(cls, root: Path) -> "Workspace":
@@ -35,7 +38,8 @@ class Workspace:
         # defaults, docs/19-cli section Configuration) lands in src/workspace/config.py
         # and becomes another frozen field here.
         resolved = root.resolve()
-        return cls(root=resolved, dir=resolved / DIR_NAME)
+        config = VigillooConfig.load(resolved)
+        return cls(root=resolved, dir=resolved / DIR_NAME, config=config)
 
     @classmethod
     def open(cls, root: Path) -> "Workspace":

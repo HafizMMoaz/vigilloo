@@ -45,7 +45,7 @@ Route::get('/show', [PageController::class, 'show']);
     project = load_project(tmp_path)
     findings = scan_project(project)
 
-    xss_findings = [f for f in findings if f.rule_id == "php.xss"]
+    xss_findings = [f for f in findings if f.rule_id == "laravel.blade-raw-echo"]
     assert len(xss_findings) == 1
     path = xss_findings[0].evidence_path
     assert path[0].role == "entry"
@@ -102,7 +102,7 @@ Route::get('/article', [ArticleController::class, 'show']);
     project = load_project(tmp_path)
     findings = scan_project(project)
 
-    xss_findings = [f for f in findings if f.rule_id == "php.xss"]
+    xss_findings = [f for f in findings if f.rule_id == "laravel.blade-raw-echo"]
     assert len(xss_findings) == 1
     assert "{!! $title !!}" in xss_findings[0].evidence_path[-1].snippet
 
@@ -147,7 +147,7 @@ Route::get('/alert', [AlertController::class, 'show']);
     project = load_project(tmp_path)
     findings = scan_project(project)
 
-    xss_findings = [f for f in findings if f.rule_id == "php.xss"]
+    xss_findings = [f for f in findings if f.rule_id == "laravel.blade-raw-echo"]
     assert len(xss_findings) == 1
     assert "{!! $message !!}" in xss_findings[0].evidence_path[-1].snippet
 
@@ -192,5 +192,5 @@ Route::get('/safe', [SafeController::class, 'show']);
     project = load_project(tmp_path)
     findings = scan_project(project)
 
-    xss_findings = [f for f in findings if f.rule_id == "php.xss"]
+    xss_findings = [f for f in findings if f.rule_id == "laravel.blade-raw-echo"]
     assert len(xss_findings) == 0

@@ -20,6 +20,10 @@ from .laravel.vocabulary import (
     LARAVEL_APP_KEY_RULE,
     LARAVEL_TRUSTED_PROXIES_RULE,
     LARAVEL_SESSION_COOKIE_RULE,
+    LARAVEL_UNSAFE_UPLOAD_RULE,
+    LARAVEL_DEBUG_ARTIFACT_RULE,
+    LARAVEL_WEAK_HASH_RULE,
+    LARAVEL_WEAK_RANDOMNESS_RULE,
     LARAVEL_RAW_QUERY_RULE,
     LARAVEL_UNAUTHENTICATED_ROUTE_RULE,
     LARAVEL_NO_THROTTLE_RULE,
@@ -36,7 +40,7 @@ from .laravel.vocabulary import (
     XPATH_INJECTION_RULE,
     XSS_RULE,
 )
-from .models import Finding, WalkStats
+from .models import Finding, Span, PathStep, WalkStats
 from .structural import find_structural_paths
 from .taint import find_taint_paths
 
@@ -426,8 +430,8 @@ LARAVEL_ENV_OUTSIDE_CONFIG = Rule(
     title="env() Outside Config",
     severity="medium",
     confidence=1.0,
-    cwe=(),
-    owasp=(),
+    cwe=("CWE-1188",),
+    owasp=("A05:2021",),
     kind="STRUCTURAL",
     languages=("php",),
     frameworks=("laravel",),
@@ -461,8 +465,8 @@ LARAVEL_DEBUG_ENABLED = Rule(
     title="Laravel Debug Mode Enabled in Production",
     severity="critical",
     confidence=1.0,
-    cwe=(),
-    owasp=(),
+    cwe=("CWE-489",),
+    owasp=("A05:2021",),
     kind="STRUCTURAL",
     languages=("php",),
     frameworks=("laravel",),
@@ -478,8 +482,8 @@ LARAVEL_APP_KEY = Rule(
     title="Laravel APP_KEY Missing or Insecure",
     severity="critical",
     confidence=1.0,
-    cwe=(),
-    owasp=(),
+    cwe=("CWE-321",),
+    owasp=("A02:2021",),
     kind="STRUCTURAL",
     languages=("php",),
     frameworks=("laravel",),
@@ -524,6 +528,88 @@ LARAVEL_SESSION_COOKIE = Rule(
 )
 
 
+LARAVEL_UNSAFE_UPLOAD = Rule(
+    id=LARAVEL_UNSAFE_UPLOAD_RULE,
+    title="Unsafe File Upload",
+    severity="high",
+    confidence=1.0,
+    cwe=("CWE-434",),
+    owasp=("A04:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Using getClientOriginalName() for file uploads is unsafe because the filename is user-controlled. "
+        "It can lead to directory traversal, overwriting existing files, or XSS. "
+        "Use a generated filename like the default store() behavior, or hashName()."
+    ),
+)
+
+
+LARAVEL_DEBUG_ARTIFACT = Rule(
+    id=LARAVEL_DEBUG_ARTIFACT_RULE,
+    title="Debug Artifact in Production Code",
+    severity="low",
+    confidence=1.0,
+    cwe=("CWE-489",),
+    owasp=("A05:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "Debug functions like dd(), dump(), ray(), and var_dump() should not be present in non-test code. "
+        "They can expose sensitive internal state or disrupt application flow."
+    ),
+)
+
+
+LARAVEL_WEAK_HASH = Rule(
+    id=LARAVEL_WEAK_HASH_RULE,
+    title="Weak Password Hashing",
+    severity="high",
+    confidence=1.0,
+    cwe=("CWE-328",),
+    owasp=("A02:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "md5() and sha1() are cryptographically weak and vulnerable to collision attacks. "
+        "For passwords, use Hash::make() which uses strong algorithms like bcrypt or argon2 by default."
+    ),
+)
+
+
+LARAVEL_WEAK_RANDOMNESS = Rule(
+    id=LARAVEL_WEAK_RANDOMNESS_RULE,
+    title="Weak Randomness for Tokens",
+    severity="high",
+    confidence=1.0,
+    cwe=("CWE-338",),
+    owasp=("A02:2021",),
+    kind="STRUCTURAL",
+    languages=("php",),
+    frameworks=("laravel",),
+    remediation=(
+        "rand() and mt_rand() use predictable PRNGs. When generating tokens, salts, or passwords, "
+        "use a cryptographically secure pseudo-random number generator (CSPRNG) like random_bytes() or Str::random()."
+    ),
+)
+
+
+VIGILLOO_BARE_IGNORE = Rule(
+    id="vigilloo.bare-ignore",
+    title="Bare or invalid suppression comment",
+    severity="medium",
+    confidence=1.0,
+    cwe=("CWE-1173",),
+    owasp=("A06:2021-Vulnerable and Outdated Components",),
+    kind="STRUCTURAL",
+    languages=("php", "blade"),
+    frameworks=("laravel", "generic"),
+    remediation="Provide a valid rule ID and a justification, e.g., // vigilloo-ignore php.sql-injection -- this parameter is an enum",
+)
+
 _BY_ID: dict[str, Rule] = {
     rule.id: rule
     for rule in (
@@ -554,6 +640,11 @@ _BY_ID: dict[str, Rule] = {
         LARAVEL_APP_KEY,
         LARAVEL_TRUSTED_PROXIES,
         LARAVEL_SESSION_COOKIE,
+        LARAVEL_UNSAFE_UPLOAD,
+        LARAVEL_DEBUG_ARTIFACT,
+        LARAVEL_WEAK_HASH,
+        LARAVEL_WEAK_RANDOMNESS,
+        VIGILLOO_BARE_IGNORE,
     )
 }
 
@@ -610,8 +701,33 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
         "critical": "critical",
     }
 
+    # Build a fast lookup for valid suppressions
+    # (file, rule_id, target_line) -> suppression
+    valid_suppressions = {}
+    for s in project.suppressions:
+        if s.is_invalid:
+            continue
+        # A suppression on line N suppresses a finding on line N+1
+        valid_suppressions[(s.file, s.rule_id, s.line + 1)] = s
+
     findings = []
-    for (rule_id, _), group_paths in paths_by_sink.items():
+    
+    # Emit bare/invalid ignores as findings
+    for s in project.suppressions:
+        if s.is_invalid:
+            findings.append(
+                Finding(
+                    rule_id=VIGILLOO_BARE_IGNORE.id,
+                    severity=VIGILLOO_BARE_IGNORE.severity,
+                    title=VIGILLOO_BARE_IGNORE.title,
+                    cwe=VIGILLOO_BARE_IGNORE.cwe,
+                    span=Span(s.file, s.line, 1, s.line, 1),
+                    evidence_path=(PathStep("entry", Span(s.file, s.line, 1, s.line, 1), "// vigilloo-ignore...", rule_id=VIGILLOO_BARE_IGNORE.id),),
+                    remediation=VIGILLOO_BARE_IGNORE.remediation,
+                )
+            )
+
+    for (rule_id, sink_span), group_paths in paths_by_sink.items():
         rule = _BY_ID.get(rule_id)
         if rule is None:
             continue
@@ -662,6 +778,9 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
         ):
             path_severity = _SEVERITY_DOWN.get(path_severity, path_severity)
             needs_review = True
+
+        if (primary_path[-1].span.file, rule.id, primary_path[-1].span.start_line) in valid_suppressions:
+            continue
 
         findings.append(
             Finding(

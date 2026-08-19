@@ -148,3 +148,9 @@ Route::post('/unauth/signed', [App\Http\Controllers\UserController::class, 'sign
 Route::get('/untyped/sort', [App\Http\Controllers\UntypedController::class, 'sort']);
 Route::get('/untyped/bound/{user}', [App\Http\Controllers\UntypedController::class, 'bound']);
 Route::get('/untyped/ambiguous/{user}', [App\Http\Controllers\UntypedController::class, 'ambiguous']);
+
+Route::post('/suppress/valid', [App\Http\Controllers\SuppressionController::class, 'validSuppression'])->middleware('auth');
+Route::post('/suppress/bare', [App\Http\Controllers\SuppressionController::class, 'bareSuppression'])->middleware('auth');
+Route::post('/suppress/wrong', [App\Http\Controllers\SuppressionController::class, 'wrongRuleSuppression'])->middleware('auth');
+// vigilloo-ignore laravel.unauthenticated-route -- public
+Route::post('/suppress/structural/{user}', [App\Http\Controllers\SuppressionController::class, 'structuralSuppression']);

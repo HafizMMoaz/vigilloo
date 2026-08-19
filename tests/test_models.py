@@ -11,7 +11,7 @@ def test_finding_requires_evidence_path() -> None:
     """A finding without a path is a bug, not a finding."""
     try:
         Finding(
-            rule_id="php.sql-injection",
+            rule_id="laravel.raw-query",
             severity="critical",
             title="SQL Injection",
             cwe=("CWE-89",),
@@ -34,8 +34,8 @@ def test_fingerprint_is_stable_across_line_moves() -> None:
         PathStep("source", _span(30), "$r->input('s')", ""),
         PathStep("sink", _span(62), "orderByRaw", ""),
     )
-    a = Finding("php.sql-injection", "critical", "t", ("CWE-89",), _span(42), steps_a)
-    b = Finding("php.sql-injection", "critical", "t", ("CWE-89",), _span(62), steps_b)
+    a = Finding("laravel.raw-query", "critical", "t", ("CWE-89",), _span(42), steps_a)
+    b = Finding("laravel.raw-query", "critical", "t", ("CWE-89",), _span(62), steps_b)
     assert a.fingerprint == b.fingerprint
     assert a.id != b.id
 
@@ -46,9 +46,9 @@ def test_fingerprint_distinguishes_findings_in_different_files() -> None:
         PathStep("source", _span(10), "$r->input('s')", ""),
         PathStep("sink", _span(42), "orderByRaw", ""),
     )
-    a = Finding("php.sql-injection", "critical", "t", ("CWE-89",), _span(42), steps)
+    a = Finding("laravel.raw-query", "critical", "t", ("CWE-89",), _span(42), steps)
     b = Finding(
-        "php.sql-injection", "critical", "t", ("CWE-89",), Span(Path("b.php"), 42, 0, 42, 10), steps
+        "laravel.raw-query", "critical", "t", ("CWE-89",), Span(Path("b.php"), 42, 0, 42, 10), steps
     )
     assert a.fingerprint != b.fingerprint
 
@@ -87,7 +87,7 @@ def test_id_distinguishes_evidence_steps_with_different_snippets() -> None:
     """Two sinks on one line are two findings, and the id must say so."""
     source = PathStep("source", _span(10), "$r->input('s')", "")
     a = Finding(
-        "php.sql-injection",
+        "laravel.raw-query",
         "critical",
         "t",
         ("CWE-89",),
@@ -95,7 +95,7 @@ def test_id_distinguishes_evidence_steps_with_different_snippets() -> None:
         (source, PathStep("sink", _span(42), "DB::raw($s)", "")),
     )
     b = Finding(
-        "php.sql-injection",
+        "laravel.raw-query",
         "critical",
         "t",
         ("CWE-89",),

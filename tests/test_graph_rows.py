@@ -354,10 +354,10 @@ def test_the_graph_write_joins_the_scan_transaction(tmp_path: Path) -> None:
 def _finding_touching(rel: Path) -> Finding:
     span = Span(rel, 3, 0, 3, 5)
     return Finding(
-        rule_id="php.sql-injection",
+        rule_id="laravel.raw-query",
         severity="high",
         title="t",
         cwe=("CWE-89",),
         span=span,
-        evidence_path=(PathStep("sink", span, "x", "", "php.sql-injection"),),
+        evidence_path=(PathStep("sink", span, "x", "", "laravel.raw-query"),),
     )

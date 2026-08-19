@@ -38,10 +38,10 @@ def _project(
 def _finding() -> Finding:
     steps = (
         PathStep("source", _span(5), "$request->input('q')", ""),
-        PathStep("sink", _span(12), "DB::raw($q)", "", "php.sql-injection"),
+        PathStep("sink", _span(12), "DB::raw($q)", "", "laravel.raw-query"),
     )
     return Finding(
-        rule_id="php.sql-injection",
+        rule_id="laravel.raw-query",
         severity="critical",
         title="SQL Injection",
         cwe=("CWE-89",),

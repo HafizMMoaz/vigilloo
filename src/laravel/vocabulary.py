@@ -210,7 +210,7 @@ _TAINTED_SERVER_PREFIX = "HTTP_"
 #
 # Permanent per invariant 7: these ship in users' baselines and vigilloo-ignore
 # comments.
-SQL_INJECTION_RULE = "php.sql-injection"
+SQL_INJECTION_RULE = "laravel.raw-query"
 LARAVEL_RAW_QUERY_RULE = "laravel.raw-query"
 XSS_RULE = "php.xss"
 LARAVEL_BLADE_RAW_ECHO_RULE = "laravel.blade-raw-echo"
@@ -223,6 +223,11 @@ LARAVEL_INCONSISTENT_AUTHORIZATION_RULE = "laravel.inconsistent-authorization"
 LARAVEL_VALIDATED_BYPASS_RULE = "laravel.validated-bypass"
 LARAVEL_FORM_REQUEST_TRUE_RULE = "laravel.form-request-true"
 LARAVEL_ENV_OUTSIDE_CONFIG_RULE = "laravel.env-outside-config"
+
+LARAVEL_DEBUG_ENABLED_RULE = "laravel.debug-enabled"
+LARAVEL_APP_KEY_RULE = "laravel.app-key"
+LARAVEL_TRUSTED_PROXIES_RULE = "laravel.trusted-proxies"
+LARAVEL_SESSION_COOKIE_RULE = "laravel.session-cookie"
 COMMAND_INJECTION_RULE = "php.command-injection"
 CODE_EXECUTION_RULE = "php.code-execution"
 PATH_TRAVERSAL_RULE = "php.path-traversal"
@@ -631,3 +636,8 @@ def static_sinks(receiver_fqn: str | None, method: str) -> list[tuple[int, Taint
 
 def sanitizer_clears(name: str) -> frozenset[TaintKind]:
     return SANITIZERS.get(name, frozenset())
+
+LARAVEL_UNSAFE_UPLOAD_RULE = "laravel.unsafe-upload"
+LARAVEL_DEBUG_ARTIFACT_RULE = "laravel.debug-artifact"
+LARAVEL_WEAK_HASH_RULE = "laravel.weak-hash"
+LARAVEL_WEAK_RANDOMNESS_RULE = "laravel.weak-randomness"

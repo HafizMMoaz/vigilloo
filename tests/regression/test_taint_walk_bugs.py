@@ -108,7 +108,7 @@ def test_an_eloquent_result_is_not_reported_as_request_data(tmp_path: Path) -> N
     `is_source()` matched on method name alone, and get/all/query/only/except/json/url are
     Eloquent and Collection methods as much as they are Request methods. Before the fix this
     controller - a query result rendered by a template, the single most common shape in
-    Laravel - produced one `php.xss` finding whose source step read
+    Laravel - produced one `laravel.blade-raw-echo` finding whose source step read
     `$orders = Order::where('status', 'paid')->get()` annotated "attacker-controlled request
     data". The path was real in the sense that every edge existed and false in the sense that
     the first step was a lie, which is the worse kind of false positive: it survives review
@@ -148,7 +148,7 @@ def test_a_genuine_request_receiver_is_still_reported(tmp_path: Path) -> None:
     """The other half of 42c9b2e: the fix must not have bought its precision with silence.
 
     Identical to the test above except that `->get()` is called on a real `Request`
-    parameter. One `php.xss` finding, or the receiver check has gone from "is this actually a
+    parameter. One `laravel.blade-raw-echo` finding, or the receiver check has gone from "is this actually a
     Request" to "never mind, no sources here". A regression test for a false positive is only
     half a test without the case that proves the true positive survived - the cheapest way to
     fix a noisy rule is to turn it off, and nothing else in this file would notice.
@@ -177,7 +177,7 @@ def test_a_genuine_request_receiver_is_still_reported(tmp_path: Path) -> None:
 
     findings, _ = _scan(root)
 
-    assert [finding.rule_id for finding in findings] == ["php.xss"]
+    assert [finding.rule_id for finding in findings] == ["laravel.blade-raw-echo"]
 
 
 def test_tainted_data_into_a_blade_loop_is_reported_as_a_finding(
@@ -216,7 +216,7 @@ def test_tainted_data_into_a_blade_loop_is_reported_as_a_finding(
     findings, result = _scan(root)
 
     assert len(findings) == 1
-    assert findings[0].rule_id == "php.xss"
+    assert findings[0].rule_id == "laravel.blade-raw-echo"
     assert result.calls_unresolved == 0
 
 

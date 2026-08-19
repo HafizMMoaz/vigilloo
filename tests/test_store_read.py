@@ -169,12 +169,12 @@ def test_a_step_resolves_to_the_innermost_node_covering_it(tmp_path: Path) -> No
 
     span = Span(Path("app/Thing.php"), 5, 4, 5, 20)
     finding = Finding(
-        rule_id="php.sql-injection",
+        rule_id="laravel.raw-query",
         severity="critical",
         title="t",
         cwe=("CWE-89",),
         span=span,
-        evidence_path=(PathStep("sink", span, "DB::select(...)", "", "php.sql-injection"),),
+        evidence_path=(PathStep("sink", span, "DB::select(...)", "", "laravel.raw-query"),),
     )
     scan_id = record_scan(
         conn, project, [finding], engine_version="0.0.1", ruleset_hash="rs1", duration_ms=1
@@ -189,7 +189,7 @@ def test_a_finding_with_no_path_cannot_be_built_let_alone_stored() -> None:
     """Invariant 2 is enforced before the store ever sees it, which is the right place."""
     with pytest.raises(ValueError, match="empty evidence path"):
         Finding(
-            rule_id="php.sql-injection",
+            rule_id="laravel.raw-query",
             severity="critical",
             title="t",
             cwe=(),

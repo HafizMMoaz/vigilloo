@@ -83,18 +83,18 @@ Route::get('/safe-in', [UserController::class, 'safeIn']);
 
     # safeSql: whereRaw on line 11 with integer-validated $id does NOT fire SQL injection
     sql_findings_safe = [
-        f for f in findings if f.rule_id == "php.sql-injection" and f.span.start_line == 11
+        f for f in findings if f.rule_id == "laravel.raw-query" and f.span.start_line == 11
     ]
     assert len(sql_findings_safe) == 0
 
     # unsafeString: whereRaw on line 17 with string-validated $id DOES fire SQL injection
     sql_findings_unsafe = [
-        f for f in findings if f.rule_id == "php.sql-injection" and f.span.start_line == 17
+        f for f in findings if f.rule_id == "laravel.raw-query" and f.span.start_line == 17
     ]
     assert len(sql_findings_unsafe) == 1
 
     # safeIn: whereRaw on line 23 with in:admin,user validated $role does NOT fire SQL injection
     sql_findings_in = [
-        f for f in findings if f.rule_id == "php.sql-injection" and f.span.start_line == 23
+        f for f in findings if f.rule_id == "laravel.raw-query" and f.span.start_line == 23
     ]
     assert len(sql_findings_in) == 0

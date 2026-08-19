@@ -3,7 +3,7 @@
 import pytest
 
 from vigilloo.graph import load_project
-from vigilloo.laravel.vocabulary import COMMAND_INJECTION_RULE, XSS_RULE
+from vigilloo.laravel.vocabulary import COMMAND_INJECTION_RULE, LARAVEL_BLADE_RAW_ECHO_RULE
 from vigilloo.taint import find_taint_paths
 
 
@@ -140,6 +140,6 @@ def test_escapeshellarg_does_not_clear_html_taint(shell_project):
     html_paths = [
         p
         for p in paths
-        if "/escaped-does-not-clear-html" in p[0].snippet and p[-1].rule_id == XSS_RULE
+        if "/escaped-does-not-clear-html" in p[0].snippet and p[-1].rule_id == LARAVEL_BLADE_RAW_ECHO_RULE
     ]
     assert len(html_paths) == 1

@@ -1,6 +1,6 @@
 from vigilloo.laravel.vocabulary import (
     MAGIC_PROPERTY_KINDS,
-    SQL_INJECTION_RULE,
+    LARAVEL_RAW_QUERY_RULE,
     is_source,
     is_superglobal,
     sanitizer_clears,
@@ -36,11 +36,11 @@ def test_developer_chosen_keys_are_tainted_but_not_mass_assignable() -> None:
 
 def test_raw_sinks_declare_the_dangerous_argument_kind_and_rule() -> None:
     """whereRaw('age > ?', [$age]) is safe; only argument 0 is a sink."""
-    assert sinks("orderByRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
-    assert sinks("whereRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
-    assert sinks("orWhereRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
-    assert sinks("havingRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
-    assert sinks("selectRaw") == [(0, TaintKind.SQL, SQL_INJECTION_RULE)]
+    assert sinks("orderByRaw") == [(0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE)]
+    assert sinks("whereRaw") == [(0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE)]
+    assert sinks("orWhereRaw") == [(0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE)]
+    assert sinks("havingRaw") == [(0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE)]
+    assert sinks("selectRaw") == [(0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE)]
     assert sinks("orderBy") == []
     assert sinks("where") == []
 

@@ -11,7 +11,7 @@ def test_duck_typed_call_demotes_severity() -> None:
     assert findings, "Should find SQL injections"
 
     for f in findings:
-        assert f.rule_id == "php.sql-injection"
+        assert f.rule_id == "laravel.raw-query"
         # The duck typed edge should demote confidence < 0.5 and lower severity to "high"
         assert f.severity == "high", "Duck typed call should demote critical to high"
 

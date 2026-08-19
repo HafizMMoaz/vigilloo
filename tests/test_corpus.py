@@ -118,12 +118,12 @@ def test_a_missing_finding_fails(one_finding_project: Path) -> None:
     manifest = (
         _TRUE_MANIFEST
         + """
-  - rule: php.sql-injection
+  - rule: laravel.raw-query
     file: app/Repositories/Nowhere.php
     line: 3
 """
     )
-    with pytest.raises(AssertionError, match="missing finding: php.sql-injection"):
+    with pytest.raises(AssertionError, match="missing finding: laravel.raw-query"):
         _check(one_finding_project, manifest)
 
 

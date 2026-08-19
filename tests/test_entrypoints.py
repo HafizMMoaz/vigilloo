@@ -52,7 +52,7 @@ def test_job_entrypoint_severity_deduction(tmp_path: Path) -> None:
 
     # SQL_INJECTION is normally 'critical', but should be lowered to 'high'
     # because it's console-only
-    assert finding.rule_id == "php.sql-injection"
+    assert finding.rule_id == "laravel.raw-query"
     assert finding.severity == "high"
     assert finding.evidence_path[0].role == "entry"
     assert finding.evidence_path[0].note == "Job entry point"

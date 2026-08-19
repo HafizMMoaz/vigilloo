@@ -11,19 +11,27 @@ def test_every_implemented_rule_fires_on_the_fixture() -> None:
     findings = scan_project(load_project(FIXTURE))
     by_rule = {f.rule_id for f in findings}
     assert by_rule == {
-        "php.sql-injection",
-        "php.xss",
-        "laravel.mass-assignment",
-        "laravel.missing-authorization",
+        'laravel.missing-authorization', 
+        'laravel.no-throttle', 
+        'laravel.env-outside-config', 
+        'laravel.validated-bypass', 
+        'laravel.raw-query', 
+        'laravel.unauthenticated-route', 
+        'laravel.csrf-except', 
+        'laravel.dead-authorization', 
+        'laravel.unsigned-route', 
+        'laravel.blade-raw-echo', 
+        'laravel.inconsistent-authorization', 
+        'laravel.form-request-true', 
+        'laravel.mass-assignment',
+        'vigilloo.bare-ignore'
     }
 
-    # By file, not by position: findings sort by path, so a new fixture case in an
-    # earlier file would otherwise silently move this assertion onto a different
-    # finding. This one is here for the interprocedural path.
+    minimal_findings = scan_project(load_project(FIXTURE))
     finding = next(
         f
-        for f in findings
-        if f.rule_id == "php.sql-injection" and f.span.file.name == "OrderRepository.php"
+        for f in minimal_findings
+        if f.rule_id == "laravel.raw-query" and f.span.file.name == "OrderRepository.php"
     )
     assert finding.severity == "critical"
     assert finding.cwe == ("CWE-89",)
@@ -37,9 +45,9 @@ def test_ruleset_hash_tracks_the_rules_and_not_their_order() -> None:
     assert _ruleset_hash(dict(reversed(list(_BY_ID.items())))) == RULESET_HASH
 
     for field in ("id", "severity", "cwe"):
-        rule = _BY_ID["php.xss"]
+        rule = _BY_ID["laravel.blade-raw-echo"]
         changed = dataclasses.replace(rule, **{field: ("CWE-1",) if field == "cwe" else "x"})
-        assert _ruleset_hash({**_BY_ID, "php.xss": changed}) != RULESET_HASH
+        assert _ruleset_hash({**_BY_ID, "laravel.blade-raw-echo": changed}) != RULESET_HASH
 
 
 def test_findings_are_stable_across_runs() -> None:

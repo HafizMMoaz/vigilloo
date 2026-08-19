@@ -1,0 +1,7 @@
+findings:
+  - rule: laravel.debug-enabled
+    file: .env
+    line: 1
+  - rule: laravel.app-key
+    file: .env
+    line: 1

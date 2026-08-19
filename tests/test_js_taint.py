@@ -36,7 +36,7 @@ def test_js_taint_in_script_block(tmp_path: Path) -> None:
     paths = find_taint_paths(project)
 
     assert len(paths) == 1
-    assert paths[0][-1].rule_id == "php.xss"
+    assert paths[0][-1].rule_id == "laravel.blade-raw-echo"
     assert "vigilloo_js_sink" not in paths[0][-1].snippet
     assert "{{ $x }}" in paths[0][-1].snippet
 
@@ -53,7 +53,7 @@ def test_raw_echo_in_html_context(tmp_path: Path) -> None:
     project = load_project(_minimal_project(tmp_path, "<div>{!! $x !!}</div>"))
     paths = find_taint_paths(project)
     assert len(paths) == 1
-    assert paths[0][-1].rule_id == "php.xss"
+    assert paths[0][-1].rule_id == "laravel.blade-raw-echo"
 
 
 def test_js_from_prevents_xss(tmp_path: Path) -> None:
@@ -80,4 +80,4 @@ def test_json_encode_without_flag_is_vulnerable(tmp_path: Path) -> None:
     )
     paths = find_taint_paths(project)
     assert len(paths) == 1
-    assert paths[0][-1].rule_id == "php.xss"
+    assert paths[0][-1].rule_id == "laravel.blade-raw-echo"

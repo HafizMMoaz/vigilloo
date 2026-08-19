@@ -63,8 +63,8 @@ def test_finds_the_interprocedural_path_to_the_sink() -> None:
     entry, source, propagator, sink = sql
     assert "/orders/search" in entry.snippet
     assert "input" in source.snippet
-    assert source.span.start_line == 17
-    assert propagator.span.start_line == 19
+    assert source.span.start_line == 18
+    assert propagator.span.start_line == 20
     assert "orderByRaw" in sink.snippet
     assert sink.span.file.name == "OrderRepository.php"
     assert sink.span.start_line == 12
@@ -478,8 +478,8 @@ def test_inline_source_reaches_the_sink_without_a_variable(tmp_path: Path) -> No
 def test_only_the_matched_rule_is_named_on_the_sink_step() -> None:
     """rules.py dispatches on this string, not on the sink's file extension."""
     by_file = {p[-1].span.file.name: p[-1].rule_id for p in find_taint_paths(load_project(FIXTURE))}
-    assert by_file["OrderRepository.php"] == "php.sql-injection"
-    assert by_file["show.blade.php"] == "php.xss"
+    assert by_file["OrderRepository.php"] == "laravel.raw-query"
+    assert by_file["show.blade.php"] == "laravel.blade-raw-echo"
 
 
 def test_a_superglobal_reaches_the_sink(tmp_path: Path) -> None:
@@ -628,7 +628,7 @@ def test_a_magic_property_on_the_request_reaches_the_sink(tmp_path: Path) -> Non
     paths = find_taint_paths(load_project(project_root))
     assert len(paths) == 1
     assert paths[0][-1].role == "sink"
-    assert paths[0][-1].rule_id == "php.sql-injection"
+    assert paths[0][-1].rule_id == "laravel.raw-query"
 
 
 def test_a_property_on_any_other_object_is_not_a_source(tmp_path: Path) -> None:
