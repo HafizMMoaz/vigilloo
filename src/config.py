@@ -77,7 +77,9 @@ class VigillooConfig:
                 data = yaml.safe_load(f)
                 return data if isinstance(data, dict) else {}
         except Exception:
-            # Malformed file fails immediately with code 4
+            # Malformed file fails immediately with code 4. The diagnostic goes to stderr,
+            # never stdout: stdout carries the scan report and must stay machine-readable.
+            sys.stderr.write(f"Error: Malformed configuration file: {path}\n")
             sys.exit(4)
 
     @staticmethod
