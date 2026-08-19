@@ -46,7 +46,12 @@ jobs:
           set -euxo pipefail
           uv build --wheel -o dist
           cd "$(mktemp -d)"
-          uv venv v
+          # Pinned to the floor in pyproject.toml's requires-python, not to whatever uv
+          # resolves for the dev environment. Those differ, and the difference is not
+          # cosmetic: 3.14 made annotations lazy (PEP 649), so an annotation that is a
+          # TypeError when evaluated imports cleanly there and fails on 3.13. Testing only
+          # the newest interpreter means the declared floor is never actually run.
+          uv venv v --python 3.13
           VIRTUAL_ENV=v uv pip install "$GITHUB_WORKSPACE"/dist/*.whl
           ./v/bin/python -c 'import vigilloo, vigilloo.laravel.routes, vigilloo.workspace'
           ./v/bin/vigilloo --version
@@ -54,16 +59,27 @@ jobs:
           # it is given, and the fixture tree is tracked.
           cp -r "$GITHUB_WORKSPACE/tests/fixtures/laravel-minimal" fixture-copy
           # scan exits 1 when it finds something, which is the expected result here.
-          out=$(./v/bin/vigilloo scan fixture-copy) && rc=0 || rc=$?
-          echo "$out"
+          # Written to a file rather than piped into each grep. `grep -q` exits on its first
+          # match and closes the pipe, so a producing `echo` larger than the pipe buffer takes
+          # SIGPIPE and, under `pipefail`, fails the step for a reason that has nothing to do
+          # with the assertion. The scan output is already 38KB against Linux's 64KB buffer.
+          ./v/bin/vigilloo scan fixture-copy >scan-out.txt 2>&1 && rc=0 || rc=$?
+          cat scan-out.txt
           [ "$rc" -eq 1 ] || { echo "expected exit 1 from a fixture with findings, got $rc"; exit 1; }
           # Shape, not a count. This step exists to prove the wheel is a working install, and
           # a literal total makes every fixture change fail here for an unrelated reason - the
           # count belongs in tests/fixtures/laravel-minimal/expected.yml, which is exhaustive
           # in both directions and is what actually guards it.
-          echo "$out" | grep -qE '[0-9]+ findings \([0-9]+ critical, [0-9]+ high\)'
-          echo "$out" | grep -q 'php.sql-injection'
+          # The bucket list grows as rules of new severities ship, so the match ends at the
+          # first delimiter after "high" rather than assuming it closes the parenthesis. It
+          # still rejects a summary with no buckets at all, which is the failure that matters.
+          grep -qE '[0-9]+ findings \([0-9]+ critical, [0-9]+ high[,)]' scan-out.txt
+          # laravel.raw-query is the SQL injection rule. It was php.sql-injection until
+          # 529d72d renamed it, and this grep went on passing for weeks afterwards because
+          # the dead ID survived in the vigilloo.bare-ignore remediation prose, which the
+          # report prints. It was matching a docstring, not a finding.
+          grep -q 'laravel.raw-query' scan-out.txt
           # The Laravel subpackage is listed by hand in pyproject.toml, so a
           # rule that lives there is exactly what a missing entry would drop.
-          echo "$out" | grep -q 'laravel.mass-assignment'
-          echo "$out" | grep -q 'laravel.missing-authorization'
+          grep -q 'laravel.mass-assignment' scan-out.txt
+          grep -q 'laravel.missing-authorization' scan-out.txt

@@ -381,10 +381,7 @@ STATIC_SINKS: Mapping[
     tuple[str, str],
     tuple[int, TaintKind, str] | list[tuple[int, TaintKind, str]],
 ] = (
-    {
-        (facade, "raw"): (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE)
-        for facade in DB_FACADE_FQNS
-    }
+    {(facade, "raw"): (0, TaintKind.SQL, LARAVEL_RAW_QUERY_RULE) for facade in DB_FACADE_FQNS}
     | {
         (facade, method): (0, TaintKind.SQL, SQL_INJECTION_RULE)
         for facade in DB_FACADE_FQNS
@@ -636,6 +633,7 @@ def static_sinks(receiver_fqn: str | None, method: str) -> list[tuple[int, Taint
 
 def sanitizer_clears(name: str) -> frozenset[TaintKind]:
     return SANITIZERS.get(name, frozenset())
+
 
 LARAVEL_UNSAFE_UPLOAD_RULE = "laravel.unsafe-upload"
 LARAVEL_DEBUG_ARTIFACT_RULE = "laravel.debug-artifact"

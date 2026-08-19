@@ -14,7 +14,11 @@ class VariableVersion:
 @dataclass(frozen=True)
 class PhiNode:
     name: str
-    sources: frozenset[VariableVersion | "PhiNode"]
+    # The whole union is the forward reference, not just the recursive half. Quoting only
+    # `PhiNode` leaves `VariableVersion | str` to be evaluated, which is a TypeError on any
+    # Python that evaluates annotations eagerly - every version this package supports except
+    # 3.14, where PEP 649 made them lazy and hid this for as long as nobody ran 3.13.
+    sources: frozenset["VariableVersion | PhiNode"]
 
 
 SSAValue = VariableVersion | PhiNode

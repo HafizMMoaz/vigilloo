@@ -16,8 +16,8 @@ def paths_by_action() -> dict[str, list[PathStep]]:
     """Every structural path, keyed by the action its entry step names."""
     project = load_project(FIXTURE)
     return {
-        p[0].snippet.rsplit("::", 1)[-1]: p 
-        for p in find_structural_paths(project) 
+        p[0].snippet.rsplit("::", 1)[-1]: p
+        for p in find_structural_paths(project)
         if p[-1].rule_id == RULE
     }
 

@@ -953,9 +953,13 @@ must_not_find:
   line: 39
   reason: DB::select('... where status = ?', [$status]) inside an enum - the query
     is a constant and the request data is a binding
-- file: app/Http/Controllers/BranchController.php
+- rule: laravel.raw-query
+  file: app/Http/Controllers/BranchController.php
   line: 30
-  rule: php.sql-injection
+  reason: renamed from php.sql-injection in 529d72d; the assertion had been dead since.
+    fullySanitized() casts $order to int on every branch - intval() when safe, an
+    (int) cast otherwise - before orderByRaw(), so no unsanitized value can reach
+    the query
 - rule: laravel.validated-bypass
   file: app/Http/Controllers/UserController.php
   line: 36

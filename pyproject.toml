@@ -54,13 +54,25 @@ target-version = "py313"
 exclude = ["docs"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "T20"]
 
 # isort infers first-party packages by finding a directory of that name. No directory
 # is called vigilloo, so without this it sorts `from vigilloo import ...` in the tests
 # into the third-party block. Same root cause as the package-dir mapping above.
 [tool.ruff.lint.isort]
 known-first-party = ["vigilloo"]
+
+# T20 (flake8-print) exists to catch a stray debug print reaching stdout during a scan,
+# which would corrupt the report. cli.py and report.py are the exception: they are the
+# terminal report itself, so printing is their job, not a bug. scripts/ is a second,
+# narrower exception: dump_ast.py and debt.py are standalone dev CLI tools, run directly
+# and never imported by src/ or tests/, whose entire documented job (see their docstrings)
+# is to print to the terminal - not part of the scan pipeline T20 is guarding.
+[tool.ruff.lint.per-file-ignores]
+"src/cli.py" = ["T20"]
+"src/report.py" = ["T20"]
+"scripts/dump_ast.py" = ["T20"]
+"scripts/debt.py" = ["T20"]
 
 [tool.mypy]
 strict = true

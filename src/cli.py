@@ -45,7 +45,7 @@ def main(
 @app.command()
 def scan(
     path: Path = typer.Argument(Path("."), help="Project root to scan."),  # noqa: B008
-    baseline: Path | None = typer.Option(
+    baseline: Path | None = typer.Option(  # noqa: B008
         None,
         "--baseline",
         help="Suppress findings present in the baseline",
@@ -120,7 +120,7 @@ def scan(
                     raise typer.Exit(2)
         except json.JSONDecodeError:
             typer.secho("Error: baseline file is not valid JSON", err=True, fg="red")
-            raise typer.Exit(2)
+            raise typer.Exit(2) from None
 
     findings = scan_project(project, stats, baseline=baseline_fingerprints)
 

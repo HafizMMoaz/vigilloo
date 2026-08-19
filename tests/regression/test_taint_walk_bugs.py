@@ -148,10 +148,11 @@ def test_a_genuine_request_receiver_is_still_reported(tmp_path: Path) -> None:
     """The other half of 42c9b2e: the fix must not have bought its precision with silence.
 
     Identical to the test above except that `->get()` is called on a real `Request`
-    parameter. One `laravel.blade-raw-echo` finding, or the receiver check has gone from "is this actually a
-    Request" to "never mind, no sources here". A regression test for a false positive is only
-    half a test without the case that proves the true positive survived - the cheapest way to
-    fix a noisy rule is to turn it off, and nothing else in this file would notice.
+    parameter. One `laravel.blade-raw-echo` finding, or the receiver check has gone from
+    "is this actually a Request" to "never mind, no sources here". A regression test for a
+    false positive is only half a test without the case that proves the true positive
+    survived - the cheapest way to fix a noisy rule is to turn it off, and nothing else
+    in this file would notice.
     """
     root = _project(
         tmp_path,

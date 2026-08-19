@@ -21,6 +21,7 @@ the shipped engine is complete offline and that argues against growing its depen
 the YAML parser is in the dev group for the same reason.
 """
 
+import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -332,8 +333,6 @@ def verify(findings: Iterable[Finding], expectations: Expectations) -> list[str]
                 )
     return problems
 
-
-import json
 
 def scan_fixture(root: Path) -> list[Finding]:
     """The findings a fixture produces, by the same path `vigilloo scan` takes."""

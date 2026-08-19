@@ -1,6 +1,6 @@
 from vigilloo.laravel.vocabulary import (
-    MAGIC_PROPERTY_KINDS,
     LARAVEL_RAW_QUERY_RULE,
+    MAGIC_PROPERTY_KINDS,
     is_source,
     is_superglobal,
     sanitizer_clears,

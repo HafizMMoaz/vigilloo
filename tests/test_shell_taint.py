@@ -140,6 +140,7 @@ def test_escapeshellarg_does_not_clear_html_taint(shell_project):
     html_paths = [
         p
         for p in paths
-        if "/escaped-does-not-clear-html" in p[0].snippet and p[-1].rule_id == LARAVEL_BLADE_RAW_ECHO_RULE
+        if "/escaped-does-not-clear-html" in p[0].snippet
+        and p[-1].rule_id == LARAVEL_BLADE_RAW_ECHO_RULE
     ]
     assert len(html_paths) == 1

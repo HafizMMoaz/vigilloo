@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING
 
 from tree_sitter import Node
 
+from .config import VigillooConfig
 from .ids import node_id
 from .laravel.blade import to_php
-from .config import VigillooConfig
 from .laravel.config import ProjectConfig, extract_project_config
 from .laravel.detect import Autoload, read_autoload
 from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
@@ -30,6 +30,7 @@ from .models import (
     Span,
     Suppression,
     Symbol,
+    TaintKind,
     WalkStats,
 )
 
@@ -44,7 +45,6 @@ from .parser import (
     node_text,
     parse_php,
     parse_source,
-    walk,
 )
 from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
 from .workspace import Workspace
@@ -91,12 +91,12 @@ class Project:
     suppressions: list[Suppression] = field(default_factory=list)
 
     @cached_property
-    def custom_sources(self) -> dict[tuple[str, str], "frozenset[TaintKind]"]:
-        from .models import TaintKind
+    def custom_sources(self) -> dict[tuple[str, str], frozenset[TaintKind]]:
         res: dict[tuple[str, str], frozenset[TaintKind]] = {}
         for src in self.vigilloo_config.taint.sources:
             fqn = src.get("fqn")
-            if not fqn: continue
+            if not fqn:
+                continue
             fqn = fqn.lstrip("\\")
             if "::" in fqn:
                 cls_fqn, method = fqn.split("::", 1)
@@ -107,12 +107,12 @@ class Project:
         return res
 
     @cached_property
-    def custom_sanitizers(self) -> dict[tuple[str, str], "frozenset[TaintKind]"]:
-        from .models import TaintKind
+    def custom_sanitizers(self) -> dict[tuple[str, str], frozenset[TaintKind]]:
         res: dict[tuple[str, str], frozenset[TaintKind]] = {}
         for san in self.vigilloo_config.taint.sanitizers:
             fqn = san.get("fqn")
-            if not fqn: continue
+            if not fqn:
+                continue
             fqn = fqn.lstrip("\\")
             if "::" in fqn:
                 cls_fqn, method = fqn.split("::", 1)

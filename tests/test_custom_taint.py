@@ -1,11 +1,12 @@
 from pathlib import Path
 
 from vigilloo.graph import load_project
-from vigilloo.models import WalkStats
 from vigilloo.taint import find_taint_paths
 
 
-def _custom_project(tmp_path: Path, controller_body: str, sink_call: str, vigilloo_yaml: str) -> Path:
+def _custom_project(
+    tmp_path: Path, controller_body: str, sink_call: str, vigilloo_yaml: str
+) -> Path:
     """A tiny routed controller -> repository project with a custom vigilloo.yml"""
     (tmp_path / "routes").mkdir()
     (tmp_path / "app" / "Http" / "Controllers").mkdir(parents=True)
@@ -60,20 +61,18 @@ def _custom_project(tmp_path: Path, controller_body: str, sink_call: str, vigill
         "}\n"
     )
     (tmp_path / "app" / "Support" / "Helpers.php").write_text(
-        "<?php\n"
-        "namespace App\\Support;\n"
-        "function my_custom_clean($val) { return $val; }\n"
+        "<?php\nnamespace App\\Support;\nfunction my_custom_clean($val) { return $val; }\n"
     )
     return tmp_path
 
 
 def test_custom_source_static(tmp_path: Path):
-    yaml = '''
+    yaml = """
 taint:
   sources:
     - fqn: "App\\\\Support\\\\LegacyInput::get"
       kinds: [sql]
-'''
+"""
     root = _custom_project(
         tmp_path,
         "        $x = LegacyInput::get('sort');\n        $this->things->search($x);",
@@ -82,7 +81,7 @@ taint:
     )
     project = load_project(root)
     paths = find_taint_paths(project)
-    
+
     assert len(paths) == 1
     steps = paths[0]
     # entry -> source -> pass -> ... -> pass -> sink
@@ -92,21 +91,23 @@ taint:
 
 
 def test_custom_source_instance(tmp_path: Path):
-    yaml = '''
+    yaml = """
 taint:
   sources:
     - fqn: "App\\\\Support\\\\LegacyInput::get_instance"
       kinds: [sql]
-'''
+"""
     root = _custom_project(
         tmp_path,
-        "        $input = new \\App\\Support\\LegacyInput();\n        $x = $input->get_instance('sort');\n        $this->things->search($x);",
+        "        $input = new \\App\\Support\\LegacyInput();\n"
+        "        $x = $input->get_instance('sort');\n"
+        "        $this->things->search($x);",
         "DB::table('things')->orderByRaw($sort)",
         yaml,
     )
     project = load_project(root)
     paths = find_taint_paths(project)
-    
+
     assert len(paths) == 1
     steps = paths[0]
     source_step = steps[1]
@@ -115,39 +116,43 @@ taint:
 
 
 def test_custom_sanitizer_function(tmp_path: Path):
-    yaml = '''
+    yaml = """
 taint:
   sanitizers:
     - fqn: "App\\\\Support\\\\my_custom_clean"
       clears: [sql]
-'''
+"""
     root = _custom_project(
         tmp_path,
-        "        $x = $request->input('sort');\n        $x = \\App\\Support\\my_custom_clean($x);\n        $this->things->search($x);",
+        "        $x = $request->input('sort');\n"
+        "        $x = \\App\\Support\\my_custom_clean($x);\n"
+        "        $this->things->search($x);",
         "DB::table('things')->orderByRaw($sort)",
         yaml,
     )
     project = load_project(root)
     paths = find_taint_paths(project)
-    
+
     # Should be cleared by my_custom_clean
     assert len(paths) == 0
 
 
 def test_custom_sanitizer_static(tmp_path: Path):
-    yaml = '''
+    yaml = """
 taint:
   sanitizers:
     - fqn: "App\\\\Support\\\\LegacyInput::get"
       clears: [sql]
-'''
+"""
     root = _custom_project(
         tmp_path,
-        "        $x = $request->input('sort');\n        $x = LegacyInput::get($x);\n        $this->things->search($x);",
+        "        $x = $request->input('sort');\n"
+        "        $x = LegacyInput::get($x);\n"
+        "        $this->things->search($x);",
         "DB::table('things')->orderByRaw($sort)",
         yaml,
     )
     project = load_project(root)
     paths = find_taint_paths(project)
-    
+
     assert len(paths) == 0

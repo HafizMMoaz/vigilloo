@@ -23,3 +23,12 @@ TEMP/
 # Machine-local and never part of the project.
 .claude/
 scratch/
+
+# Scratch probes never go in the repo (CLAUDE.md, "Agent tooling"). These patterns catch the
+# throwaway names agents reach for; a probe that needs a real name belongs in /private/tmp/.
+scratch.*
+tmp_scratch/
+tmp_test/
+/debug_*.py
+/fix_*.py
+/out.txt
