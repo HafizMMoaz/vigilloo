@@ -6,7 +6,7 @@ every other scanner already prints.
 
 from rich.console import Console
 
-from .models import Coverage, Finding
+from ..models import Coverage, Finding
 
 _SEVERITY_STYLE = {
     "critical": "bold red",

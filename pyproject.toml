@@ -45,8 +45,8 @@ build-backend = "setuptools.build_meta"
 #      silently omits it. Hatchling was dropped for this layout: it cannot do
 #      editable installs when sources renames a prefix.
 [tool.setuptools]
-package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel", "vigilloo.workspace" = "src/workspace", "vigilloo.analysis" = "src/analysis" }
-packages = ["vigilloo", "vigilloo.laravel", "vigilloo.workspace", "vigilloo.analysis"]
+package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel", "vigilloo.workspace" = "src/workspace", "vigilloo.analysis" = "src/analysis", "vigilloo.report" = "src/report" }
+packages = ["vigilloo", "vigilloo.laravel", "vigilloo.workspace", "vigilloo.analysis", "vigilloo.report"]
 
 [tool.ruff]
 line-length = 100
@@ -70,7 +70,7 @@ known-first-party = ["vigilloo"]
 # is to print to the terminal - not part of the scan pipeline T20 is guarding.
 [tool.ruff.lint.per-file-ignores]
 "src/cli.py" = ["T20"]
-"src/report.py" = ["T20"]
+"src/report/terminal.py" = ["T20"]
 "scripts/dump_ast.py" = ["T20"]
 "scripts/debt.py" = ["T20"]
 
