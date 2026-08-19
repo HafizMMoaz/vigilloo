@@ -6,8 +6,8 @@ from vigilloo.models import Coverage, Finding, PathStep, Span
 from vigilloo.report.document import SCHEMA_VERSION, build_document
 
 
-def _finding(rule_id: str, severity: str, file: str, line: int) -> Finding:
-    span = Span(file=Path(file), start_line=line, start_col=0, end_line=line, end_col=9)
+def _finding(rule_id: str, severity: str, file: str, line: int, col: int = 0) -> Finding:
+    span = Span(file=Path(file), start_line=line, start_col=col, end_line=line, end_col=9)
     return Finding(
         rule_id=rule_id,
         severity=severity,
@@ -56,19 +56,48 @@ def test_findings_sort_by_severity_then_rule_then_path_then_line() -> None:
 
 
 def test_severity_counts_only_names_severities_present() -> None:
-    """A zero is not reported as a key.
+    """A zero is not reported as a key, and order is worst-first.
 
     An absent severity and a severity with zero findings are the same fact,
     and emitting both shapes lets a consumer write a check that passes on one
     scan and fails on the next for no reason.
+
+    Python dict equality does not check order, so this test verifies both the
+    keys present (omitting zeros) and their order (worst first). Markdown
+    renders severity_counts.items() directly; a regression to insertion order
+    or alphabetical order would change the report output.
     """
-    doc = build_document(
-        [_finding("php.xss", "critical", "a.php", 1), _finding("php.xss", "low", "b.php", 1)],
-        _coverage(),
-        engine_version="0.1.0",
-        ruleset_hash="abc",
-    )
-    assert doc.severity_counts == {"critical": 1, "low": 1}
+    findings = [
+        _finding("php.xss", "low", "a.php", 1),
+        _finding("php.xss", "critical", "b.php", 2),
+        _finding("php.xss", "medium", "c.php", 3),
+    ]
+    doc = build_document(findings, _coverage(), engine_version="0.1.0", ruleset_hash="abc")
+
+    assert list(doc.severity_counts.keys()) == ["critical", "medium", "low"]
+    assert doc.severity_counts == {"critical": 1, "medium": 1, "low": 1}
+
+
+def test_sort_key_tiebreaker_column_breaks_identical_severities() -> None:
+    """One line can hold multiple sinks; sort key must be total.
+
+    Two findings identical in severity, rule ID, file, and line number but
+    differing in start_col represent the realistic case where one line has
+    two vulnerable calls. The sort key's fifth component (start_col) ensures
+    they sort in column order. Dropping it would leave a tie, and sorted()
+    would fall back to input order - which is exactly what this sort exists
+    to stop mattering.
+    """
+    findings = [
+        _finding("php.xss", "critical", "a.php", 10, col=20),
+        _finding("php.xss", "critical", "a.php", 10, col=5),
+    ]
+    doc = build_document(findings, _coverage(), engine_version="0.1.0", ruleset_hash="abc")
+
+    assert [(f.span.start_line, f.span.start_col) for f in doc.findings] == [
+        (10, 5),
+        (10, 20),
+    ]
 
 
 def test_metadata_carries_no_timestamp() -> None:
