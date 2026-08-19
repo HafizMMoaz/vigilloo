@@ -23,19 +23,19 @@ summarises and points here.
 | Suppression: inline comments, `vigilloo.yml` path globs with expiry, baseline files | done | `// vigilloo-ignore <rule-id>` with a justification; a bare ignore is itself reported as `vigilloo.bare-ignore`. `suppress:` entries in `vigilloo.yml` matched by path glob and honouring `expires:`. A baseline file passed as `vigilloo scan --baseline`. |
 | User-defined sources and sanitizers via `vigilloo.yml` | done | `taint.sources` and `taint.sanitizers` entries name a function, facade or method by FQN and the kinds it introduces or clears; the walk incorporates them alongside the built-in vocabulary. |
 | `vigilloo scan \| review \| graph \| explain \| deps \| secrets \| baseline \| doctor \| init` | partial | `vigilloo scan` only. |
-| Markdown, JSON, terminal reports | partial | Terminal report only, and it opens with the scan's own coverage: the parse success and call resolution rates, with the counts they came from, and the constructs that failed to parse named down to the method - `method OrderController::search`, falling back to the file where no named construct encloses the error, capped with the remainder counted. Markdown and JSON are spec only. |
+| Markdown, JSON, terminal reports | done | Terminal, Markdown and JSON all ship, rendered from one `ReportDocument` so the three cannot disagree about what a scan found. Every format opens with the scan's own coverage: the parse success and call resolution rates, with the counts they came from, and the constructs that failed to parse named down to the method - `method OrderController::search`, falling back to the file where no named construct encloses the error, capped with the remainder counted. JSON is sorted (`sort_keys=True`, no timestamp or duration) and byte-identical across runs of unchanged code. |
 | Incremental scanning | spec only | The store keeps the per-file digest the incrementality key needs; no scan reads it. |
 
 **Ships when:** the [22-testing](../22-testing/README.md) corpus gates pass - 100% of seeded
 findings, ≥90% precision on real applications, clean runs on 10 open-source Laravel apps.
 
 **Distance to that gate.** The engine is the far side of v0.1; the surface and the evidence are
-not. 30 rules and eleven taint kinds are wired and 398 tests pass over them, but the corpus is
+not. 30 rules and eleven taint kinds are wired and 414 tests pass over them, but the corpus is
 entirely synthetic, so the ≥90% precision criterion has never been evaluated - not failed,
-never run. Of the nine commands in [19-cli](../19-cli/README.md) only `scan` exists, and of the
-three report formats in [16-reporting](../16-reporting/README.md) only the terminal one does,
-which is also why precision cannot yet be measured: there is no machine-readable output to
-diff. The plan that closes this is
+never run. Of the nine commands in [19-cli](../19-cli/README.md) only `scan` exists. All three
+report formats in [16-reporting](../16-reporting/README.md) - terminal, JSON and Markdown - now
+ship, so the absence of a diffable format is no longer what blocks measuring precision; the
+corpus is. The plan that closes this is
 [docs/plans/2026-08-19-stabilise-measure-ship-v0.1.md](../plans/2026-08-19-stabilise-measure-ship-v0.1.md).
 
 ## v0.5 - Reasoning

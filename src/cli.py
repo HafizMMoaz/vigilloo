@@ -12,7 +12,7 @@ from rich.console import Console
 from . import __version__, store
 from .graph import coverage, load_project
 from .models import WalkStats
-from .report import build_document, render, render_coverage, render_json
+from .report import build_document, render, render_coverage, render_json, render_markdown
 from .rules import RULESET_HASH, scan_project
 from .workspace import Workspace
 from .workspace.migrations import SchemaTooNewError
@@ -166,7 +166,7 @@ def scan(
         if output_format is OutputFormat.json:
             print(render_json(document), end="")
         else:
-            raise typer.BadParameter("markdown format is not implemented yet")
+            print(render_markdown(document), end="")
     else:
         render_coverage(scan_coverage, console)
         render(findings, console)
