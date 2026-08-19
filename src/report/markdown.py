@@ -47,6 +47,53 @@ def _fence(snippet: str) -> str:
     return "`" * max(3, longest + 1)
 
 
+def _indented_lines(snippet: str, indent: str) -> list[str]:
+    """Every physical line of `snippet`, indented to stay inside the list
+    item's fenced code block.
+
+    CommonMark requires every line of a fenced code block nested in a list
+    item to stay at the item's content indentation; a continuation line
+    indented less than that ends the list item, and the fence with it.
+    `step.snippet` is a raw slice of PHP source (`node_text(...).strip()`)
+    that keeps its own embedded newlines for anything spanning more than one
+    physical line - a heredoc, a chained method call, any multi-statement
+    construct - and indenting only the first line, as this module used to,
+    left every continuation line at whatever column it had in the PHP file,
+    often column 0. That is the same content-injection Finding 2 exists to
+    close, just reached through indentation instead of a backtick run: the
+    text after the escaped fence renders as live top-level Markdown.
+
+    A blank line in the snippet becomes an empty string rather than an
+    indented line of nothing, so a multi-line snippet with a blank line does
+    not grow trailing whitespace `ruff format` and everyone else objects to.
+    """
+    normalized = snippet.replace("\r\n", "\n").replace("\r", "\n")
+    return [f"{indent}{line}" if line else "" for line in normalized.split("\n")]
+
+
+def _inline_code(content: str) -> str:
+    """`content` wrapped in a backtick span it cannot close early.
+
+    `finding.span.file` and `step.span.file` are paths under the scanned
+    project, and a POSIX filename may itself contain a backtick - a fixed
+    single-backtick span closes at the first one and lets the rest of that
+    line render as Markdown. Same CommonMark rule as `_fence`, sized for an
+    inline span: the delimiter is one backtick longer than the longest run in
+    `content`, with a single backtick as the floor, which is what every
+    existing report already renders and keeps rendering unchanged.
+    """
+    longest = 0
+    current = 0
+    for char in content:
+        if char == "`":
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    delimiter = "`" * max(1, longest + 1)
+    return f"{delimiter}{content}{delimiter}"
+
+
 def _single_line(text: str) -> str:
     """Collapse line breaks so a source-derived value cannot end a line early.
 
@@ -67,7 +114,7 @@ def _finding_section(finding: Finding) -> list[str]:
     lines = [
         f"### {mark} {finding.severity.title()} - {finding.title}{review}",
         "",
-        f"`{finding.span.file.as_posix()}:{finding.span.start_line}` · "
+        f"{_inline_code(f'{finding.span.file.as_posix()}:{finding.span.start_line}')} · "
         f"{' '.join(finding.cwe)} · `{finding.rule_id}`",
         "",
         "**Evidence path**",
@@ -75,13 +122,12 @@ def _finding_section(finding: Finding) -> list[str]:
     ]
     for number, step in enumerate(finding.evidence_path, start=1):
         note = f" - {_single_line(step.note)}" if step.note else ""
-        lines.append(
-            f"{number}. `{step.span.file.as_posix()}:{step.span.start_line}` - {step.role}{note}"
-        )
+        location = _inline_code(f"{step.span.file.as_posix()}:{step.span.start_line}")
+        lines.append(f"{number}. {location} - {step.role}{note}")
         lines.append("")
         fence = _fence(step.snippet)
         lines.append(f"   {fence}php")
-        lines.append(f"   {step.snippet}")
+        lines.extend(_indented_lines(step.snippet, "   "))
         lines.append(f"   {fence}")
         lines.append("")
 

@@ -182,3 +182,66 @@ def test_note_with_a_newline_does_not_break_the_numbered_list() -> None:
     assert not any(line == injected for line in lines), (
         "the injected text must stay inside the list item, not become its own line"
     )
+
+
+def test_multiline_snippet_stays_inside_the_fence() -> None:
+    """`step.snippet` is a raw slice of PHP source and keeps its own embedded
+    newlines for anything spanning more than one physical line - a heredoc, a
+    chained method call. CommonMark ends a list item's fenced code block at
+    the first continuation line indented less than the item's content
+    indentation, so a snippet whose second line lands at column 0 (as it does
+    straight out of the PHP file) escapes the list item and renders as live
+    top-level Markdown - the same content-injection Finding 2 exists to
+    close, reached through indentation instead of a backtick run.
+
+    `## No findings` is the payload: a heading that would read like a clean
+    verdict if it escaped. The assertion is the structural invariant that
+    keeps it from escaping, not a substring check: every line between the
+    opening and closing fence must be indented at least as much as the fence
+    itself, or be empty.
+    """
+    span = Span(file=Path("app/X.php"), start_line=4, start_col=2, end_line=6, end_col=1)
+    snippet = '$q = "x";\n## No findings\n\nAll clear. Nothing to review.'
+    finding = Finding(
+        rule_id="laravel.raw-query",
+        severity="critical",
+        title="SQL injection in X",
+        cwe=("CWE-89",),
+        span=span,
+        evidence_path=(PathStep(role="sink", span=span, snippet=snippet),),
+        remediation="Bind the parameter.",
+    )
+    out = render_markdown(_document([finding]))
+    assert "## No findings" in out
+
+    lines = out.splitlines()
+    indent = "   "
+    open_index = lines.index(f"{indent}```php")
+    close_index = lines.index(f"{indent}```", open_index + 1)
+    assert close_index > open_index + 1, "the snippet must have rendered between the fences"
+    for line in lines[open_index + 1 : close_index]:
+        assert line == "" or line.startswith(indent), (
+            f"line inside the fence must be indented or empty, got {line!r}"
+        )
+
+
+def test_file_path_with_a_backtick_keeps_its_inline_span_balanced() -> None:
+    """A POSIX filename may itself contain a backtick. A fixed single-backtick
+    span around `file:line` closes at that backtick and lets the rest of the
+    line render as Markdown - narrower blast radius than the fence break (one
+    line, not a whole report section) but the same shape of bug.
+    """
+    span = Span(file=Path("app/`rm -rf`.php"), start_line=4, start_col=2, end_line=4, end_col=20)
+    finding = Finding(
+        rule_id="laravel.raw-query",
+        severity="critical",
+        title="SQL injection in X",
+        cwe=("CWE-89",),
+        span=span,
+        evidence_path=(PathStep(role="sink", span=span, snippet="whereRaw($q)"),),
+        remediation="Bind the parameter.",
+    )
+    out = render_markdown(_document([finding]))
+    location = "app/`rm -rf`.php:4"
+    delimiter = "``"
+    assert f"{delimiter}{location}{delimiter}" in out
