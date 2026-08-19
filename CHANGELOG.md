@@ -25,6 +25,9 @@ Ruleset hash: `520914c8731f4c0d`.
 
 ### Added
 
+- **User-defined sources and sanitizers** (TASK-083) are now supported via `vigilloo.yml`. Teams can declare custom functions, facades, and helpers that introduce or sanitize untrusted data, and the taint engine seamlessly incorporates them into the analysis.
+- **Unauthenticated state-changing routes** (TASK-071). Routes that use POST, PUT, PATCH, or DELETE are flagged if they are not protected by authentication middleware or signed URL validation, enforcing Laravel security best practices. New rule `laravel.unauthenticated-route` (high).
+
 - **Modern PHP syntax is no longer a blind spot** (TASK-030), covering four constructs from
   [docs/03-parser](docs/03-parser/README.md) section "PHP features that must be handled
   correctly". Each was verified against the grammar first, and the two constructs that turned
