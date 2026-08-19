@@ -689,7 +689,11 @@ def _ruleset_hash(rules: dict[str, Rule]) -> str:
 RULESET_HASH: str = _ruleset_hash(_BY_ID)
 
 
-def scan_project(project: Project, stats: WalkStats | None = None) -> list[Finding]:
+def scan_project(
+    project: Project,
+    stats: WalkStats | None = None,
+    baseline: set[str] | None = None,
+) -> list[Finding]:
     """Assemble findings from every evidence path the analysis produced.
 
     Two producers, not one: taint paths and structural paths. Both yield the
@@ -806,18 +810,20 @@ def scan_project(project: Project, stats: WalkStats | None = None) -> list[Findi
         if _is_suppressed_by_config(project, primary_path[-1].span.file, rule.id):
             continue
 
-        findings.append(
-            Finding(
-                rule_id=rule.id,
-                severity=path_severity,
-                title=rule.title,
-                cwe=rule.cwe,
-                span=primary_path[-1].span,
-                evidence_path=tuple(primary_path),
-                alternative_paths=alternative_paths,
-                remediation=rule.remediation,
-                needs_review=needs_review,
-            )
+        f = Finding(
+            rule_id=rule.id,
+            severity=path_severity,
+            title=rule.title,
+            cwe=rule.cwe,
+            span=primary_path[-1].span,
+            evidence_path=tuple(primary_path),
+            alternative_paths=alternative_paths,
+            remediation=rule.remediation,
+            needs_review=needs_review,
         )
+        if baseline is not None and f.fingerprint in baseline:
+            continue
+            
+        findings.append(f)
 
     return sorted(findings, key=lambda f: (str(f.span.file), f.span.start_line, f.rule_id))

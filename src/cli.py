@@ -1,5 +1,6 @@
 """Command line interface for Vigilloo."""
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -44,6 +45,11 @@ def main(
 @app.command()
 def scan(
     path: Path = typer.Argument(Path("."), help="Project root to scan."),  # noqa: B008
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="Suppress findings present in the baseline",
+    ),
 ) -> None:
     """Scan a Laravel project for security findings."""
     console = Console()
@@ -93,7 +99,30 @@ def scan(
             "cannot be reported.[/yellow]"
         )
 
-    findings = scan_project(project, stats)
+    baseline_fingerprints: set[str] | None = None
+    if baseline is not None:
+        if not baseline.exists():
+            typer.secho(f"Error: baseline file does not exist: {baseline}", err=True, fg="red")
+            raise typer.Exit(2)
+        try:
+            with baseline.open() as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    if all(isinstance(x, str) for x in data):
+                        baseline_fingerprints = set(data)
+                    elif all(isinstance(x, dict) and "fingerprint" in x for x in data):
+                        baseline_fingerprints = {x["fingerprint"] for x in data}
+                    else:
+                        typer.secho("Error: baseline file format invalid", err=True, fg="red")
+                        raise typer.Exit(2)
+                else:
+                    typer.secho("Error: baseline file must contain a list", err=True, fg="red")
+                    raise typer.Exit(2)
+        except json.JSONDecodeError:
+            typer.secho("Error: baseline file is not valid JSON", err=True, fg="red")
+            raise typer.Exit(2)
+
+    findings = scan_project(project, stats, baseline=baseline_fingerprints)
 
     # Coverage is measured only once the analysis has run, because the walk is
     # what discovers the call sites, but it is printed ahead of the findings:

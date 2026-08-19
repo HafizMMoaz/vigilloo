@@ -333,9 +333,21 @@ def verify(findings: Iterable[Finding], expectations: Expectations) -> list[str]
     return problems
 
 
+import json
+
 def scan_fixture(root: Path) -> list[Finding]:
     """The findings a fixture produces, by the same path `vigilloo scan` takes."""
-    return scan_project(load_project(root))
+    baseline_path = root / "baseline.json"
+    baseline = None
+    if baseline_path.exists():
+        with open(baseline_path) as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                if all(isinstance(x, str) for x in data):
+                    baseline = set(data)
+                elif all(isinstance(x, dict) and "fingerprint" in x for x in data):
+                    baseline = {x["fingerprint"] for x in data}
+    return scan_project(load_project(root), baseline=baseline)
 
 
 def assert_fixture(root: Path) -> None:

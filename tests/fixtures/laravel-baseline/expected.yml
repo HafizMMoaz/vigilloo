@@ -1,0 +1,26 @@
+findings:
+- rule: laravel.raw-query
+  file: app/Console/Commands/VulnerableCommand.php
+  line: 13
+  severity: high
+- rule: laravel.raw-query
+  file: app/Enums/ReportFormat.php
+  line: 30
+  severity: critical
+- rule: laravel.raw-query
+  file: app/Http/Controllers/BranchController.php
+  line: 18
+  severity: critical
+- rule: laravel.raw-query
+  file: app/Http/Controllers/DuckClass.php
+  line: 7
+  severity: high
+  needs_review: true
+- rule: laravel.raw-query
+  file: app/Http/Controllers/HelperController.php
+  line: 24
+  severity: critical
+- rule: vigilloo.bare-ignore
+  file: app/Http/Controllers/SuppressionController.php
+  line: 18
+  severity: medium
