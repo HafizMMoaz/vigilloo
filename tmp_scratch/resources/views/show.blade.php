@@ -1,1 +1,0 @@
-<script>var a = {{ Js::from($x) }};</script>
