@@ -56,6 +56,14 @@ Two rules follow from `src/` being the package rather than containing it:
   silently omits the directory while the editable dev install keeps working. The guard is
   `uv build --wheel` plus an install into a clean environment, which CI runs on every push.
 
+**`integrations/` is an explicit carve-out, not an exception.** From v0.7 the package-manager
+hooks in [27-supply-chain](../27-supply-chain/README.md) live in a top-level `integrations/`
+directory: the Composer plugin is PHP released to Packagist, because Composer loads and executes
+it, and the npm guard is a wrapper. The rule above forbids sibling top-level *Python package*
+directories, which would compete with `src/` for the `vigilloo` import name. Nothing under
+`integrations/` is importable Python and nothing there is registered in `pyproject.toml`, so it
+does not compete. Anything that is importable Python still belongs under `src/`.
+
 ## Standards
 
 **Type hints everywhere.** `mypy --strict` on `src/`. In a codebase whose whole job is precise

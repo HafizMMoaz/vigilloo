@@ -8,13 +8,12 @@ graph of an application, reasons over data flow, proves exploitability, and expl
 finding with evidence.
 
 This repository holds the **architecture and specification documents** in `docs/`, and the
-implementation in `src/`. The first vertical slices are merged: PHP parsing and symbol
-extraction, the Laravel route table with its middleware stack, the call graph, kind-based
-interprocedural taint for the `sql`, `html` and `mass_assign` kinds, Eloquent model
-configuration, policy discovery, the four rules `php.sql-injection`, `php.xss`,
-`laravel.mass-assignment` and `laravel.missing-authorization` with their evidence paths, and a
-workspace whose SQLite store records every scan. Everything beyond those slices is still spec
-only; the per-capability status table is in [24-roadmap](24-roadmap/README.md).
+implementation in `src/`. The first vertical slices are merged and `vigilloo scan` works end to
+end on a Laravel project.
+
+**What is built and what is still spec has exactly one home: the v0.1 table in
+[24-roadmap](24-roadmap/README.md).** It is not restated here, because two copies of a status
+table means one of them is wrong.
 
 ## Current target
 
@@ -66,10 +65,13 @@ before breadth - see [24-roadmap](24-roadmap/README.md) for how the rest arrives
 
 | # | Document | Version |
 | --- | --- | --- |
-| 14 | [Attack Engine](14-attack-engine/README.md) | v4.0 - authorization model, safe probes |
+| 27 | [Supply Chain](27-supply-chain/README.md) | v0.7 - package and extension verdicts, ecosystem coverage |
 | 15 | [Runtime](15-runtime/README.md) | v2.0 - monitoring, graph correlation |
 | 20 | [Desktop](20-desktop/README.md) | v2.0 - PySide6 app |
-| 21 | [Cloud](21-cloud/README.md) | v3.0 - hosted platform, open-core boundary |
+| 25 | [Attack Surface Monitoring](25-attack-surface-monitoring/README.md) | v2.0 - external footprint, graph correlation |
+| 14 | [Attack Engine](14-attack-engine/README.md) | v3.0 - authorization model, safe probes |
+| 26 | [Autonomous Red Teaming](26-autonomous-red-teaming/README.md) | v3.0 - multi-agent engine, offensive vaccine loop |
+| 21 | [Cloud](21-cloud/README.md) | v5.0 - hosted platform, open-core boundary |
 
 ### Process
 
