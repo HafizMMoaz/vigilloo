@@ -24,6 +24,7 @@ summarises and points here.
 | User-defined sources and sanitizers via `vigilloo.yml` | done | `taint.sources` and `taint.sanitizers` entries name a function, facade or method by FQN and the kinds it introduces or clears; the walk incorporates them alongside the built-in vocabulary. |
 | `vigilloo scan \| review \| graph \| explain \| deps \| secrets \| baseline \| doctor \| init` | partial | `vigilloo scan` only. |
 | Markdown, JSON, terminal reports | done | Terminal, Markdown and JSON all ship, rendered from one `ReportDocument` so the three cannot disagree about what a scan found. Every format opens with the scan's own coverage: the parse success and call resolution rates, with the counts they came from, and the constructs that failed to parse named down to the method - `method OrderController::search`, falling back to the file where no named construct encloses the error, capped with the remainder counted. JSON is sorted (`sort_keys=True`, no timestamp or duration) and byte-identical across runs of unchanged code. |
+| Corpus harness and precision measurement | partial | Scan, triage, report, per-rule precision, drift detection, one enrolled application, and CI wired to report all ship today. The precision gate itself (a later task) and the nine further applications required for the v0.1 ship gate do not yet ship. |
 | Incremental scanning | spec only | The store keeps the per-file digest the incrementality key needs; no scan reads it. |
 
 **Ships when:** the [22-testing](../22-testing/README.md) corpus gates pass - 100% of seeded

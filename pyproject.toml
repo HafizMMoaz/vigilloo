@@ -75,10 +75,19 @@ known-first-party = ["vigilloo"]
 "src/report/terminal.py" = ["T20"]
 "scripts/dump_ast.py" = ["T20"]
 "scripts/debt.py" = ["T20"]
+"scripts/corpus.py" = ["T20"]
 
 [tool.mypy]
 strict = true
-files = ["src"]
+# setuptools maps the `src` directory onto the import name `vigilloo` via package-dir, and
+# that rename is invisible to mypy: `from vigilloo.baseline import ...` in scripts/ cannot
+# be resolved from the source tree. `.mypy-paths/vigilloo` is a symlink to `src` that gives
+# mypy the name it expects. Silencing the import instead would type the imported symbol as
+# Any, which was verified to let `diff_fingerprints()` with zero arguments pass.
+mypy_path = ".mypy-paths"
+# scripts/corpus.py computes the NFR-6 precision number that gates the release. A silent
+# type error there is a wrong number in a report people trust, so it is checked like src/.
+files = ["src", "scripts/corpus.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

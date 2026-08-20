@@ -1,0 +1,22 @@
+# One entry per enrolled application.
+#
+# A pin with no recorded rationale cannot be audited. When v1.0 widens the target beyond
+# Laravel 9-11, whoever re-pins needs to know why each SHA was chosen.
+#
+# php_files: find <dir> -name '*.php' -not -path '*/vendor/*' | wc -l
+# php_loc:   find <dir> -name '*.php' -not -path '*/vendor/*' -exec cat {} + | wc -l
+applications:
+  laravel-skeleton:
+    repo: https://github.com/laravel/laravel.git
+    pin: 3622d746fde67ebaff3dd3fdde3676599434692f
+    laravel: "^11.31"
+    php: "^8.2"
+    licence: MIT
+    php_files: 27
+    php_loc: 1778
+    wave: 1
+    pr_subset: true
+    rationale: >
+      The clean-run control from the parent plan. Small enough to run on every PR, and a
+      framework skeleton should produce few or no findings, so a sudden crop of them is a
+      strong signal that a rule has become indiscriminate.

@@ -10,7 +10,7 @@ reported - so they have to be caught here or not at all.
 | --- | --- | --- | --- |
 | **Unit** | Parser, symbol resolution, CFG, taint propagation, individual rules | ms | every commit |
 | **Fixture** | Synthetic Laravel apps with known vulnerabilities | seconds | every commit |
-| **Corpus** | Real open-source Laravel applications | minutes | every PR |
+| **Corpus** | Real open-source Laravel applications | minutes | nightly, subset on PRs |
 | **Regression** | Every fixed bug, permanently | seconds | every commit |
 | **Performance** | Scan time and memory against NFR targets | minutes | nightly |
 | **Determinism** | Same input → byte-identical output | seconds | every PR |
@@ -49,6 +49,11 @@ constantly is worthless, and only negative fixtures keep that honest.
 fixtures never do: unusual project layouts, heavy package use, legacy patterns, sheer scale.
 Expectations here are a reviewed snapshot rather than ground truth, so the test asserts "no new
 findings and no lost findings versus the approved snapshot", with changes requiring human review.
+The same per-application file, keyed by finding fingerprint, also carries a three-state verdict
+per finding. Precision is counted over reviewed verdicts only, and unreviewed findings are
+reported as a separate coverage number and never folded into precision. This third state exists
+because on a first run precision is undefined rather than 0% or 100%, and a gate treating
+undefined as either would be wrong in opposite directions.
 
 Where possible, include applications with **published CVEs** at a vulnerable commit - real bugs
 that were real, with a known correct answer.

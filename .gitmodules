@@ -1,0 +1,3 @@
+[submodule "corpus/laravel-skeleton"]
+	path = corpus/laravel-skeleton
+	url = https://github.com/laravel/laravel.git
