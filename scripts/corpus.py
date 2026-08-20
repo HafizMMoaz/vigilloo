@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,32 +82,43 @@ def scan_app(name: str, root: Path, out: Path, timeout_s: int = DEFAULT_TIMEOUT_
     """
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
-        completed = subprocess.run(
-            ["uv", "run", "vigilloo", "scan", str(root), "--format", "json"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"{name}: scan exceeded {timeout_s}s; refusing to record a partial report"
-        ) from exc
+        try:
+            completed = subprocess.run(
+                ["uv", "run", "vigilloo", "scan", str(root), "--format", "json"],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"{name}: scan exceeded {timeout_s}s; refusing to record a partial report"
+            ) from exc
 
-    if completed.returncode != 0:
-        raise RuntimeError(f"{name}: scan exited {completed.returncode}: {completed.stderr[-500:]}")
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"{name}: scan exited {completed.returncode}: {completed.stderr[-500:]}"
+            )
 
-    # Parse before writing. A truncated document must fail here rather than become a report
-    # that reads as "no findings".
-    document = json.loads(completed.stdout)
-    if "findings" not in document or "coverage" not in document:
-        raise RuntimeError(f"{name}: report is missing required keys; refusing to record it")
+        # Parse before writing. A truncated document must fail here rather than become a
+        # report that reads as "no findings".
+        document = json.loads(completed.stdout)
+        if "findings" not in document or "coverage" not in document:
+            raise RuntimeError(f"{name}: report is missing required keys; refusing to record it")
 
-    check_coverage(name, document)
+        check_coverage(name, document)
 
-    out.write_text(completed.stdout, encoding="utf-8")
-    return out
+        out.write_text(completed.stdout, encoding="utf-8")
+        return out
+    finally:
+        # `vigilloo scan` unconditionally creates `<root>/.vigilloo` (Workspace.open in
+        # src/workspace/__init__.py) with no flag to suppress it. `root` here is a corpus
+        # application's git submodule checkout, so every scan would otherwise leave that
+        # submodule's working tree dirty - a state nobody cleans up by hand in CI. Remove it
+        # on every exit path (success, raise, or timeout), using ignore_errors so a cleanup
+        # failure can never mask the real scan failure that is propagating past this block.
+        shutil.rmtree(root / ".vigilloo", ignore_errors=True)
 
 
 def check_coverage(name: str, document: dict[str, object]) -> None:
