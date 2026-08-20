@@ -282,3 +282,56 @@ def test_load_triage_on_a_missing_file_is_empty(tmp_path: Path) -> None:
     from corpus import load_triage
 
     assert load_triage(tmp_path / "absent.yml") == {}
+
+
+def _finding(fingerprint: str, rule: str) -> dict[str, object]:
+    return {"fingerprint": fingerprint, "rule_id": rule}
+
+
+def test_precision_is_none_when_nothing_is_reviewed() -> None:
+    """Undefined, not 0% and not 100%. Both would be wrong in opposite directions."""
+    from corpus import compute_precision
+
+    rows = compute_precision([_finding("aaa", "php.sql-injection")], {})
+    assert rows[0].precision is None
+    assert rows[0].unreviewed_count == 1
+
+
+def test_precision_counts_only_reviewed_verdicts() -> None:
+    from corpus import TriageEntry, compute_precision
+
+    findings = [_finding("a", "r"), _finding("b", "r"), _finding("c", "r"), _finding("d", "r")]
+    triage = {
+        "a": TriageEntry("true", "r"),
+        "b": TriageEntry("true", "r"),
+        "c": TriageEntry("false", "r"),
+    }
+    row = compute_precision(findings, triage)[0]
+    assert (row.true_count, row.false_count, row.unreviewed_count) == (2, 1, 1)
+    assert row.precision == pytest.approx(2 / 3)
+
+
+def test_quota_is_per_rule_so_a_noisy_rule_cannot_crowd_others_out() -> None:
+    """The failure a flat cap produces: one rule eats the budget, 31 rules go unmeasured.
+
+    laravel.raw-query alone is 28 of 65 findings on tests/fixtures/laravel-minimal, so this
+    is the real distribution, not a hypothetical one.
+    """
+    from corpus import select_for_review
+
+    findings = [_finding(f"n{i:03d}", "laravel.raw-query") for i in range(50)]
+    findings.append(_finding("z999", "php.sql-injection"))
+    selected = select_for_review(findings, quota=2)
+    assert "z999" in selected
+    assert len([f for f in selected if f.startswith("n")]) == 2
+
+
+def test_quota_selection_is_stable_across_runs() -> None:
+    """Churn in the reviewed set would silently invalidate prior verdicts."""
+    from corpus import select_for_review
+
+    findings = [_finding("ccc", "r"), _finding("aaa", "r"), _finding("bbb", "r")]
+    assert select_for_review(findings, quota=2) == select_for_review(
+        list(reversed(findings)), quota=2
+    )
+    assert select_for_review(findings, quota=2) == ["aaa", "bbb"]

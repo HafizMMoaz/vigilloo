@@ -16,10 +16,13 @@ import argparse
 import json
 import shutil
 import subprocess
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+from vigilloo.baseline import diff_fingerprints  # type: ignore[import-not-found]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CORPUS = REPO_ROOT / "corpus"
@@ -184,7 +187,7 @@ def load_triage(path: Path) -> dict[str, TriageEntry]:
 def save_triage(path: Path, pin: str, ruleset: str, entries: dict[str, TriageEntry]) -> None:
     """Write verdicts, sorted by fingerprint.
 
-    `sort_keys=True` plus the sorted dict keeps the file byte-identical for the same
+    `sort_keys=True` keeps the file byte-identical for the same
     content, so a diff shows what a human changed rather than what a dict reordered.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,7 +201,7 @@ def save_triage(path: Path, pin: str, ruleset: str, entries: dict[str, TriageEnt
                 "note": entry.note,
                 "seen_at": entry.seen_at,
             }
-            for fingerprint, entry in sorted(entries.items())
+            for fingerprint, entry in entries.items()
         },
     }
     path.write_text(
@@ -206,11 +209,79 @@ def save_triage(path: Path, pin: str, ruleset: str, entries: dict[str, TriageEnt
     )
 
 
+DEFAULT_QUOTA = 20
+
+
+@dataclass(frozen=True)
+class RulePrecision:
+    """One row of the precision table.
+
+    `precision` is None when nothing has been reviewed. That is undefined, not zero: a gate
+    treating it as 0% fails the build on a corpus nobody has read, and one treating it as
+    100% passes vacuously.
+    """
+
+    rule: str
+    true_count: int
+    false_count: int
+    unreviewed_count: int
+    precision: float | None
+
+
+def select_for_review(findings: list[dict[str, object]], quota: int = DEFAULT_QUOTA) -> list[str]:
+    """Choose up to `quota` fingerprints per rule, in fingerprint order.
+
+    Per-rule rather than a flat cap: a flat cap is consumed by whichever rule is noisiest,
+    leaving most rules with no precision estimate at all, and the noisy rules are exactly
+    what Task 10 needs to find.
+
+    Fingerprint order rather than report order: selection must be identical across runs, or
+    the reviewed set churns and prior verdicts stop applying.
+    """
+    by_rule: dict[str, list[str]] = defaultdict(list)
+    for finding in findings:
+        by_rule[str(finding["rule_id"])].append(str(finding["fingerprint"]))
+    selected: list[str] = []
+    for rule in sorted(by_rule):
+        selected.extend(sorted(set(by_rule[rule]))[:quota])
+    return sorted(selected)
+
+
+def compute_precision(
+    findings: list[dict[str, object]], triage: dict[str, TriageEntry]
+) -> list[RulePrecision]:
+    """Count verdicts per rule and derive precision over the reviewed ones."""
+    counts: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"true": 0, "false": 0, "unreviewed": 0}
+    )
+    for finding in findings:
+        rule = str(finding["rule_id"])
+        entry = triage.get(str(finding["fingerprint"]))
+        verdict = entry.verdict if entry else "unreviewed"
+        counts[rule][verdict] += 1
+
+    rows: list[RulePrecision] = []
+    for rule in sorted(counts):
+        c = counts[rule]
+        reviewed = c["true"] + c["false"]
+        rows.append(
+            RulePrecision(
+                rule=rule,
+                true_count=c["true"],
+                false_count=c["false"],
+                unreviewed_count=c["unreviewed"],
+                precision=(c["true"] / reviewed) if reviewed else None,
+            )
+        )
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Corpus precision harness.")
     sub = parser.add_subparsers(dest="command", required=True)
     scan = sub.add_parser("scan", help="Scan enrolled applications.")
     scan.add_argument("app", nargs="?", help="Application name; omit to scan all.")
+    sub.add_parser("report", help="Print the precision table and drift.")
 
     args = parser.parse_args(argv)
     pins = load_pins()
@@ -220,6 +291,30 @@ def main(argv: list[str] | None = None) -> int:
         for pin in selected:
             report = scan_app(pin.name, CORPUS / pin.name, REPORTS / f"{pin.name}.json")
             print(f"{pin.name}: wrote {report.relative_to(REPO_ROOT)}")
+        return 0
+
+    if args.command == "report":
+        for pin in pins.values():
+            report_path = REPORTS / f"{pin.name}.json"
+            if not report_path.exists():
+                raise SystemExit(f"{pin.name}: no report; run `scan` first")
+            document = json.loads(report_path.read_text(encoding="utf-8"))
+            findings = document["findings"]
+            triage = load_triage(CORPUS / "triage" / f"{pin.name}.yml")
+
+            print(f"\n{pin.name} @ {pin.pin[:12]}  ({len(findings)} findings)")
+            print(f"{'rule':<40} {'true':>5} {'false':>6} {'unrev':>6} {'precision':>10}")
+            for row in compute_precision(findings, triage):
+                shown = "undefined" if row.precision is None else f"{row.precision:.1%}"
+                print(
+                    f"{row.rule:<40} {row.true_count:>5} {row.false_count:>6} "
+                    f"{row.unreviewed_count:>6} {shown:>10}"
+                )
+
+            drift = diff_fingerprints(
+                current=[str(f["fingerprint"]) for f in findings], approved=list(triage)
+            )
+            print(f"drift: {len(drift.added)} new, {len(drift.removed)} gone")
         return 0
 
     return 1
