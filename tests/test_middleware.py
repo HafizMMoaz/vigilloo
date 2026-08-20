@@ -13,7 +13,7 @@ from vigilloo.laravel.middleware import (
     middleware_sanitizes,
 )
 from vigilloo.models import Route
-from vigilloo.parser import parse_php, parse_source
+from vigilloo.parser import collect_nodes, parse_php, parse_source
 from vigilloo.symbols import extract_symbols
 
 
@@ -138,7 +138,13 @@ def test_custom_middleware_gating() -> None:
     """
     path = Path("test.php")
     parsed = parse_source(path, code)
-    symbols = extract_symbols(parsed)
+    symbols = extract_symbols(
+        collect_nodes(parsed.tree.root_node).namespaces,
+        collect_nodes(parsed.tree.root_node).imports,
+        collect_nodes(parsed.tree.root_node).classes,
+        collect_nodes(parsed.tree.root_node).traits,
+        parsed,
+    )
     project = Project(root=Path("."), files={path: parsed}, classes=symbols.classes)
 
     assert is_gated(

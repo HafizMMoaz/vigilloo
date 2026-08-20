@@ -10,15 +10,12 @@ import sys
 import time
 from pathlib import Path
 
-# Add src to python path so we can import vigilloo modules
-sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
-
-from src import __version__
-from src.graph import load_project
-from src.models import WalkStats
-from src.report import build_document
-from src.rules import RULESET_HASH, scan_project
-from src.workspace import Workspace
+from vigilloo import __version__, store
+from vigilloo.graph import load_project
+from vigilloo.models import WalkStats
+from vigilloo.report import build_document
+from vigilloo.rules import RULESET_HASH, scan_project
+from vigilloo.workspace import Workspace
 
 
 def get_peak_rss_mb() -> float:
@@ -70,11 +67,24 @@ def main() -> None:
 
     # 4. Report
     t_start = time.perf_counter()
-    from src.graph import coverage
+    from vigilloo.graph import coverage
 
     scan_coverage = coverage(project, stats)
     build_document(findings, scan_coverage, engine_version=__version__, ruleset_hash=RULESET_HASH)
     stages["report"] = time.perf_counter() - t_start
+
+    # 5. Store Write
+    t_start = time.perf_counter()
+    with store.connect(workspace) as conn:
+        store.record_scan(
+            conn=conn,
+            project=project,
+            findings=findings,
+            engine_version=__version__,
+            ruleset_hash=RULESET_HASH,
+            duration_ms=0,
+        )
+    stages["store write"] = time.perf_counter() - t_start
 
     total_time = time.perf_counter() - t0
     peak_rss = get_peak_rss_mb()

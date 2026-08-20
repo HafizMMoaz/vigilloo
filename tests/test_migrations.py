@@ -3,7 +3,7 @@ from pathlib import Path
 from vigilloo.laravel.migrations import extract_schema
 from vigilloo.laravel.models import Protection, model_config
 from vigilloo.models import Span
-from vigilloo.parser import parse_source
+from vigilloo.parser import collect_nodes, parse_source
 from vigilloo.symbols import ClassInfo
 
 
@@ -35,7 +35,9 @@ return new class extends Migration {
 """
     parsed = parse_source(Path("database/migrations/2026_01_01_000000_create_tables.php"), code)
     files = {parsed.path: parsed}
-    schema = extract_schema(files)
+    schema = extract_schema(
+        {p: collect_nodes(f.tree.root_node).scoped_calls for p, f in files.items()}, files
+    )
 
     assert "users" in schema
     assert schema["users"] == {

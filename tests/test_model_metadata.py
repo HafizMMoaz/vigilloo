@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from vigilloo.laravel.models import extract_model_metadata
-from vigilloo.parser import parse_source
+from vigilloo.parser import collect_nodes, parse_source
 from vigilloo.symbols import extract_symbols
 
 
@@ -47,7 +47,13 @@ class User extends Model {
 }
 """
     parsed = parse_source(Path("app/Models/User.php"), code)
-    symbols = extract_symbols(parsed)
+    symbols = extract_symbols(
+        collect_nodes(parsed.tree.root_node).namespaces,
+        collect_nodes(parsed.tree.root_node).imports,
+        collect_nodes(parsed.tree.root_node).classes,
+        collect_nodes(parsed.tree.root_node).traits,
+        parsed,
+    )
 
     meta = extract_model_metadata(parsed, symbols, "App\\Models\\User")
     assert meta is not None
