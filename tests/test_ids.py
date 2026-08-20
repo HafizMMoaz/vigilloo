@@ -4,7 +4,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from vigilloo.ids import node_id
-from vigilloo.parser import parse_source
+from vigilloo.parser import collect_nodes, parse_source
 from vigilloo.symbols import extract_symbols
 
 _PROJECT_ID = 1
@@ -46,7 +46,13 @@ def _node_ids(source: str) -> list[str]:
     docs/22-testing asks for is that the *whole derivation* survives a reformat, and it is the
     parser that decides what fqn a reformatted class has.
     """
-    symbols = extract_symbols(parse_source(_REL_PATH, source.encode()))
+    symbols = extract_symbols(
+        collect_nodes(parse_source(_REL_PATH, source.encode()).tree.root_node).namespaces,
+        collect_nodes(parse_source(_REL_PATH, source.encode()).tree.root_node).imports,
+        collect_nodes(parse_source(_REL_PATH, source.encode()).tree.root_node).classes,
+        collect_nodes(parse_source(_REL_PATH, source.encode()).tree.root_node).traits,
+        parse_source(_REL_PATH, source.encode()),
+    )
     ids = []
     for info in symbols.classes.values():
         ids.append(node_id(_PROJECT_ID, "class", info.fqn))

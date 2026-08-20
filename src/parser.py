@@ -16,6 +16,20 @@ from tree_sitter import Language, Node, Parser, Tree
 from .models import ParseFailure, Span, Suppression
 
 
+@dataclass
+class FileRecord:
+    """Nodes collected during a single pass over a file's AST."""
+
+    namespaces: list[Node]
+    imports: list[Node]
+    classes: list[Node]
+    traits: list[Node]
+    member_calls: list[Node]
+    scoped_calls: list[Node]
+    properties: list[Node]
+    comments: list[Node]
+
+
 @cache
 def _parser() -> Parser:
     # The text-mode `php` grammar handles `?>` ... `<?php` interleaving.
@@ -68,6 +82,30 @@ def walk(node: Node) -> Iterator[Node]:
     yield node
     for child in node.children:
         yield from walk(child)
+
+
+def collect_nodes(root: Node) -> FileRecord:
+    """Single pass over the AST to collect constructs for all downstream extractors."""
+    record = FileRecord([], [], [], [], [], [], [], [])
+    for node in walk(root):
+        t = node.type
+        if t == "namespace_definition":
+            record.namespaces.append(node)
+        elif t == "namespace_use_declaration":
+            record.imports.append(node)
+        elif t in ("class_declaration", "enum_declaration"):
+            record.classes.append(node)
+        elif t == "trait_declaration":
+            record.traits.append(node)
+        elif t == "member_call_expression":
+            record.member_calls.append(node)
+        elif t == "scoped_call_expression":
+            record.scoped_calls.append(node)
+        elif t == "property_element":
+            record.properties.append(node)
+        elif t == "comment":
+            record.comments.append(node)
+    return record
 
 
 def find_all(node: Node, type_name: str) -> list[Node]:
@@ -194,8 +232,8 @@ def error_constructs(parsed: ParsedFile) -> tuple[ParseFailure, ...]:
     return tuple(sorted(failures))
 
 
-def extract_suppressions(parsed: ParsedFile) -> list[Suppression]:
-    """Extract inline suppressions from a parsed file.
+def extract_suppressions(comments: list[Node], parsed: ParsedFile) -> list[Suppression]:
+    """Extract inline suppressions from a pre-collected list of comments.
 
     Matches `// vigilloo-ignore rule-id -- justification`.
     If the justification or rule ID is missing, `is_invalid` is True.
@@ -209,7 +247,7 @@ def extract_suppressions(parsed: ParsedFile) -> list[Suppression]:
     # The prefix `// vigilloo-ignore` or `/* vigilloo-ignore` is handled via a broader match first.
     ignore_pattern = re.compile(r"vigilloo-ignore\s*([a-z0-9.-]+)?(?:\s*--\s*(.+))?")
 
-    for node in find_all(parsed.tree.root_node, "comment"):
+    for node in comments:
         text = node_text(node, parsed.source).strip()
 
         # Strip //, /*, #, */

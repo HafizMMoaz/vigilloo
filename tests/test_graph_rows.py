@@ -15,7 +15,7 @@ from vigilloo.graph import GraphRows, Project, graph_rows, load_project
 from vigilloo.ids import node_id
 from vigilloo.laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
 from vigilloo.models import Finding, PathStep, Span
-from vigilloo.parser import parse_source
+from vigilloo.parser import collect_nodes, parse_source
 from vigilloo.store import connect, record_scan
 from vigilloo.symbols import extract_symbols
 from vigilloo.workspace import Workspace
@@ -32,7 +32,13 @@ def _rows(project: Project, project_id: int = 1) -> GraphRows:
 def _project_from(source: str, path: str = "app/Example.php") -> Project:
     rel = Path(path)
     parsed = parse_source(rel, source.encode())
-    syms = extract_symbols(parsed)
+    syms = extract_symbols(
+        collect_nodes(parsed.tree.root_node).namespaces,
+        collect_nodes(parsed.tree.root_node).imports,
+        collect_nodes(parsed.tree.root_node).classes,
+        collect_nodes(parsed.tree.root_node).traits,
+        parsed,
+    )
     return Project(
         root=Path("."),
         files={rel: parsed},
@@ -163,7 +169,13 @@ def test_a_route_to_an_inherited_action_handles_the_real_method_node() -> None:
         route_file,
         b"<?php\nuse App\\Child;\nRoute::get('/child', [Child::class, 'index']);\n",
     )
-    route_symbols = extract_symbols(route_parsed)
+    route_symbols = extract_symbols(
+        collect_nodes(route_parsed.tree.root_node).namespaces,
+        collect_nodes(route_parsed.tree.root_node).imports,
+        collect_nodes(route_parsed.tree.root_node).classes,
+        collect_nodes(route_parsed.tree.root_node).traits,
+        route_parsed,
+    )
 
     project.files[route_file] = route_parsed
     project.symbols[route_file] = route_symbols

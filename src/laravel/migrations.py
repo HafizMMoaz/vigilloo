@@ -113,11 +113,12 @@ def _extract_columns_from_call(
     return [col] if col else []
 
 
-def _extract_file_schema(parsed: ParsedFile, schema: dict[str, set[str]]) -> None:
+def _extract_file_schema(
+    scoped_calls: list[Node], parsed: ParsedFile, schema: dict[str, set[str]]
+) -> None:
     source = parsed.source
-    root = parsed.tree.root_node
 
-    for call_node in find_all(root, "scoped_call_expression"):
+    for call_node in scoped_calls:
         scope = call_node.child_by_field_name("scope")
         name = call_node.child_by_field_name("name")
         if scope is None or name is None:
@@ -149,11 +150,14 @@ def _extract_file_schema(parsed: ParsedFile, schema: dict[str, set[str]]) -> Non
                         schema[table_name].add(c)
 
 
-def extract_schema(files: dict[Path, ParsedFile]) -> dict[str, set[str]]:
+def extract_schema(
+    scoped_calls_by_file: dict[Path, list[Node]],
+    files: dict[Path, ParsedFile],
+) -> dict[str, set[str]]:
     """Extract database table column schemas from migration files."""
     schema: dict[str, set[str]] = defaultdict(set)
-    for _, parsed in files.items():
+    for path, parsed in files.items():
         if b"Schema::" not in parsed.source:
             continue
-        _extract_file_schema(parsed, schema)
+        _extract_file_schema(scoped_calls_by_file.get(path, []), parsed, schema)
     return {k: set(v) for k, v in schema.items()}

@@ -58,5 +58,5 @@ def run_benchmark(n_ifs: int):
 
 
 if __name__ == "__main__":
-    for i in [1, 5, 10, 12, 14, 16]:
+    for i in [1, 10, 14, 16, 20, 24, 32]:
         run_benchmark(i)

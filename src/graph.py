@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .summaries import FunctionSummary
 from .parser import (
     ParsedFile,
+    collect_nodes,
     error_constructs,
     extract_suppressions,
     find_all,
@@ -89,6 +90,9 @@ class Project:
     config: ProjectConfig = field(default_factory=ProjectConfig)
     vigilloo_config: VigillooConfig = field(default_factory=VigillooConfig)
     suppressions: list[Suppression] = field(default_factory=list)
+    _method_node_cache: dict[str, tuple[Node, ParsedFile] | None] = field(
+        default_factory=dict, init=False, repr=False, hash=False, compare=False
+    )
 
     @cached_property
     def custom_sources(self) -> dict[tuple[str, str], frozenset[TaintKind]]:
@@ -250,11 +254,16 @@ class Project:
         and a second private copy would be a second place to get the matching
         wrong.
         """
+        if fqn in self._method_node_cache:
+            return self._method_node_cache[fqn]
+
         symbol = self.method(fqn)
         if symbol is None:
+            self._method_node_cache[fqn] = None
             return None
         parsed = self.files.get(symbol.span.file)
         if parsed is None:
+            self._method_node_cache[fqn] = None
             return None
         for method in find_all(parsed.tree.root_node, "method_declaration"):
             # The whole span, not its first line. Two declarations can share a line -
@@ -262,7 +271,11 @@ class Project:
             # line of perfectly ordinary PHP - and matching on the line alone would
             # hand back a different method's body while every counter reported success.
             if node_span(method, parsed.path) == symbol.span:
-                return method, parsed
+                result = (method, parsed)
+                self._method_node_cache[fqn] = result
+                return result
+
+        self._method_node_cache[fqn] = None
         return None
 
     def resolve_property_type(self, class_fqn: str, prop: str) -> str | None:
@@ -349,6 +362,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     autoload_roots = autoload.prefixes
     project = Project(root=root, autoload=autoload, vigilloo_config=workspace.config)
 
+    php_records = {}
     for path in _php_files(root):
         try:
             parsed = parse_php(path)
@@ -376,13 +390,19 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             project.parse_failures.extend(error_constructs(parsed))
 
         project.files[rel_path] = parsed
-        project.suppressions.extend(extract_suppressions(parsed))
-        syms = extract_symbols(parsed, autoload_roots)
+
+        record = collect_nodes(parsed.tree.root_node)
+        php_records[rel_path] = record
+
+        project.suppressions.extend(extract_suppressions(record.comments, parsed))
+        syms = extract_symbols(
+            record.namespaces, record.imports, record.classes, record.traits, parsed, autoload_roots
+        )
         project.symbols[rel_path] = syms
         project.classes.update(syms.classes)
         project.traits.update(syms.traits)
 
-        file_bindings = extract_bindings(parsed, syms, autoload_roots)
+        file_bindings = extract_bindings(record.member_calls, parsed, syms, autoload_roots)
         for interface, implementations in file_bindings.items():
             project.bindings.setdefault(interface, []).extend(implementations)
 
@@ -391,8 +411,15 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     from .laravel.policies import extract_explicit_policies
     from .laravel.routes import discover_route_files
 
-    project.schema.update(extract_schema(project.files))
-    project.policies.update(extract_explicit_policies(project.files, project.resolve_class_name))
+    properties_by_file = {p: r.properties for p, r in php_records.items()}
+    scoped_calls_by_file = {p: r.scoped_calls for p, r in php_records.items()}
+
+    project.schema.update(extract_schema(scoped_calls_by_file, project.files))
+    project.policies.update(
+        extract_explicit_policies(
+            properties_by_file, scoped_calls_by_file, project.files, project.resolve_class_name
+        )
+    )
 
     middleware_groups = {}
     for rel_path, parsed in project.files.items():
@@ -431,7 +458,9 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             project.parse_failures.extend(error_constructs(parsed))
 
         project.blade[rel_path] = parsed
-        project.suppressions.extend(extract_suppressions(parsed))
+
+        record = collect_nodes(parsed.tree.root_node)
+        project.suppressions.extend(extract_suppressions(record.comments, parsed))
         project.blade_lines[rel_path] = text.splitlines()
 
     project.routes.sort(key=lambda r: (str(r.span.file), r.span.start_line))
@@ -748,7 +777,25 @@ class _RowBuilder:
                                 )
                             )
 
-        for node in find_all(method, "object_creation_expression"):
+        object_creations = []
+        function_calls = []
+        scoped_calls = []
+        member_calls = []
+
+        from .parser import walk
+
+        for node in walk(method):
+            t = node.type
+            if t == "object_creation_expression":
+                object_creations.append(node)
+            elif t == "function_call_expression":
+                function_calls.append(node)
+            elif t == "scoped_call_expression":
+                scoped_calls.append(node)
+            elif t == "member_call_expression":
+                member_calls.append(node)
+
+        for node in object_creations:
             target = _resolved_class(self.project, parsed, node)
             if target is None:
                 self.unresolved_calls += 1
@@ -757,7 +804,7 @@ class _RowBuilder:
                 EdgeRow(src_id, self._id(_KIND_CLASS, target), "INSTANTIATES", resolution="static")
             )
 
-        for node in find_all(method, "function_call_expression"):
+        for node in function_calls:
             target = _container_resolved_class(self.project, parsed, node)
             if target and target in self.project.bindings:
                 candidates = self.project.bindings[target]
@@ -773,7 +820,7 @@ class _RowBuilder:
                         )
                     )
 
-        for node in find_all(method, "scoped_call_expression"):
+        for node in scoped_calls:
             target = _container_resolved_class(self.project, parsed, node)
             if target and target in self.project.bindings:
                 candidates = self.project.bindings[target]
@@ -789,22 +836,37 @@ class _RowBuilder:
                         )
                     )
 
-        for kind in _CALL_NODES:
-            for node in find_all(method, kind):
-                resolved = self._call_targets(node, parsed, class_fqn)
-                if not resolved:
-                    self.unresolved_calls += 1
-                    continue
-                for target_fqn, resolution, confidence in resolved:
-                    self.edges.append(
-                        EdgeRow(
-                            src_id,
-                            self._id(_KIND_METHOD, target_fqn),
-                            "CALLS",
-                            confidence=confidence,
-                            resolution=resolution,
-                        )
+        for node in member_calls:
+            resolved = self._call_targets(node, parsed, class_fqn)
+            if not resolved:
+                self.unresolved_calls += 1
+                continue
+            for target_fqn, resolution, confidence in resolved:
+                self.edges.append(
+                    EdgeRow(
+                        src_id,
+                        self._id(_KIND_METHOD, target_fqn),
+                        "CALLS",
+                        confidence=confidence,
+                        resolution=resolution,
                     )
+                )
+
+        for node in scoped_calls:
+            resolved = self._call_targets(node, parsed, class_fqn)
+            if not resolved:
+                self.unresolved_calls += 1
+                continue
+            for target_fqn, resolution, confidence in resolved:
+                self.edges.append(
+                    EdgeRow(
+                        src_id,
+                        self._id(_KIND_METHOD, target_fqn),
+                        "CALLS",
+                        confidence=confidence,
+                        resolution=resolution,
+                    )
+                )
 
     def _call_targets(
         self, call: Node, parsed: ParsedFile, class_fqn: str

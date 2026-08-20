@@ -33,7 +33,15 @@ from tree_sitter import Node
 
 from vigilloo.laravel.vocabulary import SANITIZERS, sanitizer_clears
 from vigilloo.models import ALL_KINDS, TaintKind
-from vigilloo.parser import ParsedFile, node_span, node_text, parse_php, parse_source, walk
+from vigilloo.parser import (
+    ParsedFile,
+    collect_nodes,
+    node_span,
+    node_text,
+    parse_php,
+    parse_source,
+    walk,
+)
 from vigilloo.symbols import extract_symbols
 from vigilloo.taint import LocalState, expr_kinds
 
@@ -203,7 +211,13 @@ def test_generated_php_parses_and_walks_without_crashing(source: str) -> None:
 
     # Symbol extraction is the first consumer of every tree and the one that would crash on
     # an unexpected shape, so "parses without crashing" is not worth much without it.
-    symbols = extract_symbols(parsed)
+    symbols = extract_symbols(
+        collect_nodes(parsed.tree.root_node).namespaces,
+        collect_nodes(parsed.tree.root_node).imports,
+        collect_nodes(parsed.tree.root_node).classes,
+        collect_nodes(parsed.tree.root_node).traits,
+        parsed,
+    )
     assert "App\\Http\\Controllers\\GeneratedController" in symbols.classes
 
 
