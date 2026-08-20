@@ -75,10 +75,13 @@ known-first-party = ["vigilloo"]
 "src/report/terminal.py" = ["T20"]
 "scripts/dump_ast.py" = ["T20"]
 "scripts/debt.py" = ["T20"]
+"scripts/corpus.py" = ["T20"]
 
 [tool.mypy]
 strict = true
-files = ["src"]
+# scripts/corpus.py computes the NFR-6 precision number that gates the release. A silent
+# type error there is a wrong number in a report people trust, so it is checked like src/.
+files = ["src", "scripts/corpus.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
