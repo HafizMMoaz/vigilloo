@@ -230,3 +230,55 @@ def test_scan_app_removes_the_vigilloo_workspace_even_when_the_scan_fails(
 
     assert not workspace.exists()
     assert not out.exists()
+
+
+def test_triage_round_trips_and_sorts_by_fingerprint(tmp_path: Path) -> None:
+    """Invariant 8: the file must be byte-identical given the same entries in any order."""
+    from corpus import TriageEntry, load_triage, save_triage
+
+    path = tmp_path / "monica.yml"
+    entries = {
+        "ffff000000000001": TriageEntry(
+            "false", "laravel.no-throttle", "Public API.", "routes/api.php:9"
+        ),
+        "0000000000000002": TriageEntry("true", "php.sql-injection", "Unbound.", "app/X.php:44"),
+    }
+    save_triage(path, pin="abc123", ruleset="b35162f4d187c91c", entries=entries)
+    first = path.read_text(encoding="utf-8")
+
+    save_triage(
+        path,
+        pin="abc123",
+        ruleset="b35162f4d187c91c",
+        entries=dict(reversed(list(entries.items()))),
+    )
+    assert path.read_text(encoding="utf-8") == first
+    assert first.index("0000000000000002") < first.index("ffff000000000001")
+
+    assert load_triage(path) == entries
+
+
+def test_load_triage_rejects_an_unknown_verdict(tmp_path: Path) -> None:
+    """A typo in a hand-edited verdict must not silently drop out of the precision count."""
+    from corpus import load_triage
+
+    path = tmp_path / "monica.yml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "pin": "abc123",
+                "reviewed_ruleset": "b35162f4d187c91c",
+                "findings": {"aaaa000000000001": {"verdict": "yes", "rule": "php.sql-injection"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="yes"):
+        load_triage(path)
+
+
+def test_load_triage_on_a_missing_file_is_empty(tmp_path: Path) -> None:
+    """A newly enrolled application has no verdicts yet; that is not an error."""
+    from corpus import load_triage
+
+    assert load_triage(tmp_path / "absent.yml") == {}

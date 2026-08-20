@@ -140,6 +140,72 @@ def check_coverage(name: str, document: dict[str, object]) -> None:
         )
 
 
+VERDICTS = ("true", "false", "unreviewed")
+Verdict = str
+
+
+@dataclass(frozen=True)
+class TriageEntry:
+    """One human verdict on one finding.
+
+    `seen_at` is written by the harness and never read back. It exists so a reviewer opening
+    the file months later is not reading bare hex. Reading it would create a second answer
+    to where a finding is, and the two would disagree after the first pin bump.
+    """
+
+    verdict: Verdict
+    rule: str
+    note: str = ""
+    seen_at: str = ""
+
+
+def load_triage(path: Path) -> dict[str, TriageEntry]:
+    """Read one application's verdicts, keyed by fingerprint."""
+    if not path.exists():
+        return {}
+    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    entries: dict[str, TriageEntry] = {}
+    for fingerprint, entry in (document.get("findings") or {}).items():
+        verdict = entry.get("verdict", "unreviewed")
+        if verdict not in VERDICTS:
+            raise ValueError(
+                f"{path.name}: {fingerprint} has unknown verdict {verdict!r}, "
+                f"expected one of {VERDICTS}"
+            )
+        entries[str(fingerprint)] = TriageEntry(
+            verdict=verdict,
+            rule=str(entry.get("rule", "")),
+            note=str(entry.get("note", "")),
+            seen_at=str(entry.get("seen_at", "")),
+        )
+    return entries
+
+
+def save_triage(path: Path, pin: str, ruleset: str, entries: dict[str, TriageEntry]) -> None:
+    """Write verdicts, sorted by fingerprint.
+
+    `sort_keys=True` plus the sorted dict keeps the file byte-identical for the same
+    content, so a diff shows what a human changed rather than what a dict reordered.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        "pin": pin,
+        "reviewed_ruleset": ruleset,
+        "findings": {
+            fingerprint: {
+                "verdict": entry.verdict,
+                "rule": entry.rule,
+                "note": entry.note,
+                "seen_at": entry.seen_at,
+            }
+            for fingerprint, entry in sorted(entries.items())
+        },
+    }
+    path.write_text(
+        yaml.safe_dump(document, sort_keys=True, default_flow_style=False), encoding="utf-8"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Corpus precision harness.")
     sub = parser.add_subparsers(dest="command", required=True)
