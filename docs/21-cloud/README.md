@@ -35,7 +35,7 @@ CLI on 200 repositories every night and reads the output.
 
 **Policy** - organisation-wide rule configuration, required severity gates, mandatory
 suppression justifications, expiry enforcement on suppressions. Policies flow down to CI and to
-local runs via configuration; the client remains the same open-source binary.
+local runs via configuration; the client remains the same binary.
 
 **Fleet view** - the security posture of an entire portfolio, ranked by real risk (severity ×
 reachability × exposure), not by raw finding count.
@@ -48,7 +48,7 @@ retention problem, and one organisations pay for precisely because it is tedious
 
 ## Architecture direction
 
-Scanning runs in ephemeral, isolated workers using the same open-source CLI - the cloud
+Scanning runs in ephemeral, isolated workers using the same CLI - the cloud
 orchestrates and stores; it does not reimplement analysis. Results land in Postgres (findings,
 history, policy) with object storage for reports and graph artefacts. Neo4j becomes viable here
 for cross-repository graph queries where SQLite does not fit.
