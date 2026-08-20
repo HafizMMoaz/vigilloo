@@ -186,7 +186,9 @@ Reporting it twice is how a corpus report becomes the noise Task 9 exists to mea
 3. Take the newest commit still declaring `^9`, `^10` or `^11`.
 4. Record SHA, Laravel version, PHP version, PHP file count and LOC in `corpus/pins.yml`.
 
-Note: the history walk should be written to a script file and run, not pasted as a single multi-line shell invocation. This is a practical constraint to prevent the shell from garbling the loop.
+Note: write the history walk in step 2 to a script file and run that, rather than pasting it as
+a single multi-line shell invocation. The loop garbles when pasted, which cost time the first
+time this was executed.
 
 Step 4 is not bookkeeping. A pin with no recorded rationale cannot be audited, and when v1.0
 widens the target, whoever re-pins needs to know why each SHA was chosen.
@@ -279,4 +281,13 @@ Docs are the spec, and these land in the same commits as the work:
 2. **Which applications reach wave 1.** Depends on measured scan times, which depend on the
    profiling work.
 3. **Which CVEs map to existing rules.** Research, scheduled as its own plan step.
-4. **Vigilloo's visibility into Laravel 11 routing and middleware.** `src/graph.py:52` excludes `bootstrap/` from discovery. In Laravel 11 and later, `bootstrap/app.php` is where routing and middleware are configured. This means Vigilloo cannot see the middleware stack or the route-file registration, a probable false-negative source for framework-structural rules. Fixing this means changing discovery and re-baselining every fixture's coverage numbers, so it wants its own task.
+4. **Vigilloo's visibility into Laravel 11 routing and middleware.** `src/graph.py:52` excludes
+   `bootstrap/` from discovery. That was correct for Laravel 9 and 10, where the directory held
+   a trivial bootstrapper and a cache directory. In Laravel 11 and later, `bootstrap/app.php` is
+   where routing and middleware are configured: it carries `->withRouting(...)` and
+   `->withMiddleware(...)`. So on any Laravel 11 application the middleware stack and the
+   route-file registration are invisible to the engine, a probable false-negative source for
+   exactly the framework-structural rules `CLAUDE.md` calls the differentiator. Surfaced by the
+   first enrolled application, whose scan reported 25 files discovered against 27 on disk.
+   Fixing it means changing discovery and re-baselining every fixture's coverage numbers, so it
+   wants its own task.
