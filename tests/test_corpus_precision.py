@@ -335,3 +335,46 @@ def test_quota_selection_is_stable_across_runs() -> None:
         list(reversed(findings)), quota=2
     )
     assert select_for_review(findings, quota=2) == ["aaa", "bbb"]
+
+
+def test_seeding_preserves_an_existing_human_verdict() -> None:
+    from corpus import TriageEntry, seed_entries
+
+    findings: list[dict[str, object]] = [
+        {
+            "fingerprint": "abc",
+            "rule_id": "r",
+            "location": {"file": "app/Test.php", "start_line": 10},
+        }
+    ]
+    existing = {
+        "abc": TriageEntry(
+            verdict="false", rule="r", note="human said no", seen_at="app/Test.php:10"
+        )
+    }
+
+    seeded = seed_entries(findings, existing, quota=2)
+    assert "abc" in seeded
+    entry = seeded["abc"]
+    assert entry.verdict == "false"
+    assert entry.note == "human said no"
+
+
+def test_seeding_adds_new_findings_as_unreviewed() -> None:
+    from corpus import TriageEntry, seed_entries
+
+    findings: list[dict[str, object]] = [
+        {
+            "fingerprint": "xyz",
+            "rule_id": "r2",
+            "location": {"file": "app/New.php", "start_line": 42},
+        }
+    ]
+    existing: dict[str, TriageEntry] = {}
+
+    seeded = seed_entries(findings, existing, quota=2)
+    assert "xyz" in seeded
+    entry = seeded["xyz"]
+    assert entry.verdict == "unreviewed"
+    assert entry.rule == "r2"
+    assert entry.seen_at == "app/New.php:42"

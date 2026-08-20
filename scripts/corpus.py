@@ -247,6 +247,34 @@ def select_for_review(findings: list[dict[str, object]], quota: int = DEFAULT_QU
     return sorted(selected)
 
 
+def seed_entries(
+    findings: list[dict[str, object]],
+    existing: dict[str, TriageEntry],
+    quota: int = DEFAULT_QUOTA,
+) -> dict[str, TriageEntry]:
+    """Seed every selected finding as unreviewed, preserving existing human verdicts.
+
+    This function exists separately from file I/O because it is the one place a human
+    verdict could be destroyed, making it the one place that must be directly testable.
+    """
+    findings_by_fp = {str(f["fingerprint"]): f for f in findings}
+    seeded = dict(existing)
+
+    for fingerprint in select_for_review(findings, quota=quota):
+        if fingerprint in seeded:
+            continue
+        finding = findings_by_fp[fingerprint]
+        location = finding["location"]
+        assert isinstance(location, dict)
+        seeded[fingerprint] = TriageEntry(
+            verdict="unreviewed",
+            rule=str(finding["rule_id"]),
+            note="",
+            seen_at=f"{location['file']}:{location['start_line']}",
+        )
+    return seeded
+
+
 def compute_precision(
     findings: list[dict[str, object]], triage: dict[str, TriageEntry]
 ) -> list[RulePrecision]:
@@ -281,6 +309,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     scan = sub.add_parser("scan", help="Scan enrolled applications.")
     scan.add_argument("app", nargs="?", help="Application name; omit to scan all.")
+    triage_parser = sub.add_parser("triage", help="Record verdicts for one application.")
+    triage_parser.add_argument("app")
+    triage_parser.add_argument("--quota", type=int, default=DEFAULT_QUOTA)
     sub.add_parser("report", help="Print the precision table and drift.")
 
     args = parser.parse_args(argv)
@@ -291,6 +322,31 @@ def main(argv: list[str] | None = None) -> int:
         for pin in selected:
             report = scan_app(pin.name, CORPUS / pin.name, REPORTS / f"{pin.name}.json")
             print(f"{pin.name}: wrote {report.relative_to(REPO_ROOT)}")
+        return 0
+
+    if args.command == "triage":
+        pin = pins[args.app]
+        report_path = REPORTS / f"{pin.name}.json"
+        if not report_path.exists():
+            raise SystemExit(f"{pin.name}: no report; run `scan` first")
+        document = json.loads(report_path.read_text(encoding="utf-8"))
+
+        tool = document.get("tool", {})
+        assert isinstance(tool, dict)
+        ruleset = str(tool.get("ruleset_hash", ""))
+
+        findings = document.get("findings", [])
+        assert isinstance(findings, list)
+
+        triage_path = CORPUS / "triage" / f"{pin.name}.yml"
+        entries = load_triage(triage_path)
+
+        seeded = seed_entries(findings, entries, quota=args.quota)
+
+        save_triage(triage_path, pin=pin.pin, ruleset=ruleset, entries=seeded)
+        pending = sum(1 for e in seeded.values() if e.verdict == "unreviewed")
+        print(f"{pin.name}: {len(seeded)} selected, {pending} awaiting a verdict")
+        print(f"Edit {triage_path.relative_to(REPO_ROOT)} and set each verdict to true or false.")
         return 0
 
     if args.command == "report":
