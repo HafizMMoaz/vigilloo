@@ -137,7 +137,7 @@ def test_scan_app_on_malformed_json_raises_and_writes_no_report(
     root.mkdir()
     out = tmp_path / "report.json"
 
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(RuntimeError, match="demo: scan produced unparseable JSON:"):
         scan_app("demo", root, out)
     assert not out.exists()
 
@@ -440,3 +440,53 @@ def test_report_marks_a_missing_report_and_returns_non_zero(
 
     assert exit_code != 0
     assert "app1: NO REPORT - scan failed or was never run" in stdout
+
+
+def test_scan_continues_when_one_application_produces_unparseable_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    import json
+    import subprocess
+
+    from corpus import Pin, main
+
+    pins = {
+        "app1": Pin(name="app1", repo="repo", pin="1", wave=1, pr_subset=False),
+        "app2": Pin(name="app2", repo="repo", pin="2", wave=1, pr_subset=False),
+    }
+    monkeypatch.setattr(corpus, "load_pins", lambda *a, **kw: pins)
+
+    # Use a temp dir so scan_app can create and remove paths safely
+    monkeypatch.setattr(corpus, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(corpus, "CORPUS", tmp_path / "corpus")
+    monkeypatch.setattr(corpus, "REPORTS", tmp_path / "reports")
+
+    scanned = []
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        cmd = args[0]
+        assert isinstance(cmd, list)
+        # cmd looks like ["uv", "run", "vigilloo", "scan", "...", "--format", "json"]
+        app_name = Path(str(cmd[4])).name
+        scanned.append(app_name)
+
+        if app_name == "app1":
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="{not json", stderr=""
+            )
+        else:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=json.dumps({"findings": [], "coverage": {"parse_success_rate": 1.0}}),
+                stderr="",
+            )
+
+    monkeypatch.setattr(corpus.subprocess, "run", fake_run)
+
+    exit_code = main(["scan"])
+    stdout = capsys.readouterr().out
+
+    assert scanned == ["app1", "app2"]
+    assert exit_code != 0
+    assert "app1" in stdout

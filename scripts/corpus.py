@@ -106,7 +106,10 @@ def scan_app(name: str, root: Path, out: Path, timeout_s: int = DEFAULT_TIMEOUT_
 
         # Parse before writing. A truncated document must fail here rather than become a
         # report that reads as "no findings".
-        document = json.loads(completed.stdout)
+        try:
+            document = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"{name}: scan produced unparseable JSON: {exc}") from exc
         if "findings" not in document or "coverage" not in document:
             raise RuntimeError(f"{name}: report is missing required keys; refusing to record it")
 
