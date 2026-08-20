@@ -35,8 +35,7 @@ not as a performance report:
 | Peak RSS | ~156 MB, against NFR-2's 2 GB ceiling |
 | CPU | 98%+ throughout, single core |
 
-Two conclusions follow. First, the problem is **time, not space**: no leak, no thrash, no hang,
-something superlinear in file count. Second, the engine has never been shown more than 36 files,
+Two conclusions follow. First, the problem is **time, not space**: no leak, no thrash, no hang. As established in the profiling work, the cost is exponential in intra-method branch count and flat per file. Second, the engine has never been shown more than 36 files,
 which is why no existing test could have caught this.
 
 ### Consequence for sequencing
