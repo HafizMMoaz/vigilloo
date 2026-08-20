@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from tree_sitter import Node
 
 from .models import Span, Symbol
-from .parser import ParsedFile, find_all, find_any, node_span, node_text
+from .parser import ParsedFile, find_all, node_span, node_text
 
 _BUILTIN_TYPES = frozenset(
     {
@@ -75,18 +75,18 @@ class FileSymbols:
     traits: dict[str, ClassInfo] = field(default_factory=dict)
 
 
-def _namespace(root: Node, source: bytes) -> str:
-    for node in find_all(root, "namespace_definition"):
+def _namespace(namespaces: list[Node], source: bytes) -> str:
+    for node in namespaces:
         name = node.child_by_field_name("name")
         if name is not None:
             return node_text(name, source)
     return ""
 
 
-def _imports(root: Node, source: bytes) -> dict[str, str]:
+def _imports(import_nodes: list[Node], source: bytes) -> dict[str, str]:
     """Map short name (or alias) to fully qualified name."""
     imports: dict[str, str] = {}
-    for node in find_all(root, "namespace_use_declaration"):
+    for node in import_nodes:
         for clause in find_all(node, "namespace_use_clause"):
             text = node_text(clause, source).strip()
             if " as " in text:
@@ -414,7 +414,12 @@ def _extract_type(
 
 
 def extract_symbols(
-    parsed: ParsedFile, autoload_roots: frozenset[str] = frozenset()
+    namespaces: list[Node],
+    import_nodes: list[Node],
+    class_nodes: list[Node],
+    trait_nodes: list[Node],
+    parsed: ParsedFile,
+    autoload_roots: frozenset[str] = frozenset(),
 ) -> FileSymbols:
     """The symbol table for one file.
 
@@ -424,10 +429,9 @@ def extract_symbols(
     - the parser tests, and anything reasoning about one file in isolation -
     still gets file-local resolution rather than needing a `composer.json`.
     """
-    root = parsed.tree.root_node
     source = parsed.source
-    namespace = _namespace(root, source)
-    imports = _imports(root, source)
+    namespace = _namespace(namespaces, source)
+    imports = _imports(import_nodes, source)
     classes: dict[str, ClassInfo] = {}
     traits: dict[str, ClassInfo] = {}
 
@@ -445,14 +449,14 @@ def extract_symbols(
     # are simply not method_declarations and are skipped. An enum has no
     # `base_clause` - `enum Status: string` is a backing type, not a parent - so
     # the parent it records is None, which is the truth rather than a default.
-    for declaration in find_any(root, ("class_declaration", "enum_declaration")):
+    for declaration in class_nodes:
         info = _extract_type(
             declaration, parsed, namespace, imports, autoload_roots, is_trait=False
         )
         if info is not None:
             classes[info.fqn] = info
 
-    for trait in find_all(root, "trait_declaration"):
+    for trait in trait_nodes:
         info = _extract_type(trait, parsed, namespace, imports, autoload_roots, is_trait=True)
         if info is not None:
             traits[info.fqn] = info

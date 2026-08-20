@@ -2,7 +2,7 @@ from pathlib import Path
 
 from vigilloo.graph import load_project
 from vigilloo.laravel.policies import extract_explicit_policies, find_policy
-from vigilloo.parser import parse_source
+from vigilloo.parser import collect_nodes, parse_source
 from vigilloo.rules import scan_project
 
 
@@ -31,7 +31,12 @@ class AuthServiceProvider extends ServiceProvider {
         }
         return mapping.get(name)
 
-    policies = extract_explicit_policies({path: parsed}, resolve_fn)
+    policies = extract_explicit_policies(
+        {path: collect_nodes(parsed.tree.root_node).properties},
+        {path: collect_nodes(parsed.tree.root_node).scoped_calls},
+        {path: parsed},
+        resolve_fn,
+    )
     assert policies["App\\Models\\Order"] == "App\\Policies\\CustomOrderPolicy"
     assert policies["App\\Models\\Invoice"] == "App\\Policies\\CustomInvoicePolicy"
 
@@ -60,7 +65,12 @@ class AuthServiceProvider {
         }
         return mapping.get(name)
 
-    policies = extract_explicit_policies({path: parsed}, resolve_fn)
+    policies = extract_explicit_policies(
+        {path: collect_nodes(parsed.tree.root_node).properties},
+        {path: collect_nodes(parsed.tree.root_node).scoped_calls},
+        {path: parsed},
+        resolve_fn,
+    )
     assert policies["App\\Models\\Product"] == "App\\Policies\\ProductGuard"
 
 
