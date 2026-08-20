@@ -274,7 +274,7 @@ class Project:
                 result = (method, parsed)
                 self._method_node_cache[fqn] = result
                 return result
-        
+
         self._method_node_cache[fqn] = None
         return None
 
@@ -783,6 +783,7 @@ class _RowBuilder:
         member_calls = []
 
         from .parser import walk
+
         for node in walk(method):
             t = node.type
             if t == "object_creation_expression":
