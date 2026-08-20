@@ -76,6 +76,8 @@ known-first-party = ["vigilloo"]
 "scripts/dump_ast.py" = ["T20"]
 "scripts/debt.py" = ["T20"]
 "scripts/corpus.py" = ["T20"]
+"scripts/benchmark.py" = ["T20"]
+"scripts/generate_synthetic.py" = ["T20"]
 
 [tool.mypy]
 strict = true
