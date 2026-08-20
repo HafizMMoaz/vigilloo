@@ -75,15 +75,19 @@ def main() -> None:
 
     # 5. Store Write
     t_start = time.perf_counter()
-    with store.connect(workspace) as conn:
-        store.record_scan(
-            conn=conn,
-            project=project,
-            findings=findings,
-            engine_version=__version__,
-            ruleset_hash=RULESET_HASH,
-            duration_ms=0,
-        )
+    conn = store.connect(workspace)
+    try:
+        with conn:
+            store.record_scan(
+                conn=conn,
+                project=project,
+                findings=findings,
+                engine_version=__version__,
+                ruleset_hash=RULESET_HASH,
+                duration_ms=0,
+            )
+    finally:
+        conn.close()
     stages["store write"] = time.perf_counter() - t_start
 
     total_time = time.perf_counter() - t0

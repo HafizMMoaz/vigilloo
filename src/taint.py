@@ -1310,6 +1310,8 @@ def _walk_method_ast(
 
     validated_fields = extract_validation_cleared(method_node, source, parsed)
 
+    explored_states: set[tuple[int, frozenset[tuple[str, frozenset[TaintKind]]]]] = set()
+
     def explore(
         block: BasicBlock,
         current_prefix: list[PathStep],
@@ -1317,6 +1319,11 @@ def _walk_method_ast(
         current_linear: dict[str, frozenset[TaintKind]],
         current_local_types: dict[str, str],
     ) -> None:
+        state_key = (block.id, frozenset(current_linear.items()))
+        if state_key in explored_states:
+            return
+        explored_states.add(state_key)
+
         prefix = current_prefix.copy()
         local_types = current_local_types.copy()
         linear_state = current_linear.copy()
