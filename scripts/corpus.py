@@ -319,9 +319,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "scan":
         selected = [pins[args.app]] if args.app else list(pins.values())
+        failures: dict[str, str] = {}
         for pin in selected:
-            report = scan_app(pin.name, CORPUS / pin.name, REPORTS / f"{pin.name}.json")
-            print(f"{pin.name}: wrote {report.relative_to(REPO_ROOT)}")
+            try:
+                report = scan_app(pin.name, CORPUS / pin.name, REPORTS / f"{pin.name}.json")
+                print(f"{pin.name}: wrote {report.relative_to(REPO_ROOT)}")
+            except RuntimeError as e:
+                print(f"{pin.name}: scan failed")
+                failures[pin.name] = str(e)
+
+        if failures:
+            print("\nFailures:")
+            for name, error in failures.items():
+                print(f"{name}: {error}")
+            return 1
         return 0
 
     if args.command == "triage":
@@ -350,10 +361,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "report":
+        has_missing = False
         for pin in pins.values():
             report_path = REPORTS / f"{pin.name}.json"
             if not report_path.exists():
-                raise SystemExit(f"{pin.name}: no report; run `scan` first")
+                print(f"{pin.name}: NO REPORT - scan failed or was never run")
+                has_missing = True
+                continue
             document = json.loads(report_path.read_text(encoding="utf-8"))
             findings = document["findings"]
             triage = load_triage(CORPUS / "triage" / f"{pin.name}.yml")
@@ -371,6 +385,9 @@ def main(argv: list[str] | None = None) -> int:
                 current=[str(f["fingerprint"]) for f in findings], approved=list(triage)
             )
             print(f"drift: {len(drift.added)} new, {len(drift.removed)} gone")
+
+        if has_missing:
+            return 1
         return 0
 
     return 1

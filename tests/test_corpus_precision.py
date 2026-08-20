@@ -378,3 +378,65 @@ def test_seeding_adds_new_findings_as_unreviewed() -> None:
     assert entry.verdict == "unreviewed"
     assert entry.rule == "r2"
     assert entry.seen_at == "app/New.php:42"
+
+
+def test_scan_continues_after_one_application_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from corpus import Pin, main
+
+    pins = {
+        "app1": Pin(name="app1", repo="repo", pin="1", wave=1, pr_subset=False),
+        "app2": Pin(name="app2", repo="repo", pin="2", wave=1, pr_subset=False),
+    }
+    monkeypatch.setattr(corpus, "load_pins", lambda *a, **kw: pins)
+
+    scanned = []
+
+    def fake_scan_app(name: str, *args: object, **kwargs: object) -> Path:
+        scanned.append(name)
+        if name == "app1":
+            raise RuntimeError("fake timeout")
+        return corpus.REPORTS / f"{name}.json"
+
+    monkeypatch.setattr(corpus, "scan_app", fake_scan_app)
+
+    exit_code = main(["scan"])
+    assert exit_code != 0
+    assert scanned == ["app1", "app2"]
+
+
+def test_scan_names_the_failed_application_in_its_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from corpus import Pin, main
+
+    pins = {
+        "app1": Pin(name="app1", repo="repo", pin="1", wave=1, pr_subset=False),
+    }
+    monkeypatch.setattr(corpus, "load_pins", lambda *a, **kw: pins)
+
+    def fake_scan_app(name: str, *args: object, **kwargs: object) -> Path:
+        raise RuntimeError("fake timeout")
+
+    monkeypatch.setattr(corpus, "scan_app", fake_scan_app)
+
+    main(["scan"])
+    stdout = capsys.readouterr().out
+    assert "app1: scan failed" in stdout
+    assert "fake timeout" in stdout
+
+
+def test_report_marks_a_missing_report_and_returns_non_zero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from corpus import Pin, main
+
+    pins = {
+        "app1": Pin(name="app1", repo="repo", pin="1", wave=1, pr_subset=False),
+    }
+    monkeypatch.setattr(corpus, "load_pins", lambda *a, **kw: pins)
+
+    exit_code = main(["report"])
+    stdout = capsys.readouterr().out
+
+    assert exit_code != 0
+    assert "app1: NO REPORT - scan failed or was never run" in stdout
