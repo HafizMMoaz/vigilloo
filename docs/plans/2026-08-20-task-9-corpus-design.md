@@ -1,6 +1,6 @@
 # Task 9 Design: The Corpus and the Precision Harness
 
-**Status:** designing.
+**Status:** implemented.
 **Supersedes nothing.** Builds on Task 8 (JSON and Markdown report formats), merged as PR #52.
 **Normative references:** [22-testing](../22-testing/README.md), [16-reporting](../16-reporting/README.md),
 [01-prd](../01-prd/README.md), [24-roadmap](../24-roadmap/README.md).
@@ -186,6 +186,8 @@ Reporting it twice is how a corpus report becomes the noise Task 9 exists to mea
 3. Take the newest commit still declaring `^9`, `^10` or `^11`.
 4. Record SHA, Laravel version, PHP version, PHP file count and LOC in `corpus/pins.yml`.
 
+Note: the history walk should be written to a script file and run, not pasted as a single multi-line shell invocation. This is a practical constraint to prevent the shell from garbling the loop.
+
 Step 4 is not bookkeeping. A pin with no recorded rationale cannot be audited, and when v1.0
 widens the target, whoever re-pins needs to know why each SHA was chosen.
 
@@ -277,3 +279,4 @@ Docs are the spec, and these land in the same commits as the work:
 2. **Which applications reach wave 1.** Depends on measured scan times, which depend on the
    profiling work.
 3. **Which CVEs map to existing rules.** Research, scheduled as its own plan step.
+4. **Vigilloo's visibility into Laravel 11 routing and middleware.** `src/graph.py:52` excludes `bootstrap/` from discovery. In Laravel 11 and later, `bootstrap/app.php` is where routing and middleware are configured. This means Vigilloo cannot see the middleware stack or the route-file registration, a probable false-negative source for framework-structural rules. Fixing this means changing discovery and re-baselining every fixture's coverage numbers, so it wants its own task.
