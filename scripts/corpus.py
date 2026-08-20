@@ -22,7 +22,7 @@ from pathlib import Path
 
 import yaml
 
-from vigilloo.baseline import diff_fingerprints  # type: ignore[import-not-found]
+from vigilloo.baseline import diff_fingerprints
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CORPUS = REPO_ROOT / "corpus"
