@@ -83,3 +83,21 @@ jobs:
           # rule that lives there is exactly what a missing entry would drop.
           grep -q 'laravel.mass-assignment' scan-out.txt
           grep -q 'laravel.missing-authorization' scan-out.txt
+
+  corpus-subset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras
+      # Only the skeleton runs here. The engine is far over its NFR-1 budget on real
+      # applications, and PR latency sits on the critical path of a protected branch.
+      # This job reports; it does not gate on precision or finding count.
+      - name: Corpus subset (PR-time)
+        run: |
+          uv run python scripts/corpus.py scan laravel-skeleton
+          uv run python scripts/corpus.py report

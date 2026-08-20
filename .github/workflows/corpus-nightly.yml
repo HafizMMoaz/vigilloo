@@ -1,0 +1,27 @@
+name: Corpus nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras
+      # timeout-minutes: 180 is deliberate and generous: the design records the engine at
+      # more than 22x its NFR-1 budget on a mid-size application. A job that is killed with
+      # no output looks identical to one that found nothing.
+      # This job reports; it does not gate on precision or finding count.
+      - name: Full corpus precision and drift
+        run: |
+          uv run python scripts/corpus.py scan
+          uv run python scripts/corpus.py report
