@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from vigilloo.laravel.models import Protection, is_model, model_config, privileged_columns
-from vigilloo.parser import parse_php
+from vigilloo.parser import collect_nodes, parse_php
 from vigilloo.symbols import extract_symbols
 
 
@@ -10,7 +10,13 @@ def _classes(tmp_path: Path, body: str) -> dict:
     path.write_text(
         f"<?php\nnamespace App\\Models;\nuse Illuminate\\Database\\Eloquent\\Model;\n{body}\n"
     )
-    return extract_symbols(parse_php(path)).classes
+    return extract_symbols(
+        collect_nodes(parse_php(path).tree.root_node).namespaces,
+        collect_nodes(parse_php(path).tree.root_node).imports,
+        collect_nodes(parse_php(path).tree.root_node).classes,
+        collect_nodes(parse_php(path).tree.root_node).traits,
+        parse_php(path),
+    ).classes
 
 
 def test_guarded_empty_is_open(tmp_path: Path) -> None:

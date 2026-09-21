@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from vigilloo.laravel.routes import extract_routes
-from vigilloo.parser import parse_php
+from vigilloo.parser import collect_nodes, parse_php
 from vigilloo.symbols import extract_symbols
 
 FIXTURE = Path("tests/fixtures/task-039-routes/routes/web.php")
@@ -15,7 +15,18 @@ def test_extracts_routes_with_middleware_expansion() -> None:
         "auth": ["auth_base", "api_token_check"],
     }
 
-    routes = extract_routes(parsed, extract_symbols(parsed), None, middleware_groups)
+    routes = extract_routes(
+        parsed,
+        extract_symbols(
+            collect_nodes(parsed.tree.root_node).namespaces,
+            collect_nodes(parsed.tree.root_node).imports,
+            collect_nodes(parsed.tree.root_node).classes,
+            collect_nodes(parsed.tree.root_node).traits,
+            parsed,
+        ),
+        None,
+        middleware_groups,
+    )
     by_uri = {r.uri: r for r in routes}
 
     dashboard_route = by_uri.get("/admin/dashboard")

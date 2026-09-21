@@ -41,6 +41,8 @@ def _resolve_class_or_string(
 
 
 def extract_explicit_policies(
+    properties_by_file: dict[Path, list[Node]],
+    scoped_calls_by_file: dict[Path, list[Node]],
     files: dict[Path, ParsedFile],
     resolve_fn: Callable[[Path, str], str | None] | None = None,
 ) -> dict[str, str]:
@@ -52,7 +54,7 @@ def extract_explicit_policies(
     for path, parsed in files.items():
         source = parsed.source
         # 1. Property `$policies = [...]`
-        for prop in find_all(parsed.tree.root_node, "property_element"):
+        for prop in properties_by_file.get(path, []):
             name_node = prop.child_by_field_name("name")
             if name_node is None or node_text(name_node, source) != "$policies":
                 continue
@@ -80,7 +82,7 @@ def extract_explicit_policies(
                     policies[model_fqn] = policy_fqn
 
         # 2. Gate::policy(Model::class, Policy::class)
-        for scoped in find_all(parsed.tree.root_node, "scoped_call_expression"):
+        for scoped in scoped_calls_by_file.get(path, []):
             scope_node = scoped.child_by_field_name("scope")
             method_node = scoped.child_by_field_name("name")
             if scope_node is None or method_node is None:

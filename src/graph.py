@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .summaries import FunctionSummary
 from .parser import (
     ParsedFile,
+    collect_nodes,
     error_constructs,
     extract_suppressions,
     find_all,
@@ -349,6 +350,7 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     autoload_roots = autoload.prefixes
     project = Project(root=root, autoload=autoload, vigilloo_config=workspace.config)
 
+    php_records = {}
     for path in _php_files(root):
         try:
             parsed = parse_php(path)
@@ -376,13 +378,19 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             project.parse_failures.extend(error_constructs(parsed))
 
         project.files[rel_path] = parsed
-        project.suppressions.extend(extract_suppressions(parsed))
-        syms = extract_symbols(parsed, autoload_roots)
+
+        record = collect_nodes(parsed.tree.root_node)
+        php_records[rel_path] = record
+
+        project.suppressions.extend(extract_suppressions(record.comments, parsed))
+        syms = extract_symbols(
+            record.namespaces, record.imports, record.classes, record.traits, parsed, autoload_roots
+        )
         project.symbols[rel_path] = syms
         project.classes.update(syms.classes)
         project.traits.update(syms.traits)
 
-        file_bindings = extract_bindings(parsed, syms, autoload_roots)
+        file_bindings = extract_bindings(record.member_calls, parsed, syms, autoload_roots)
         for interface, implementations in file_bindings.items():
             project.bindings.setdefault(interface, []).extend(implementations)
 
@@ -391,8 +399,15 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     from .laravel.policies import extract_explicit_policies
     from .laravel.routes import discover_route_files
 
-    project.schema.update(extract_schema(project.files))
-    project.policies.update(extract_explicit_policies(project.files, project.resolve_class_name))
+    properties_by_file = {p: r.properties for p, r in php_records.items()}
+    scoped_calls_by_file = {p: r.scoped_calls for p, r in php_records.items()}
+
+    project.schema.update(extract_schema(scoped_calls_by_file, project.files))
+    project.policies.update(
+        extract_explicit_policies(
+            properties_by_file, scoped_calls_by_file, project.files, project.resolve_class_name
+        )
+    )
 
     middleware_groups = {}
     for rel_path, parsed in project.files.items():
@@ -431,7 +446,9 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
             project.parse_failures.extend(error_constructs(parsed))
 
         project.blade[rel_path] = parsed
-        project.suppressions.extend(extract_suppressions(parsed))
+
+        record = collect_nodes(parsed.tree.root_node)
+        project.suppressions.extend(extract_suppressions(record.comments, parsed))
         project.blade_lines[rel_path] = text.splitlines()
 
     project.routes.sort(key=lambda r: (str(r.span.file), r.span.start_line))

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from vigilloo.laravel.routes import discover_route_files, extract_routes
-from vigilloo.parser import parse_php, parse_source
+from vigilloo.parser import collect_nodes, parse_php, parse_source
 from vigilloo.symbols import extract_symbols
 
 FIXTURE = Path("tests/fixtures/laravel-minimal")
@@ -9,7 +9,16 @@ FIXTURE = Path("tests/fixtures/laravel-minimal")
 
 def test_extracts_routes_with_resolved_action() -> None:
     parsed = parse_php(FIXTURE / "routes/api.php")
-    routes = extract_routes(parsed, extract_symbols(parsed))
+    routes = extract_routes(
+        parsed,
+        extract_symbols(
+            collect_nodes(parsed.tree.root_node).namespaces,
+            collect_nodes(parsed.tree.root_node).imports,
+            collect_nodes(parsed.tree.root_node).classes,
+            collect_nodes(parsed.tree.root_node).traits,
+            parsed,
+        ),
+    )
     by_uri = {r.uri: r for r in routes}
 
     assert set(by_uri) >= {"/orders/search", "/orders/recent", "/orders/display"}
@@ -26,7 +35,19 @@ def test_extracts_routes_with_resolved_action() -> None:
 
 def _middleware(php: str) -> dict[str, tuple[str, ...]]:
     parsed = parse_source(Path("routes/api.php"), php.encode())
-    return {r.uri: r.middleware for r in extract_routes(parsed, extract_symbols(parsed))}
+    return {
+        r.uri: r.middleware
+        for r in extract_routes(
+            parsed,
+            extract_symbols(
+                collect_nodes(parsed.tree.root_node).namespaces,
+                collect_nodes(parsed.tree.root_node).imports,
+                collect_nodes(parsed.tree.root_node).classes,
+                collect_nodes(parsed.tree.root_node).traits,
+                parsed,
+            ),
+        )
+    }
 
 
 def test_middleware_is_collected_from_the_chain_and_the_enclosing_group() -> None:
@@ -72,7 +93,13 @@ Route::get('/b/{b}', [C::class, 'show'])->middleware([self::ADMIN]);
 
 def test_routes_are_returned_in_deterministic_order() -> None:
     parsed = parse_php(FIXTURE / "routes/api.php")
-    symbols = extract_symbols(parsed)
+    symbols = extract_symbols(
+        collect_nodes(parsed.tree.root_node).namespaces,
+        collect_nodes(parsed.tree.root_node).imports,
+        collect_nodes(parsed.tree.root_node).classes,
+        collect_nodes(parsed.tree.root_node).traits,
+        parsed,
+    )
     assert extract_routes(parsed, symbols) == extract_routes(parsed, symbols)
 
 
@@ -97,7 +124,13 @@ def test_discover_route_files() -> None:
 def test_groups_and_resources() -> None:
     p = Path("tests/fixtures/task-039-routes/routes/web.php")
     parsed = parse_source(p, p.read_bytes())
-    symbols = extract_symbols(parsed)
+    symbols = extract_symbols(
+        collect_nodes(parsed.tree.root_node).namespaces,
+        collect_nodes(parsed.tree.root_node).imports,
+        collect_nodes(parsed.tree.root_node).classes,
+        collect_nodes(parsed.tree.root_node).traits,
+        parsed,
+    )
     routes = extract_routes(parsed, symbols)
 
     # Let's verify the extracted routes.
@@ -146,7 +179,13 @@ foreach ($items as $item) {
 }
 """,
     )
-    symbols = extract_symbols(parsed)
+    symbols = extract_symbols(
+        collect_nodes(parsed.tree.root_node).namespaces,
+        collect_nodes(parsed.tree.root_node).imports,
+        collect_nodes(parsed.tree.root_node).classes,
+        collect_nodes(parsed.tree.root_node).traits,
+        parsed,
+    )
     routes = extract_routes(parsed, symbols)
 
     assert len(routes) == 9

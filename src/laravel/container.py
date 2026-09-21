@@ -6,12 +6,15 @@ Extracts container bindings from `app()->bind()`, `singleton()`, and service pro
 
 from tree_sitter import Node
 
-from ..parser import ParsedFile, find_all, node_text
+from ..parser import ParsedFile, node_text
 from ..symbols import FileSymbols, resolve_type_name
 
 
 def extract_bindings(
-    parsed: ParsedFile, syms: FileSymbols, autoload_prefixes: frozenset[str]
+    member_calls: list[Node],
+    parsed: ParsedFile,
+    syms: FileSymbols,
+    autoload_prefixes: frozenset[str],
 ) -> dict[str, list[str]]:
     """Extract interface-to-concrete mappings from container bindings.
 
@@ -19,7 +22,7 @@ def extract_bindings(
     """
     bindings: dict[str, list[str]] = {}
 
-    for call in find_all(parsed.tree.root_node, "member_call_expression"):
+    for call in member_calls:
         method_name_node = call.child_by_field_name("name")
         if not method_name_node:
             continue
