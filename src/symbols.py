@@ -7,6 +7,8 @@ from tree_sitter import Node
 from .models import Span, Symbol
 from .parser import ParsedFile, find_all, node_span, node_text
 
+PARSER_VERSION: str = "1.0.0"
+
 _BUILTIN_TYPES = frozenset(
     {
         "string",

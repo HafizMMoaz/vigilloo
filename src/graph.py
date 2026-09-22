@@ -7,6 +7,7 @@ identity from the same Project would be a second place for the two to drift apar
 """
 
 import hashlib
+import sqlite3
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
@@ -349,7 +350,11 @@ def _blade_files(root: Path) -> list[Path]:
     return sorted(found)  # sorted for determinism
 
 
-def load_project(root: Path, stats: WalkStats | None = None) -> Project:
+def load_project(
+    root: Path,
+    stats: WalkStats | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> Project:
     # Read before any file is parsed: the autoload map is what tells the symbol layer
     # which written names are already fully qualified, so it has to exist before the
     # first symbol table is built. `Workspace.at` rather than `.open` because loading a
@@ -361,6 +366,18 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
     autoload = read_autoload(workspace)
     autoload_roots = autoload.prefixes
     project = Project(root=root, autoload=autoload, vigilloo_config=workspace.config)
+
+    opened_conn = False
+    if conn is None:
+        db_file = root / ".vigilloo" / "vigilloo.db"
+        if db_file.is_file():
+            try:
+                from . import store
+
+                conn = store.connect(workspace)
+                opened_conn = True
+            except Exception:
+                conn = None
 
     php_records = {}
     for path in _php_files(root):
@@ -395,9 +412,35 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         php_records[rel_path] = record
 
         project.suppressions.extend(extract_suppressions(record.comments, parsed))
-        syms = extract_symbols(
-            record.namespaces, record.imports, record.classes, record.traits, parsed, autoload_roots
-        )
+
+        from . import store
+        from .symbols import PARSER_VERSION
+
+        file_sha = project.digests[rel_path]
+        cached_syms = None
+        if conn is not None:
+            try:
+                cached_syms = store.load_symbols(conn, file_sha, PARSER_VERSION)
+            except Exception:
+                cached_syms = None
+
+        if cached_syms is not None:
+            syms = cached_syms
+        else:
+            syms = extract_symbols(
+                record.namespaces,
+                record.imports,
+                record.classes,
+                record.traits,
+                parsed,
+                autoload_roots,
+            )
+            if conn is not None:
+                try:
+                    store.save_symbols(conn, file_sha, PARSER_VERSION, syms)
+                except Exception:
+                    pass
+
         project.symbols[rel_path] = syms
         project.classes.update(syms.classes)
         project.traits.update(syms.traits)
@@ -405,6 +448,9 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         file_bindings = extract_bindings(record.member_calls, parsed, syms, autoload_roots)
         for interface, implementations in file_bindings.items():
             project.bindings.setdefault(interface, []).extend(implementations)
+
+    if opened_conn and conn is not None:
+        conn.close()
 
     from .laravel.middleware import extract_middleware_groups
     from .laravel.migrations import extract_schema

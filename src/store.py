@@ -27,6 +27,7 @@ from .workspace.migrations import SCHEMA_VERSION, migrate
 
 if TYPE_CHECKING:
     from .summaries import FunctionSummary
+    from .symbols import FileSymbols
 
 _DB_FILENAME = "vigilloo.db"
 
@@ -160,6 +161,13 @@ CREATE TABLE summary_cache (
     file_sha TEXT NOT NULL,
     summary BLOB NOT NULL,
     PRIMARY KEY (fqn, file_sha)
+);
+
+CREATE TABLE symbol_cache (
+    file_sha TEXT PRIMARY KEY,
+    parser_version TEXT NOT NULL,
+    symbols BLOB NOT NULL,
+    created_at TEXT
 );
 
 INSERT INTO schema_meta (key, value) VALUES ('version', '{SCHEMA_VERSION}');
@@ -316,6 +324,21 @@ def record_scan(
         locator = NodeLocator(rows)
         for finding in findings:
             _insert_finding(conn, project_id, scan_id, finding, file_ids, locator)
+
+        from .symbols import PARSER_VERSION
+
+        for rel_path, syms in project.symbols.items():
+            file_sha = project.digests.get(rel_path)
+            if file_sha:
+                save_symbols(conn, file_sha, PARSER_VERSION, syms)
+
+        for fqn, summary in project.summaries.items():
+            cls_fqn, _, _ = fqn.rpartition("::")
+            cls_info = project.classes.get(cls_fqn) or project.traits.get(cls_fqn)
+            if cls_info and cls_info.span and cls_info.span.file:
+                file_sha = project.digests.get(cls_info.span.file)
+                if file_sha:
+                    save_summary(conn, fqn, file_sha, summary)
 
     # ponytail: no retention pruning. docs/17-database keeps the last 10 scans; ten scans of a
     # small findings set is kilobytes, so pruning arrives when a real project's history measures
@@ -834,4 +857,37 @@ def save_summary(
         "INSERT INTO summary_cache (fqn, file_sha, summary) VALUES (?, ?, ?) "
         "ON CONFLICT(fqn, file_sha) DO UPDATE SET summary=excluded.summary",
         (fqn, file_sha, blob),
+    )
+
+
+def load_symbols(
+    conn: sqlite3.Connection, file_sha: str, parser_version: str
+) -> "FileSymbols | None":
+    import pickle
+
+    row = conn.execute(
+        "SELECT symbols FROM symbol_cache WHERE file_sha = ? AND parser_version = ?",
+        (file_sha, parser_version),
+    ).fetchone()
+    if row:
+        return cast("FileSymbols", pickle.loads(row[0]))
+    return None
+
+
+def save_symbols(
+    conn: sqlite3.Connection, file_sha: str, parser_version: str, symbols: "FileSymbols"
+) -> None:
+    import pickle
+    from datetime import UTC, datetime
+
+    blob = pickle.dumps(symbols)
+    now = datetime.now(UTC).isoformat()
+    conn.execute(
+        "INSERT INTO symbol_cache (file_sha, parser_version, symbols, created_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(file_sha) DO UPDATE SET "
+        "parser_version = excluded.parser_version, "
+        "symbols = excluded.symbols, "
+        "created_at = excluded.created_at",
+        (file_sha, parser_version, blob, now),
     )

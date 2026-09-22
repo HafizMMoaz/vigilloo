@@ -65,10 +65,11 @@ def test_connect_creates_the_schema_and_records_its_version(tmp_path: Path) -> N
         "findings",
         "evidence_paths",
         "summary_cache",
+        "symbol_cache",
     } <= tables
 
     version = conn.execute("SELECT value FROM schema_meta WHERE key = 'version'").fetchone()[0]
-    assert version == "4"
+    assert version == "5"
 
 
 def test_the_graph_tables_carry_their_five_indexes(tmp_path: Path) -> None:
