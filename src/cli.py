@@ -78,12 +78,34 @@ class OutputFormat(StrEnum):
     sarif = "sarif"
 
 
+class SeverityLevel(StrEnum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+    critical = "critical"
+
+
+_SEVERITY_ORDER: dict[str, int] = {
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
+
+
+def _matches_rule_patterns(rule_id: str, patterns: list[str]) -> bool:
+    import fnmatch
+
+    return any(fnmatch.fnmatch(rule_id, p) for p in patterns)
+
+
 def _emit_report(
     findings: list[Finding],
     scan_coverage: Coverage,
     output_format: OutputFormat,
     machine: bool,
     console: Console,
+    output_file: Path | None = None,
 ) -> None:
     """Render findings and coverage in whichever format was asked for.
 
@@ -102,14 +124,27 @@ def _emit_report(
             findings, scan_coverage, engine_version=__version__, ruleset_hash=RULESET_HASH
         )
         if output_format is OutputFormat.json:
-            print(render_json(document), end="")
+            rendered = render_json(document)
         elif output_format is OutputFormat.sarif:
-            print(render_sarif(document), end="")
+            rendered = render_sarif(document)
         else:
-            print(render_markdown(document), end="")
+            rendered = render_markdown(document)
+
+        if output_file is not None:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(rendered, encoding="utf-8")
+        else:
+            print(rendered, end="")
     else:
-        render_coverage(scan_coverage, console)
-        render(findings, console)
+        if output_file is not None:
+            file_console = Console(record=True)
+            render_coverage(scan_coverage, file_console)
+            render(findings, file_console)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(file_console.export_text(), encoding="utf-8")
+        else:
+            render_coverage(scan_coverage, console)
+            render(findings, console)
 
 
 def _resolve_baseline_path(project_root: Path, explicit: Path | None) -> Path:
@@ -196,6 +231,32 @@ def scan(
         "--format",
         help="Report format.",
     ),
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "-o",
+        "--output",
+        help="Write report output to specified file instead of stdout.",
+    ),
+    severity: SeverityLevel | None = typer.Option(  # noqa: B008
+        None,
+        "--severity",
+        help="Minimum severity to report (low, medium, high, critical).",
+    ),
+    fail_on: SeverityLevel | None = typer.Option(  # noqa: B008
+        None,
+        "--fail-on",
+        help="Minimum severity that sets a non-zero exit code (low, medium, high, critical).",
+    ),
+    rules: str | None = typer.Option(  # noqa: B008
+        None,
+        "--rules",
+        help="Comma-separated rule IDs or glob patterns to include (e.g. 'laravel.*').",
+    ),
+    exclude_rules: str | None = typer.Option(  # noqa: B008
+        None,
+        "--exclude-rules",
+        help="Comma-separated rule IDs or glob patterns to exclude.",
+    ),
 ) -> None:
     """Scan a Laravel project for security findings."""
     machine = output_format is not OutputFormat.terminal
@@ -236,12 +297,24 @@ def scan(
         path, console, baseline_fingerprints=baseline_fingerprints
     )
 
+    if rules is not None:
+        inc_patterns = [p.strip() for p in rules.split(",") if p.strip()]
+        findings = [f for f in findings if _matches_rule_patterns(f.rule_id, inc_patterns)]
+
+    if exclude_rules is not None:
+        exc_patterns = [p.strip() for p in exclude_rules.split(",") if p.strip()]
+        findings = [f for f in findings if not _matches_rule_patterns(f.rule_id, exc_patterns)]
+
+    if severity is not None:
+        min_sev = _SEVERITY_ORDER[severity.value]
+        findings = [f for f in findings if _SEVERITY_ORDER.get(f.severity.lower(), 1) >= min_sev]
+
     if not project.files and not project.failed:
-        if machine:
-            _emit_report([], scan_coverage, output_format, machine, console)
+        if machine or output is not None:
+            _emit_report([], scan_coverage, output_format, machine, console, output_file=output)
         raise typer.Exit(0)
 
-    _emit_report(findings, scan_coverage, output_format, machine, console)
+    _emit_report(findings, scan_coverage, output_format, machine, console, output_file=output)
 
     try:
         conn = store.connect(workspace)
@@ -262,6 +335,11 @@ def scan(
     except (sqlite3.Error, OSError) as exc:
         console.print(f"[yellow]Scan history not recorded: {exc}[/yellow]")
 
+    if fail_on is not None:
+        threshold = _SEVERITY_ORDER[fail_on.value]
+        has_failing = any(_SEVERITY_ORDER.get(f.severity.lower(), 1) >= threshold for f in findings)
+        raise typer.Exit(1 if has_failing else 0)
+
     raise typer.Exit(1 if findings else 0)
 
 
@@ -277,6 +355,12 @@ def review(
         OutputFormat.terminal,
         "--format",
         help="Report format.",
+    ),
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "-o",
+        "--output",
+        help="Write report output to specified file instead of stdout.",
     ),
 ) -> None:
     """Review new findings against baseline or previous scan."""
@@ -312,15 +396,15 @@ def review(
         findings = [f for f in findings if f.fingerprint not in base_fingerprints]
 
     if not project.files and not project.failed:
-        if machine:
-            _emit_report([], scan_coverage, output_format, machine, console)
+        if machine or output is not None:
+            _emit_report([], scan_coverage, output_format, machine, console, output_file=output)
         raise typer.Exit(0)
 
-    if not machine and not findings:
+    if not machine and not findings and output is None:
         console.print("[bold green]Review clean: no new findings introduced.[/bold green]")
         raise typer.Exit(0)
 
-    _emit_report(findings, scan_coverage, output_format, machine, console)
+    _emit_report(findings, scan_coverage, output_format, machine, console, output_file=output)
     raise typer.Exit(1 if findings else 0)
 
 
