@@ -18,7 +18,9 @@ from .baseline import (
     save_baseline_file,
 )
 from .doctor import run_doctor
+from .explain import run_explain
 from .graph import Project, coverage, load_project
+from .graph_cli import run_graph_build, run_graph_export, run_graph_routes, run_graph_stats
 from .init import run_init
 from .models import Coverage, Finding, WalkStats
 from .report import build_document, render, render_coverage, render_json, render_markdown
@@ -532,4 +534,75 @@ def doctor(
 ) -> None:
     """Diagnose environment, framework detection, and project health."""
     code = run_doctor(path=path, as_json=output_json)
+    raise typer.Exit(code)
+
+
+@app.command()
+def explain(
+    target: str = typer.Argument(..., help="Finding fingerprint, ID, or rule to explain."),
+    path: Path = typer.Option(  # noqa: B008
+        Path("."), "-p", "--project", "--path", help="Project root to inspect."
+    ),
+    cwe: str | None = typer.Option(None, "--cwe", help="Filter by CWE identifier."),
+) -> None:
+    """Print one finding's evidence path step by step with CWE context and remediation."""
+    code = run_explain(target=target, path=path, cwe=cwe)
+    raise typer.Exit(code)
+
+
+graph_app = typer.Typer(
+    name="graph",
+    help="Query, export, and inspect the application knowledge graph.",
+    no_args_is_help=True,
+)
+app.add_typer(graph_app, name="graph")
+
+
+@graph_app.command("export")
+def graph_export_cmd(
+    path: Path = typer.Argument(Path("."), help="Project root to export graph from."),  # noqa: B008
+    output_format: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        help="Export format (json, graphml).",
+    ),
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "-o",
+        "--output",
+        help="Output file path (prints to stdout if omitted).",
+    ),
+) -> None:
+    """Export the knowledge graph to JSON or GraphML."""
+    code = run_graph_export(path=path, output_format=output_format, output_file=output)
+    raise typer.Exit(code)
+
+
+@graph_app.command("routes")
+def graph_routes_cmd(
+    path: Path = typer.Argument(Path("."), help="Project root to inspect routes for."),  # noqa: B008
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Display the HTTP route attack-surface inventory."""
+    code = run_graph_routes(path=path, as_json=as_json)
+    raise typer.Exit(code)
+
+
+@graph_app.command("stats")
+def graph_stats_cmd(
+    path: Path = typer.Argument(Path("."), help="Project root to inspect graph stats for."),  # noqa: B008
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Display knowledge graph composition and resolution statistics."""
+    code = run_graph_stats(path=path, as_json=as_json)
+    raise typer.Exit(code)
+
+
+@graph_app.command("build")
+def graph_build_cmd(
+    path: Path = typer.Argument(Path("."), help="Project root to build graph for."),  # noqa: B008
+) -> None:
+    """Build and update the knowledge graph in the workspace store."""
+    code = run_graph_build(path=path)
     raise typer.Exit(code)
