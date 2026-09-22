@@ -1,0 +1,29 @@
+id: laravel.raw-query
+title: Raw Query Injection
+severity: critical
+confidence: 1.0
+cwe:
+  - CWE-89
+owasp:
+  - "A03:2021"
+kind: TAINT
+languages:
+  - php
+frameworks:
+  - laravel
+remediation: >-
+  Use query bindings instead of string interpolation for the non-binding argument of raw builder methods (like whereRaw or DB::raw). For example, use whereRaw('price > ?', [$price]).
+taint_kind: sql
+sources:
+  - laravel.request.*
+  - php.superglobal.*
+sinks:
+  - laravel.db.raw
+  - laravel.query.where_raw
+sanitizers:
+  - laravel.query.binding
+  - php.intval
+require_reachable_from:
+  - route
+  - command
+  - job

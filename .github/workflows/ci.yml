@@ -53,7 +53,7 @@ jobs:
           # the newest interpreter means the declared floor is never actually run.
           uv venv v --python 3.13
           VIRTUAL_ENV=v uv pip install "$GITHUB_WORKSPACE"/dist/*.whl
-          ./v/bin/python -c 'import vigilloo, vigilloo.laravel.routes, vigilloo.workspace, vigilloo.deps, vigilloo.secrets, vigilloo.sdk'
+          ./v/bin/python -c 'import vigilloo, vigilloo.laravel.routes, vigilloo.workspace, vigilloo.deps, vigilloo.secrets, vigilloo.sdk, vigilloo.security'
           ./v/bin/vigilloo --version
           # Scanned as a copy, never in place: scan writes .vigilloo/vigilloo.db under the root
           # it is given, and the fixture tree is tracked.

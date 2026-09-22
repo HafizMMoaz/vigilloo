@@ -91,6 +91,7 @@ class Project:
     config: ProjectConfig = field(default_factory=ProjectConfig)
     vigilloo_config: VigillooConfig = field(default_factory=VigillooConfig)
     suppressions: list[Suppression] = field(default_factory=list)
+    failed_rules: dict[str, str] = field(default_factory=dict)
     _method_node_cache: dict[str, tuple[Node, ParsedFile] | None] = field(
         default_factory=dict, init=False, repr=False, hash=False, compare=False
     )

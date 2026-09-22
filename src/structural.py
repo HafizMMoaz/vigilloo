@@ -723,41 +723,88 @@ def _validated_bypass_paths(project: Project) -> list[list[PathStep]]:
 
 def find_structural_paths(project: Project) -> list[list[PathStep]]:
     """Every structural finding's evidence path, in deterministic order."""
-    paths = [
-        route_steps
-        for route in project.routes
-        if (route_steps := _missing_authorization(project, route)) is not None
-    ]
+    paths: list[list[PathStep]] = []
+
+    def _add_path(p: list[PathStep] | None) -> None:
+        if p:
+            paths.append(p)
+
+    def _add_paths(ps: object) -> None:
+        if ps:
+            for p in ps:  # type: ignore[attr-defined]
+                paths.append(p)
+
     for route in project.routes:
-        if (route_steps := _unauthenticated_route_paths(route)) is not None:
-            paths.append(route_steps)
-        if (route_steps := _no_throttle_paths(route)) is not None:
-            paths.append(route_steps)
-        if (route_steps := _unsigned_route_paths(route)) is not None:
-            paths.append(route_steps)
+        try:
+            _add_path(_missing_authorization(project, route))
+        except Exception as exc:
+            project.failed_rules["laravel.missing-authorization"] = str(exc)
 
-    if (rule_paths := _env_outside_config_paths(project)) is not None:
-        paths.extend(rule_paths)
-    if (rule_paths := _unsafe_upload_paths(project)) is not None:
-        paths.extend(rule_paths)
-    if (rule_paths := _debug_artifact_paths(project)) is not None:
-        paths.extend(rule_paths)
-    if (rule_paths := _weak_hash_paths(project)) is not None:
-        paths.extend(rule_paths)
-    if (rule_paths := _weak_randomness_paths(project)) is not None:
-        paths.extend(rule_paths)
+        try:
+            _add_path(_unauthenticated_route_paths(route))
+        except Exception as exc:
+            project.failed_rules["laravel.unauthenticated-route"] = str(exc)
 
-    for except_path in _csrf_except_paths(project):
-        paths.append(except_path)
+        try:
+            _add_path(_no_throttle_paths(route))
+        except Exception as exc:
+            project.failed_rules["laravel.no-throttle"] = str(exc)
 
-    for auth_path in _dead_authorization_paths(project):
-        paths.append(auth_path)
-    for auth_path in _inconsistent_authorization_paths(project):
-        paths.append(auth_path)
-    for auth_path in _validated_bypass_paths(project):
-        paths.append(auth_path)
-    paths.extend(_config_rules_paths(project))
-    paths.extend(_env_outside_config_paths(project))
+        try:
+            _add_path(_unsigned_route_paths(route))
+        except Exception as exc:
+            project.failed_rules["laravel.unsigned-route"] = str(exc)
+
+    try:
+        _add_paths(_env_outside_config_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.env-outside-config"] = str(exc)
+
+    try:
+        _add_paths(_unsafe_upload_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.unsafe-upload"] = str(exc)
+
+    try:
+        _add_paths(_debug_artifact_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.debug-artifact"] = str(exc)
+
+    try:
+        _add_paths(_weak_hash_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.weak-hash"] = str(exc)
+
+    try:
+        _add_paths(_weak_randomness_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.weak-randomness"] = str(exc)
+
+    try:
+        _add_paths(_csrf_except_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.csrf-except"] = str(exc)
+
+    try:
+        _add_paths(_dead_authorization_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.dead-authorization"] = str(exc)
+
+    try:
+        _add_paths(_inconsistent_authorization_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.inconsistent-authorization"] = str(exc)
+
+    try:
+        _add_paths(_validated_bypass_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.validated-bypass"] = str(exc)
+
+    try:
+        _add_paths(_config_rules_paths(project))
+    except Exception as exc:
+        project.failed_rules["laravel.config-rules"] = str(exc)
+
     return sorted(paths, key=lambda p: (str(p[-1].span.file), p[-1].span.start_line))
 
 

@@ -335,12 +335,24 @@ def scan(
     except (sqlite3.Error, OSError) as exc:
         console.print(f"[yellow]Scan history not recorded: {exc}[/yellow]")
 
+    if getattr(project, "failed_rules", None):
+        for rule_name, err in project.failed_rules.items():
+            console.print(f"[yellow]Rule disabled due to error: {rule_name}: {err}[/yellow]")
+
     if fail_on is not None:
         threshold = _SEVERITY_ORDER[fail_on.value]
         has_failing = any(_SEVERITY_ORDER.get(f.severity.lower(), 1) >= threshold for f in findings)
-        raise typer.Exit(1 if has_failing else 0)
+        if has_failing:
+            raise typer.Exit(1)
+        if getattr(project, "failed_rules", None):
+            raise typer.Exit(3)
+        raise typer.Exit(0)
 
-    raise typer.Exit(1 if findings else 0)
+    if findings:
+        raise typer.Exit(1)
+    if getattr(project, "failed_rules", None):
+        raise typer.Exit(3)
+    raise typer.Exit(0)
 
 
 @app.command()

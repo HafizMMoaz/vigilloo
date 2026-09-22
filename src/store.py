@@ -284,7 +284,18 @@ def record_scan(
 
     files_failed = len(project.failed)
     files_parsed = len(project.files) + len(project.blade)
-    status = "partial" if project.failed or project.unparsed else "completed"
+    status = (
+        "partial"
+        if project.failed or project.unparsed or getattr(project, "failed_rules", None)
+        else "completed"
+    )
+
+    manifest_dict = {
+        "engine_version": engine_version,
+        "ruleset_hash": ruleset_hash,
+        "failed_rules": getattr(project, "failed_rules", {}),
+    }
+    manifest_json = json.dumps(manifest_dict)
 
     with conn:
         project_id = _upsert_project(conn, project.root, finished_at)
@@ -294,8 +305,8 @@ def record_scan(
         cursor = conn.execute(
             "INSERT INTO scans "
             "(project_id, started_at, finished_at, status, engine_version, ruleset_hash, "
-            "files_total, files_parsed, files_failed, duration_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "files_total, files_parsed, files_failed, duration_ms, manifest) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 project_id,
                 started_at.isoformat(),
@@ -307,6 +318,7 @@ def record_scan(
                 files_parsed,
                 files_failed,
                 duration_ms,
+                manifest_json,
             ),
         )
         scan_id = cursor.lastrowid
