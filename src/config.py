@@ -140,3 +140,34 @@ class VigillooConfig:
             ai=AiConfig(**raw_config.get("ai", {})),
             suppress=[SuppressConfig(**s) for s in raw_config.get("suppress", [])],
         )
+
+
+def check_config_file(path: Path) -> list[str]:
+    """Check a vigilloo.yml file for errors without calling sys.exit.
+
+    Returns a list of error descriptions, or an empty list if valid.
+    """
+    errors: list[str] = []
+    if not path.is_file():
+        return errors
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+            if not isinstance(data, dict):
+                return ["Configuration root must be a YAML mapping (dictionary)."]
+            if "version" in data and not isinstance(data["version"], int):
+                errors.append("'version' must be an integer.")
+            if "scan" in data and isinstance(data["scan"], dict):
+                sev = data["scan"].get("severity")
+                if sev and sev not in ("low", "medium", "high", "critical"):
+                    errors.append(f"Invalid scan severity: '{sev}'.")
+                fail = data["scan"].get("fail_on")
+                if fail and fail not in ("low", "medium", "high", "critical"):
+                    errors.append(f"Invalid scan fail_on: '{fail}'.")
+            if "rules" in data and isinstance(data["rules"], dict):
+                disable = data["rules"].get("disable")
+                if disable is not None and not isinstance(disable, list):
+                    errors.append("'rules.disable' must be a list of rule IDs.")
+    except Exception as exc:
+        errors.append(f"YAML parse error: {exc}")
+    return errors

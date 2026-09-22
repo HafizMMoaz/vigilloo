@@ -10,7 +10,9 @@ import typer
 from rich.console import Console
 
 from . import __version__, store
+from .doctor import run_doctor
 from .graph import coverage, load_project
+from .init import run_init
 from .models import Coverage, Finding, WalkStats
 from .report import build_document, render, render_coverage, render_json, render_markdown
 from .rules import RULESET_HASH, scan_project
@@ -233,3 +235,66 @@ def scan(
         console.print(f"[yellow]Scan history not recorded: {exc}[/yellow]")
 
     raise typer.Exit(1 if findings else 0)
+
+
+@app.command()
+def init(
+    path: Path = typer.Argument(Path("."), help="Project root to initialise."),  # noqa: B008
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite existing configuration file if present.",
+    ),
+    name: str | None = typer.Option(
+        None,
+        "--name",
+        help="Project name (defaults to composer.json name or directory name).",
+    ),
+    framework: str = typer.Option(
+        "laravel",
+        "--framework",
+        help="Project framework (default: laravel).",
+    ),
+    ci: bool | None = typer.Option(
+        None,
+        "--ci/--no-ci",
+        help="Generate GitHub Actions CI workflow.",
+    ),
+    pre_commit: bool | None = typer.Option(
+        None,
+        "--pre-commit/--no-pre-commit",
+        help="Install git pre-commit hook.",
+    ),
+    no_interaction: bool = typer.Option(
+        False,
+        "--no-interaction",
+        "-n",
+        help="Do not prompt for interactive input.",
+    ),
+) -> None:
+    """Initialize a project with a starter vigilloo.yml configuration."""
+    code = run_init(
+        path=path,
+        force=force,
+        name=name,
+        framework=framework,
+        ci=ci,
+        pre_commit=pre_commit,
+        no_interaction=no_interaction,
+    )
+    raise typer.Exit(code)
+
+
+@app.command()
+def doctor(
+    path: Path = typer.Argument(Path("."), help="Project root to diagnose."),  # noqa: B008
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit diagnostic output as JSON.",
+    ),
+) -> None:
+    """Diagnose environment, framework detection, and project health."""
+    code = run_doctor(path=path, as_json=output_json)
+    raise typer.Exit(code)
