@@ -582,6 +582,11 @@ def _constructed_class(node: Node, source: bytes, project: Project, file: Path) 
     miss, because the sink additionally requires the class to be a model and
     the argument to carry mass_assign taint.
     """
+    if node.type == "parenthesized_expression":
+        inner = next((c for c in node.children if c.type not in ("(", ")")), None)
+        if inner is not None:
+            return _constructed_class(inner, source, project, file)
+        return None
     if node.type == "object_creation_expression":
         for child in node.children:
             if child.type in ("name", "qualified_name"):
@@ -669,9 +674,24 @@ def _mass_assign_steps(
     index, bypasses_protection = write
     if index >= len(args):
         return []
-    if TaintKind.MASS_ASSIGN not in expr_kinds(
-        args[index], parsed.source, local, request_vars, resolve
-    ):
+    arg = args[index]
+    inner = arg.children[0] if arg.type == "argument" and arg.children else arg
+    if inner.type == "array_creation_expression":
+        has_dynamic_keys = False
+        for elem in inner.children:
+            if elem.type != "array_element_initializer":
+                continue
+            if len(elem.children) >= 3 and elem.children[1].type == "=>":
+                key_node = elem.children[0]
+                if key_node.type not in ("string", "encapsed_string"):
+                    has_dynamic_keys = True
+                    break
+            else:
+                has_dynamic_keys = True
+                break
+        if not has_dynamic_keys:
+            return []
+    if TaintKind.MASS_ASSIGN not in expr_kinds(arg, parsed.source, local, request_vars, resolve):
         return []
     if config.protection is Protection.GUARDED and not bypasses_protection:
         return []
@@ -1133,7 +1153,8 @@ def _walk_method(
     if cache_key not in summary.paths_by_taint:
         summary.paths_by_taint[cache_key] = []
 
-        while True:
+        # Cap fixed-point iterations to prevent unbounded unrolling on cyclical call graphs
+        for _ in range(2):
             inner_paths = _walk_method_ast(
                 project, fqn, tainted, depth, max_depth, stats, receiver_fqn, new_visited, route
             )
@@ -1629,8 +1650,15 @@ def _walk_method_ast(
                 elif obj.startswith("$this->"):
                     prop = obj.removeprefix("$this->")
                     target_class = project.resolve_property_type(runtime_class, prop)
+                elif obj.lstrip("$") in local_types:
+                    target_class = local_types[obj.lstrip("$")]
                 else:
-                    target_class = None
+                    obj_node = call.child_by_field_name("object")
+                    target_class = (
+                        _constructed_class(obj_node, source, project, parsed.path)
+                        if obj_node is not None
+                        else None
+                    )
 
                 candidates = []
                 confidence = 1.0
@@ -1639,7 +1667,7 @@ def _walk_method_ast(
                     for cls_fqn in project.classes:
                         if project.method(f"{cls_fqn}::{name}") is not None:
                             candidates.append(cls_fqn)
-                    if not candidates:
+                    if not candidates or len(candidates) > 3:
                         if passed:
                             _giveup(stats)
                         continue
@@ -1874,7 +1902,12 @@ def _walk_method_ast(
     if cfg.entry:
         explore(cfg.entry, [], frozenset(), dict(tainted), local_types)
 
-    return paths
+    unique: dict[tuple[tuple[str, str, int, str | None], ...], list[PathStep]] = {}
+    for path in paths:
+        key = tuple((s.role, str(s.span.file), s.span.start_line, s.rule_id) for s in path)
+        unique.setdefault(key, path)
+
+    return list(unique.values())
 
 
 def _route_param_sources(

@@ -8,7 +8,7 @@ from tree_sitter import Node
 
 from ..models import Route, WalkStats
 from ..parser import ParsedFile, find_all, node_span, node_text
-from ..symbols import FileSymbols, array_literal
+from ..symbols import FileSymbols
 
 # {order} and Laravel's optional {order?}.
 _URI_PARAM = re.compile(r"\{(\w+)\??\}")
@@ -69,6 +69,21 @@ def _action_fqn(node: Node, source: bytes, symbols: FileSymbols) -> str:
     return ""
 
 
+def _extract_string(node: Node, source: bytes) -> str | None:
+    if node.type in ("string", "encapsed_string"):
+        return _string_literal(node, source)
+    if node.type == "class_constant_access_expression":
+        if len(node.children) >= 3:
+            name_node = node.children[-1]
+            if name_node.type == "name" and node_text(name_node, source) == "class":
+                qname = node.children[0]
+                qname_str = node_text(qname, source)
+                if qname_str.startswith("\\"):
+                    qname_str = qname_str[1:]
+                return qname_str
+    return None
+
+
 def _parse_array_dict(node: Node, source: bytes) -> dict[str, list[str]]:
     """Parse ['prefix' => 'admin', 'middleware' => ['auth', 'can:manage']] into a dict."""
     result: dict[str, list[str]] = {}
@@ -83,15 +98,25 @@ def _parse_array_dict(node: Node, source: bytes) -> dict[str, list[str]]:
 
             if val_node.type in ("string", "encapsed_string"):
                 result[key] = [node_text(val_node, source).strip("'\"")]
+            elif val_node.type == "class_constant_access_expression":
+                cname = _extract_string(val_node, source)
+                if cname:
+                    result[key] = [cname]
             elif val_node.type == "array_creation_expression":
                 vals: list[str] = []
                 for val_elem in val_node.children:
                     if val_elem.type == "array_element_initializer":
-                        if len(val_elem.children) == 1 and val_elem.children[0].type in (
-                            "string",
-                            "encapsed_string",
-                        ):
-                            vals.append(node_text(val_elem.children[0], source).strip("'\""))
+                        v_node = val_elem.child_by_field_name("value") or (
+                            val_elem.children[-1] if val_elem.children else None
+                        )
+                        if v_node:
+                            v_str = _extract_string(v_node, source)
+                            if v_str is not None:
+                                vals.append(v_str)
+                            else:
+                                vals.append(UNRESOLVED_MIDDLEWARE)
+                        else:
+                            vals.append(UNRESOLVED_MIDDLEWARE)
                 result[key] = vals
     return result
 
@@ -183,19 +208,33 @@ class RouteWalker:
                         ctx.name = _string_literal(inner, self.source)
             elif name.split("::")[-1] == "middleware":
                 args_node = call.child_by_field_name("arguments")
-                if args_node and len(args_node.children) >= 2:
-                    arg = args_node.children[1]
-                    inner = arg.children[0] if arg.children else None
-                    if inner and inner.type in ("string", "encapsed_string"):
-                        ctx.middleware.append(_string_literal(inner, self.source))
-                    elif inner and inner.type == "array_creation_expression":
-                        vals = array_literal(inner, self.source)
-                        if vals:
-                            ctx.middleware.extend(vals)
+                if args_node:
+                    for arg in args_node.children:
+                        if arg.type != "argument":
+                            continue
+                        inner = arg.children[0] if arg.children else None
+                        if not inner:
+                            continue
+                        val = _extract_string(inner, self.source)
+                        if val is not None:
+                            ctx.middleware.append(val)
+                        elif inner.type == "array_creation_expression":
+                            for elem in inner.children:
+                                if elem.type != "array_element_initializer":
+                                    continue
+                                val_node = elem.child_by_field_name("value") or (
+                                    elem.children[-1] if elem.children else None
+                                )
+                                if val_node:
+                                    val_str = _extract_string(val_node, self.source)
+                                    if val_str is not None:
+                                        ctx.middleware.append(val_str)
+                                    else:
+                                        ctx.middleware.append(UNRESOLVED_MIDDLEWARE)
+                                else:
+                                    ctx.middleware.append(UNRESOLVED_MIDDLEWARE)
                         else:
                             ctx.middleware.append(UNRESOLVED_MIDDLEWARE)
-                    else:
-                        ctx.middleware.append(UNRESOLVED_MIDDLEWARE)
         return ctx
 
     def _parse_group_array(self, call: Node) -> GroupContext:

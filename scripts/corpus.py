@@ -99,7 +99,7 @@ def scan_app(name: str, root: Path, out: Path, timeout_s: int = DEFAULT_TIMEOUT_
                 f"{name}: scan exceeded {timeout_s}s; refusing to record a partial report"
             ) from exc
 
-        if completed.returncode != 0:
+        if completed.returncode not in (0, 1):
             raise RuntimeError(
                 f"{name}: scan exited {completed.returncode}: {completed.stderr[-500:]}"
             )
@@ -109,8 +109,16 @@ def scan_app(name: str, root: Path, out: Path, timeout_s: int = DEFAULT_TIMEOUT_
         try:
             document = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"{name}: scan exited {completed.returncode}: {completed.stderr[-500:]}"
+                ) from exc
             raise RuntimeError(f"{name}: scan produced unparseable JSON: {exc}") from exc
         if "findings" not in document or "coverage" not in document:
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"{name}: scan exited {completed.returncode}: {completed.stderr[-500:]}"
+                )
             raise RuntimeError(f"{name}: report is missing required keys; refusing to record it")
 
         check_coverage(name, document)

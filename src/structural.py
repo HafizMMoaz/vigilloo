@@ -18,7 +18,7 @@ from tree_sitter import Node
 from .graph import Project
 from .laravel.middleware import authenticated_by, is_gated, is_rate_limited, is_signed
 from .laravel.models import is_model
-from .laravel.policies import find_policy
+from .laravel.policies import _resolve_class_or_string, find_policy
 from .laravel.routes import uri_params
 from .laravel.vocabulary import (
     LARAVEL_APP_KEY_RULE,
@@ -41,7 +41,7 @@ from .laravel.vocabulary import (
     MISSING_AUTHORIZATION_RULE,
 )
 from .models import PathStep, Route, Span
-from .parser import ParsedFile, find_all, node_span, node_text
+from .parser import ParsedFile, find_all, find_any, node_span, node_text
 
 _AUTHORIZE_METHODS = frozenset(
     {
@@ -461,30 +461,60 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
         return paths
 
     abilities = set()
-    has_authorize_resource = False
+    policy_abilities: dict[str, set[str]] = {}
+
+    def _add_ability(raw: str) -> None:
+        abilities.add(raw)
+        if "-" in raw or "_" in raw:
+            parts = raw.replace("-", "_").split("_")
+            camel = parts[0] + "".join(p.capitalize() for p in parts[1:])
+            abilities.add(camel)
 
     can_re = re.compile(r'@can(?:not|any)?\(\s*[\'"]([^\'"]+)[\'"]')
     for text_lines in project.blade_lines.values():
         for line in text_lines:
             for match in can_re.finditer(line):
-                abilities.add(match.group(1))
+                _add_ability(match.group(1))
 
-    authorize_methods = {"authorize", "can", "cannot", "allows", "denies", "check"}
+    authorize_methods = _AUTHORIZE_METHODS | {"allows", "denies", "check", "any", "none"}
 
     for parsed in project.files.values():
-        for call in find_all(parsed.tree.root_node, "call_expression"):
+        for call in find_any(
+            parsed.tree.root_node,
+            ("call_expression", "member_call_expression", "scoped_call_expression"),
+        ):
             name_node = None
-            if call.type == "member_call_expression":
+            if call.type in ("member_call_expression", "scoped_call_expression"):
                 name_node = call.child_by_field_name("name")
-            elif call.type == "scoped_call_expression":
-                name_node = call.child_by_field_name("name")
+            elif call.type == "call_expression":
+                name_node = call.child_by_field_name("function")
 
             if name_node is None:
                 continue
 
             name_text = node_text(name_node, parsed.source)
             if name_text == "authorizeResource":
-                has_authorize_resource = True
+                args_node = call.child_by_field_name("arguments")
+                if args_node is not None:
+                    real_args = [c for c in args_node.children if c.type not in ("(", ")", ",")]
+                    if real_args:
+                        model_fqn = _resolve_class_or_string(
+                            real_args[0], parsed.source, parsed.path, project.resolve_class_name
+                        )
+                        if model_fqn:
+                            policy = find_policy(project.classes, model_fqn, project.policies)
+                            if policy:
+                                policy_abilities.setdefault(policy, set()).update(
+                                    {
+                                        "viewAny",
+                                        "view",
+                                        "create",
+                                        "update",
+                                        "delete",
+                                        "restore",
+                                        "forceDelete",
+                                    }
+                                )
                 continue
 
             if name_text in authorize_methods:
@@ -492,21 +522,22 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
                 if args_node is not None:
                     real_args = [c for c in args_node.children if c.type not in ("(", ")", ",")]
                     if real_args:
-                        arg_text = node_text(real_args[0], parsed.source).strip()
+                        arg_node = real_args[0]
+                        arg_text = node_text(arg_node, parsed.source).strip()
                         if arg_text.startswith(("'", '"')):
-                            abilities.add(arg_text.strip("'\""))
+                            _add_ability(arg_text.strip("'\""))
+                        elif arg_node.type == "array_creation_expression":
+                            for item in find_all(arg_node, "string"):
+                                item_text = node_text(item, parsed.source).strip("'\"")
+                                if item_text:
+                                    _add_ability(item_text)
 
     for route in project.routes:
         for mw in route.middleware:
             if mw.startswith("can:"):
                 params = mw[4:].split(",")
                 if params:
-                    abilities.add(params[0])
-
-    if has_authorize_resource:
-        abilities.update(
-            {"viewAny", "view", "create", "update", "delete", "restore", "forceDelete"}
-        )
+                    _add_ability(params[0])
 
     for fqn in sorted(policy_fqns):
         class_info = project.classes.get(fqn)
@@ -519,7 +550,7 @@ def _dead_authorization_paths(project: Project) -> list[list[PathStep]]:
             if method_name == "before":
                 continue
 
-            if method_name not in abilities:
+            if method_name not in abilities and method_name not in policy_abilities.get(fqn, ()):
                 method_node_data = project.method_node(f"{fqn}::{method_name}")
                 if not method_node_data:
                     continue
@@ -903,7 +934,7 @@ def _env_outside_config_paths(project: Project) -> list[list[PathStep]]:
     paths = []
 
     for path, parsed in project.files.items():
-        if path.parts and path.parts[0] == "config":
+        if path.parts and path.parts[0] in ("config", "tests"):
             continue
 
         for call in find_all(parsed.tree.root_node, "function_call_expression"):

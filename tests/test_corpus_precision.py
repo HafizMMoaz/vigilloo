@@ -203,6 +203,32 @@ def test_scan_app_on_success_writes_a_report_that_round_trips(
     assert json.loads(out.read_text(encoding="utf-8")) == document
 
 
+def test_scan_app_on_findings_exit_1_writes_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`vigilloo scan` exits 1 when findings are found (docs/19-cli). scan_app must accept this."""
+    document = {
+        "findings": [{"rule_id": "test.rule", "fingerprint": "abc"}],
+        "coverage": {"parse_success_rate": 1.0},
+    }
+    stdout = json.dumps(document)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["vigilloo"], returncode=1, stdout=stdout, stderr=""
+        )
+
+    monkeypatch.setattr(corpus.subprocess, "run", fake_run)
+    root = tmp_path / "app"
+    root.mkdir()
+    out = tmp_path / "reports" / "demo.json"
+
+    result = scan_app("demo", root, out)
+
+    assert result == out
+    assert json.loads(out.read_text(encoding="utf-8")) == document
+
+
 def test_scan_app_removes_the_vigilloo_workspace_even_when_the_scan_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

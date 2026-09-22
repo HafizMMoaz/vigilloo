@@ -1,0 +1,23 @@
+findings:
+  05515aeb4cf51caf:
+    note: Unauthenticated state-changing OAuth callback endpoint.
+    rule: laravel.unauthenticated-route
+    seen_at: routes/web.php:169
+    verdict: 'true'
+  0cf9cd55fcf0eced:
+    note: Unauthenticated state-changing Telegram webhook endpoint.
+    rule: laravel.unauthenticated-route
+    seen_at: routes/web.php:176
+    verdict: 'true'
+  25c2d68f877dbf38:
+    note: Target host is restricted to wikipedia.org via template; not arbitrary SSRF.
+    rule: php.ssrf
+    seen_at: app/Helpers/WikipediaHelper.php:30
+    verdict: 'false'
+  8d0c05ea23161422:
+    note: Unauthenticated state-changing invitation accept endpoint.
+    rule: laravel.unauthenticated-route
+    seen_at: routes/web.php:173
+    verdict: 'true'
+pin: 64d143317096fd3ceaeef16773055bb9a16a070e
+reviewed_ruleset: b35162f4d187c91c
