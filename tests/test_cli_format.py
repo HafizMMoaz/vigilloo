@@ -81,3 +81,13 @@ def test_empty_project_under_terminal_format_is_unchanged(tmp_path: Path) -> Non
     assert "No PHP files found" in result.stdout
     assert "Coverage:" not in result.stdout
     assert "No findings." not in result.stdout
+
+
+def test_empty_project_under_sarif_emits_valid_schema(tmp_path: Path) -> None:
+    root = tmp_path / "empty"
+    root.mkdir()
+    result = runner.invoke(app, ["scan", str(root), "--format", "sarif"], catch_exceptions=False)
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["$schema"] == "https://json.schemastore.org/sarif-2.1.0.json"
+    assert payload["runs"][0]["results"] == []

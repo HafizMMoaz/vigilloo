@@ -23,7 +23,14 @@ from .graph import Project, coverage, load_project
 from .graph_cli import run_graph_build, run_graph_export, run_graph_routes, run_graph_stats
 from .init import run_init
 from .models import Coverage, Finding, WalkStats
-from .report import build_document, render, render_coverage, render_json, render_markdown
+from .report import (
+    build_document,
+    render,
+    render_coverage,
+    render_json,
+    render_markdown,
+    render_sarif,
+)
 from .rules import RULESET_HASH, scan_project
 from .workspace import Workspace
 from .workspace.migrations import SchemaTooNewError
@@ -66,6 +73,7 @@ class OutputFormat(StrEnum):
     terminal = "terminal"
     json = "json"
     markdown = "markdown"
+    sarif = "sarif"
 
 
 def _emit_report(
@@ -93,6 +101,8 @@ def _emit_report(
         )
         if output_format is OutputFormat.json:
             print(render_json(document), end="")
+        elif output_format is OutputFormat.sarif:
+            print(render_sarif(document), end="")
         else:
             print(render_markdown(document), end="")
     else:

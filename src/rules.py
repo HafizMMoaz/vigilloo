@@ -679,6 +679,8 @@ _BY_ID: dict[str, Rule] = {
     )
 }
 
+RULES_BY_ID: dict[str, Rule] = _BY_ID
+
 
 def _ruleset_hash(rules: dict[str, Rule]) -> str:
     """Content-derive an identity for the rule table.
