@@ -25,7 +25,7 @@ summarises and points here.
 | `vigilloo scan \| review \| graph \| explain \| deps \| secrets \| baseline \| doctor \| init` | done | All nine CLI commands ship and operate end to end. |
 | Markdown, JSON, terminal, SARIF reports | done | Terminal, Markdown, JSON, and OASIS SARIF 2.1.0 all ship, rendered from one `ReportDocument` so formats cannot disagree about what a scan found. |
 | Corpus harness and precision measurement | done | Scan, triage, report, per-rule precision, drift detection, Wave 1 applications enrolled (laravel-skeleton, koel, monica), and precision gate (--gate >= 90%, zero unreviewed findings, zero drift) enforced in CI all ship today. |
-| Incremental scanning | spec only | The store keeps the per-file digest the incrementality key needs; no scan reads it. |
+| Incremental scanning | done | File-hash and parser-version keyed symbol cache persisted in SQLite symbol_cache table; unchanged files bypass Tree-sitter parsing on rescan with byte-identical findings. |
 
 **Ships when:** the [22-testing](../22-testing/README.md) corpus gates pass - 100% of seeded
 findings, ≥90% precision on real applications, clean runs on 10 open-source Laravel apps.
