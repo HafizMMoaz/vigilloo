@@ -28,6 +28,7 @@ dev = [
     "pip-audit>=2.9,<2.10",
     "pre-commit>=4.4,<4.5",
     "hypothesis>=6.145,<6.146",
+    "pytest-benchmark>=5.1,<5.2",
 ]
 
 [build-system]
@@ -97,3 +98,7 @@ files = ["src", "scripts/corpus.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--ignore=tests/perf"
+markers = [
+    "perf: performance benchmarks against NFR targets (run nightly)",
+]
