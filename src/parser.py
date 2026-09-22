@@ -79,9 +79,11 @@ def node_span(node: Node, path: Path) -> Span:
 
 def walk(node: Node) -> Iterator[Node]:
     """Depth-first walk over every descendant, including node itself."""
-    yield node
-    for child in node.children:
-        yield from walk(child)
+    stack = [node]
+    while stack:
+        curr = stack.pop()
+        yield curr
+        stack.extend(reversed(curr.children))
 
 
 def collect_nodes(root: Node) -> FileRecord:

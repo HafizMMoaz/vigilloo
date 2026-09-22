@@ -531,6 +531,7 @@ class _RowBuilder:
         self.nodes: list[NodeRow] = []
         self.edges: list[EdgeRow] = []
         self.unresolved_calls = 0
+        self._duck_cache: dict[str, list[tuple[str, str, float]]] = {}
 
     def _id(self, kind: str, fqn: str) -> str:
         return node_id(self.project_id, kind, fqn)
@@ -722,7 +723,12 @@ class _RowBuilder:
                     continue
                 short = node_text(name_node, parsed.source)
                 class_fqn = f"{syms.namespace}\\{short}" if syms.namespace else short
-                for method in find_all(cls, "method_declaration"):
+                body = cls.child_by_field_name("body")
+                if body is None:
+                    continue
+                for method in body.named_children:
+                    if method.type != "method_declaration":
+                        continue
                     m_name = method.child_by_field_name("name")
                     if m_name is None:
                         continue
@@ -746,7 +752,12 @@ class _RowBuilder:
                 # trait is followed even where this edge is absent. Upgrade trigger: a
                 # per-consumer call layer, which needs edges that can say which
                 # composition they belong to (docs/07-call-graph, `RESOLVES_TO`).
-                for method in find_all(trait, "method_declaration"):
+                body = trait.child_by_field_name("body")
+                if body is None:
+                    continue
+                for method in body.named_children:
+                    if method.type != "method_declaration":
+                        continue
                     m_name = method.child_by_field_name("name")
                     if m_name is None:
                         continue
@@ -933,12 +944,16 @@ class _RowBuilder:
             return results
 
         # Duck typing fallback
+        if method_name in self._duck_cache:
+            return self._duck_cache[method_name]
+
         candidates = []
         for cls_fqn in self.project.classes:
             if self.project.method(f"{cls_fqn}::{method_name}") is not None:
                 candidates.append(cls_fqn)
 
         if not candidates:
+            self._duck_cache[method_name] = []
             return []
 
         confidence = 0.4 if len(candidates) == 1 else 0.4 / len(candidates)
@@ -947,6 +962,7 @@ class _RowBuilder:
             target = self.project.method(f"{candidate}::{method_name}")
             if target is not None:
                 results.append((target.fqn, "duck_type", confidence))
+        self._duck_cache[method_name] = results
         return results
 
     def _declares(self, parent_id: str, child_id: str) -> None:
