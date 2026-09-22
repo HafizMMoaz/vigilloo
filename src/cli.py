@@ -17,6 +17,7 @@ from .baseline import (
     load_baseline_fingerprints,
     save_baseline_file,
 )
+from .deps import run_deps
 from .doctor import run_doctor
 from .explain import run_explain
 from .graph import Project, coverage, load_project
@@ -32,6 +33,7 @@ from .report import (
     render_sarif,
 )
 from .rules import RULESET_HASH, scan_project
+from .secrets import run_secrets
 from .workspace import Workspace
 from .workspace.migrations import SchemaTooNewError
 
@@ -530,6 +532,61 @@ def init(
         pre_commit=pre_commit,
         no_interaction=no_interaction,
     )
+    raise typer.Exit(code)
+
+
+@app.command()
+def deps(
+    path: Path = typer.Argument(Path("."), help="Project root containing composer.lock."),  # noqa: B008
+    reachable_only: bool = typer.Option(
+        False,
+        "--reachable-only",
+        help="Only report advisories whose code is reachable from the application.",
+    ),
+    sbom: str | None = typer.Option(
+        None,
+        "--sbom",
+        help="Generate an SBOM (cyclonedx or spdx).",
+    ),
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "-o",
+        "--output",
+        help="Output file for SBOM (prints to stdout if omitted).",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit vulnerability report as JSON.",
+    ),
+) -> None:
+    """Scan composer.lock for vulnerable packages, ranked by call graph reachability."""
+    code = run_deps(
+        path=path,
+        reachable_only=reachable_only,
+        sbom_format=sbom,
+        output_file=output,
+        as_json=output_json,
+    )
+    raise typer.Exit(code)
+
+
+@app.command()
+def secrets(
+    path: Path = typer.Argument(Path("."), help="Project root to scan for exposed secrets."),  # noqa: B008
+    history: bool = typer.Option(
+        False,
+        "--history",
+        help="Scan entire git commit history for rotated or deleted secrets.",
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit secrets report as JSON.",
+    ),
+) -> None:
+    """Scan working tree or git history for exposed credentials and secrets."""
+    code = run_secrets(path=path, history=history, as_json=output_json)
     raise typer.Exit(code)
 
 
