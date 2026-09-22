@@ -8,10 +8,17 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from . import __version__, store
+from .baseline import (
+    DEFAULT_BASELINE_REL_PATH,
+    diff_fingerprints,
+    load_baseline_fingerprints,
+    save_baseline_file,
+)
 from .doctor import run_doctor
-from .graph import coverage, load_project
+from .graph import Project, coverage, load_project
 from .init import run_init
 from .models import Coverage, Finding, WalkStats
 from .report import build_document, render, render_coverage, render_json, render_markdown
@@ -91,6 +98,77 @@ def _emit_report(
         render(findings, console)
 
 
+def _resolve_baseline_path(project_root: Path, explicit: Path | None) -> Path:
+    if explicit is not None:
+        return explicit
+    dot_vigilloo = project_root / DEFAULT_BASELINE_REL_PATH
+    if dot_vigilloo.is_file():
+        return dot_vigilloo
+    root_baseline = project_root / "baseline.json"
+    if root_baseline.is_file():
+        return root_baseline
+    return dot_vigilloo
+
+
+def _load_latest_scan_fingerprints(path: Path) -> set[str] | None:
+    db_path = path / ".vigilloo" / "vigilloo.db"
+    if not db_path.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            pid = store.project_id_for(conn, path)
+            if pid is None:
+                return None
+            ls_id = store.latest_scan(conn, pid)
+            if ls_id is None:
+                return None
+            stored = store.findings_for_scan(conn, ls_id)
+            return {f.fingerprint for f in stored}
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def _execute_scan(
+    path: Path,
+    console: Console,
+    baseline_fingerprints: set[str] | None = None,
+) -> tuple[Workspace, Project, WalkStats, list[Finding], Coverage]:
+    workspace = Workspace.open(path)
+    stats = WalkStats()
+    project = load_project(workspace.root, stats)
+
+    if not project.files and not project.failed:
+        console.print(f"[yellow]No PHP files found under {path}.[/yellow]")
+        return workspace, project, stats, [], coverage(project, stats)
+
+    if project.failed:
+        console.print(f"[yellow]{len(project.failed)} file(s) could not be read.[/yellow]")
+
+    if project.unparsed:
+        shown = ", ".join(str(p) for p in project.unparsed[:5])
+        more = f" and {len(project.unparsed) - 5} more" if len(project.unparsed) > 5 else ""
+        console.print(
+            f"[yellow]{len(project.unparsed)} file(s) had syntax errors and were only "
+            f"partially analysed: {shown}{more}.[/yellow]"
+        )
+
+    for message in project.autoload.rejected:
+        console.print(f"[yellow]Autoload mapping ignored: {message}.[/yellow]")
+
+    if project.files and not project.routes:
+        console.print(
+            "[yellow]No HTTP entry points discovered; route-reachable findings "
+            "cannot be reported.[/yellow]"
+        )
+
+    findings = scan_project(project, stats, baseline=baseline_fingerprints)
+    scan_coverage = coverage(project, stats)
+    return workspace, project, stats, findings, scan_coverage
+
+
 @app.command()
 def scan(
     path: Path = typer.Argument(Path("."), help="Project root to scan."),  # noqa: B008
@@ -106,11 +184,6 @@ def scan(
     ),
 ) -> None:
     """Scan a Laravel project for security findings."""
-    # Under a machine format stdout carries the document and nothing else: a
-    # coverage caveat landing mid-JSON makes it unparseable, and a pipeline
-    # that cannot parse the report learns nothing from the warning either.
-    # Rich writes to stderr when told to, so every existing console.print in
-    # this function moves wholesale rather than growing a conditional each.
     machine = output_format is not OutputFormat.terminal
     console = Console(stderr=True) if machine else Console()
 
@@ -120,54 +193,6 @@ def scan(
     if not path.is_dir():
         typer.secho(f"Error: not a directory: {path}", err=True, fg="red")
         raise typer.Exit(2)
-
-    # The graph still takes a bare root because it holds nothing across runs. The store is
-    # what writes under workspace.dir, and it is handed the finished Project below.
-    started = time.perf_counter()
-    workspace = Workspace.open(path)
-    stats = WalkStats()
-    project = load_project(workspace.root, stats)
-
-    if not project.files and not project.failed:
-        console.print(f"[yellow]No PHP files found under {path}.[/yellow]")
-        # Under a machine format the warning above went to stderr, so stdout
-        # still needs a document: an empty pipe is not "one document with
-        # nothing else in it", it is nothing, and json.loads("") on the other
-        # end of the pipe is a JSONDecodeError instead of the empty result the
-        # scan actually found. The terminal format keeps today's behaviour
-        # exactly - the warning and nothing else - because that path is not
-        # machine-parsed and adding a "No findings." block under it would be a
-        # visible, unrequested behaviour change.
-        if machine:
-            _emit_report([], coverage(project, stats), output_format, machine, console)
-        raise typer.Exit(0)
-
-    if project.failed:
-        console.print(f"[yellow]{len(project.failed)} file(s) could not be read.[/yellow]")
-
-    # Coverage caveats are printed before any finding, so a clean report can
-    # never appear on screen without whatever gap produced it also on screen.
-    if project.unparsed:
-        shown = ", ".join(str(p) for p in project.unparsed[:5])
-        more = f" and {len(project.unparsed) - 5} more" if len(project.unparsed) > 5 else ""
-        console.print(
-            f"[yellow]{len(project.unparsed)} file(s) had syntax errors and were only "
-            f"partially analysed: {shown}{more}.[/yellow]"
-        )
-
-    # A refused autoload mapping is a whole namespace that no longer resolves, which is a
-    # larger blind spot than any single unparsed file and exactly the kind invariant 4
-    # forbids hiding. It prints here, with the other caveats and ahead of the findings,
-    # rather than raising: one crafted or malformed entry degrades the scan, it does not
-    # end it. See vigilloo.laravel.detect for why skipping is the chosen answer.
-    for message in project.autoload.rejected:
-        console.print(f"[yellow]Autoload mapping ignored: {message}.[/yellow]")
-
-    if project.files and not project.routes:
-        console.print(
-            "[yellow]No HTTP entry points discovered; route-reachable findings "
-            "cannot be reported.[/yellow]"
-        )
 
     baseline_fingerprints: set[str] | None = None
     if baseline is not None:
@@ -192,22 +217,18 @@ def scan(
             typer.secho("Error: baseline file is not valid JSON", err=True, fg="red")
             raise typer.Exit(2) from None
 
-    findings = scan_project(project, stats, baseline=baseline_fingerprints)
+    started = time.perf_counter()
+    workspace, project, stats, findings, scan_coverage = _execute_scan(
+        path, console, baseline_fingerprints=baseline_fingerprints
+    )
 
-    # Coverage is measured only once the analysis has run, because the walk is
-    # what discovers the call sites, but it is printed ahead of the findings:
-    # docs/16-reporting puts it second in every format, before them, so a clean
-    # result can never be read without the size of the blind spot beside it.
-    scan_coverage = coverage(project, stats)
+    if not project.files and not project.failed:
+        if machine:
+            _emit_report([], scan_coverage, output_format, machine, console)
+        raise typer.Exit(0)
+
     _emit_report(findings, scan_coverage, output_format, machine, console)
 
-    # The findings are already correct and already on screen; the store is history for the next
-    # run, not this run's result, so a full disk or an unwritable database must not turn a good
-    # scan into a failed command. Silence is the other wrong answer: a lost scan is a hole in
-    # the history that baselines and `report --compare` read later, and invariant 4 says
-    # coverage is reported, never hidden. So it warns, and the exit code stays the findings'.
-    # This covers the write, not Workspace.open above: a root where .vigilloo/ cannot even be
-    # created is a scan that never started, and it still fails loudly at the top.
     try:
         conn = store.connect(workspace)
         try:
@@ -222,19 +243,233 @@ def scan(
         finally:
             conn.close()
     except SchemaTooNewError as exc:
-        # Not a warning, unlike everything below it. A full disk is this run's bad luck and the
-        # next run may well succeed; a workspace written by a newer build will refuse this one
-        # every time, and every scan from here on would silently record nothing. docs/19-cli
-        # gives 4 to a configuration error, which is what this is: the workspace is intact and
-        # the tool pointed at it is the wrong version. The exit code overrides the findings'
-        # own, because "you are running the wrong build" outranks how many findings that build
-        # managed to produce.
         typer.secho(f"Error: {exc}", err=True, fg="red")
         raise typer.Exit(4) from exc
     except (sqlite3.Error, OSError) as exc:
         console.print(f"[yellow]Scan history not recorded: {exc}[/yellow]")
 
     raise typer.Exit(1 if findings else 0)
+
+
+@app.command()
+def review(
+    path: Path = typer.Argument(Path("."), help="Project root to review."),  # noqa: B008
+    baseline: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--baseline",
+        help="Baseline file to compare against (defaults to .vigilloo/baseline.json).",
+    ),
+    output_format: OutputFormat = typer.Option(  # noqa: B008
+        OutputFormat.terminal,
+        "--format",
+        help="Report format.",
+    ),
+) -> None:
+    """Review new findings against baseline or previous scan."""
+    machine = output_format is not OutputFormat.terminal
+    console = Console(stderr=True) if machine else Console()
+
+    if not path.exists():
+        typer.secho(f"Error: path does not exist: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+    if not path.is_dir():
+        typer.secho(f"Error: not a directory: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+
+    base_fingerprints: set[str] | None = None
+    target_file = _resolve_baseline_path(path, baseline)
+    if target_file.exists():
+        try:
+            base_fingerprints = load_baseline_fingerprints(target_file)
+        except Exception as exc:
+            typer.secho(f"Error reading baseline: {exc}", err=True, fg="red")
+            raise typer.Exit(2) from exc
+    elif baseline is not None:
+        typer.secho(f"Error: baseline file does not exist: {baseline}", err=True, fg="red")
+        raise typer.Exit(2)
+    else:
+        base_fingerprints = _load_latest_scan_fingerprints(path)
+
+    _, project, _, findings, scan_coverage = _execute_scan(
+        path, console, baseline_fingerprints=base_fingerprints
+    )
+
+    if base_fingerprints is not None:
+        findings = [f for f in findings if f.fingerprint not in base_fingerprints]
+
+    if not project.files and not project.failed:
+        if machine:
+            _emit_report([], scan_coverage, output_format, machine, console)
+        raise typer.Exit(0)
+
+    if not machine and not findings:
+        console.print("[bold green]Review clean: no new findings introduced.[/bold green]")
+        raise typer.Exit(0)
+
+    _emit_report(findings, scan_coverage, output_format, machine, console)
+    raise typer.Exit(1 if findings else 0)
+
+
+baseline_app = typer.Typer(
+    name="baseline",
+    help="Manage baseline findings to suppress known issues.",
+    no_args_is_help=True,
+)
+app.add_typer(baseline_app, name="baseline")
+
+
+@baseline_app.command("create")
+def baseline_create(
+    path: Path = typer.Argument(Path("."), help="Project root to baseline."),  # noqa: B008
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "-o",
+        "--output",
+        help="Custom baseline file path (defaults to .vigilloo/baseline.json).",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite existing baseline file.",
+    ),
+) -> None:
+    """Accept current findings and write them to a baseline file."""
+    console = Console()
+    if not path.exists():
+        typer.secho(f"Error: path does not exist: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+    if not path.is_dir():
+        typer.secho(f"Error: not a directory: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+
+    target_file = output if output is not None else (path / DEFAULT_BASELINE_REL_PATH)
+    if target_file.exists() and not force:
+        console.print(
+            f"[yellow]Baseline already exists at {target_file}. Use --force or "
+            "'vigilloo baseline update'.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    _, _, _, findings, _ = _execute_scan(path, console)
+    save_baseline_file(target_file, findings)
+    console.print(
+        f"[bold green]✓ Created baseline with {len(findings)} finding(s) "
+        f"at {target_file}[/bold green]"
+    )
+    raise typer.Exit(0)
+
+
+@baseline_app.command("update")
+def baseline_update(
+    path: Path = typer.Argument(Path("."), help="Project root to baseline."),  # noqa: B008
+    output: Path | None = typer.Option(  # noqa: B008
+        None,
+        "-o",
+        "--output",
+        help="Baseline file path (defaults to existing baseline or .vigilloo/baseline.json).",
+    ),
+) -> None:
+    """Update baseline with current findings."""
+    console = Console()
+    if not path.exists():
+        typer.secho(f"Error: path does not exist: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+    if not path.is_dir():
+        typer.secho(f"Error: not a directory: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+
+    target_file = _resolve_baseline_path(path, output)
+    old_fingerprints: set[str] = set()
+    if target_file.exists():
+        try:
+            old_fingerprints = load_baseline_fingerprints(target_file)
+        except Exception as exc:
+            typer.secho(f"Error reading existing baseline: {exc}", err=True, fg="red")
+            raise typer.Exit(2) from exc
+
+    _, _, _, findings, _ = _execute_scan(path, console)
+    current_fps = [f.fingerprint for f in findings]
+    diff = diff_fingerprints(current_fps, old_fingerprints)
+
+    save_baseline_file(target_file, findings)
+    console.print(
+        f"[bold green]✓ Baseline updated at {target_file} ({len(findings)} total findings: "
+        f"+{len(diff.added)} added, -{len(diff.removed)} removed, "
+        f"{len(diff.unchanged)} unchanged)[/bold green]"
+    )
+    raise typer.Exit(0)
+
+
+@baseline_app.command("diff")
+def baseline_diff(
+    path: Path = typer.Argument(Path("."), help="Project root to compare."),  # noqa: B008
+    baseline: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--baseline",
+        help="Baseline file path (defaults to .vigilloo/baseline.json).",
+    ),
+) -> None:
+    """Show differences between current findings and the baseline."""
+    console = Console()
+    if not path.exists():
+        typer.secho(f"Error: path does not exist: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+    if not path.is_dir():
+        typer.secho(f"Error: not a directory: {path}", err=True, fg="red")
+        raise typer.Exit(2)
+
+    target_file = _resolve_baseline_path(path, baseline)
+    if not target_file.exists():
+        typer.secho(
+            f"Error: baseline file not found at {target_file}. "
+            "Run 'vigilloo baseline create' first.",
+            err=True,
+            fg="red",
+        )
+        raise typer.Exit(2)
+
+    try:
+        baseline_fps = load_baseline_fingerprints(target_file)
+    except Exception as exc:
+        typer.secho(f"Error reading baseline: {exc}", err=True, fg="red")
+        raise typer.Exit(2) from exc
+
+    _, _, _, findings, _ = _execute_scan(path, console)
+    current_fps = [f.fingerprint for f in findings]
+    diff = diff_fingerprints(current_fps, baseline_fps)
+
+    table = Table(title=f"Baseline Diff for {target_file}")
+    table.add_column("Category", style="bold")
+    table.add_column("Count", justify="right")
+    table.add_column("Status")
+
+    table.add_row(
+        "New (introduced)",
+        str(len(diff.added)),
+        "[red]FAIL[/red]" if diff.added else "[green]OK[/green]",
+    )
+    table.add_row(
+        "Resolved (fixed)",
+        str(len(diff.removed)),
+        "[green]IMPROVED[/green]" if diff.removed else "-",
+    )
+    table.add_row(
+        "Unchanged (suppressed)",
+        str(len(diff.unchanged)),
+        "[dim]PERSISTENT[/dim]",
+    )
+    console.print(table)
+
+    if diff.added:
+        console.print(
+            f"\n[bold red]{len(diff.added)} new finding(s) introduced "
+            "compared to baseline.[/bold red]"
+        )
+        raise typer.Exit(1)
+
+    console.print("\n[bold green]No new findings compared to baseline.[/bold green]")
+    raise typer.Exit(0)
 
 
 @app.command()
