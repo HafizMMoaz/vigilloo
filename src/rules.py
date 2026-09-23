@@ -679,6 +679,8 @@ _BY_ID: dict[str, Rule] = {
     )
 }
 
+RULES_BY_ID: dict[str, Rule] = _BY_ID
+
 
 def _ruleset_hash(rules: dict[str, Rule]) -> str:
     """Content-derive an identity for the rule table.
@@ -714,7 +716,18 @@ def scan_project(
     from collections import defaultdict
 
     paths_by_sink = defaultdict(list)
-    for path in find_taint_paths(project, stats=stats) + find_structural_paths(project):
+    raw_paths: list[list[PathStep]] = []
+    try:
+        raw_paths.extend(find_taint_paths(project, stats=stats))
+    except Exception as exc:
+        project.failed_rules["taint_analysis"] = str(exc)
+
+    try:
+        raw_paths.extend(find_structural_paths(project))
+    except Exception as exc:
+        project.failed_rules["structural_analysis"] = str(exc)
+
+    for path in raw_paths:
         if not path:
             continue
         rule_id = path[-1].rule_id

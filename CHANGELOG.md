@@ -25,6 +25,13 @@ Ruleset hash: `b35162f4d187c91c`.
 
 ### Added
 
+- **Repository layout subpackage reorganization** (TASK-116). Flat modules consolidated into dedicated subpackages (`vigilloo.parser` and `vigilloo.graph`) matching the target repository architecture, with backward-compatibility shims preserving existing imports.
+- **Crashing rule isolation** (TASK-115). Scan execution wraps rules in fault isolation so that an unhandled exception in an individual rule does not crash the scan. Failed rules are recorded in the scan manifest, warned on stderr, and reflected in exit code 3 when degraded.
+- **Declarative YAML rules** (TASK-114). Security rules can now be defined declaratively in YAML format with typed validation schemas, allowing framework and custom rules to be loaded safely without imperative logic.
+- **FrameworkAdapter Protocol** (TASK-113). Extracted framework adaptation into a structural typing Protocol (`vigilloo.sdk.FrameworkAdapter`), providing a framework-neutral integration boundary with `LaravelAdapter` as the reference implementation.
+- **NFR performance benchmarks and nightly workflow** (TASK-112). Added pytest-benchmark test suite guarding scan time (<= 60s at 100k LOC) and peak resident set size (<= 2 GB at 500k LOC), executed via scheduled nightly CI.
+- **Incremental scanning via symbol cache** (TASK-111). Implemented SQLite-backed symbol caching keyed by SHA-256 file content digest and parser version (`symbol_cache` table), allowing unchanged files to bypass Tree-sitter parsing on rescan while preserving byte-identical findings.
+- **CLI scan and review filtering options**. Added `--output` file redirection, `--severity` floor filtering, `--fail-on` CI threshold gating, and `--rules` / `--exclude-rules` rule ID filtering for `vigilloo scan` and `vigilloo review`.
 - **User-defined sources and sanitizers** (TASK-083) are now supported via `vigilloo.yml`. Teams can declare custom functions, facades, and helpers that introduce or sanitize untrusted data, and the taint engine seamlessly incorporates them into the analysis.
 - **Unauthenticated state-changing routes** (TASK-071). Routes that use POST, PUT, PATCH, or DELETE are flagged if they are not protected by authentication middleware or signed URL validation, enforcing Laravel security best practices. New rule `laravel.unauthenticated-route` (high).
 

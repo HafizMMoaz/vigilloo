@@ -20,3 +20,33 @@ applications:
       The clean-run control from the parent plan. Small enough to run on every PR, and a
       framework skeleton should produce few or no findings, so a sudden crop of them is a
       strong signal that a rule has become indiscriminate.
+
+  koel:
+    repo: https://github.com/koel/koel.git
+    pin: 90adda2ad867d7a6b9ac76ac5396d366619b411b
+    laravel: "^11.0"
+    php: ">=8.2"
+    licence: MIT
+    php_files: 920
+    php_loc: 45088
+    wave: 1
+    pr_subset: false
+    rationale: >
+      Music streaming server built with Laravel. Medium-sized real-world application
+      with rich audio processing jobs, REST APIs, events, and custom service providers.
+      Last commit on Laravel 11 before upgrading to Laravel 12.
+
+  monica:
+    repo: https://github.com/monicahq/monica.git
+    pin: 64d143317096fd3ceaeef16773055bb9a16a070e
+    laravel: "^11.0"
+    php: "^8.3"
+    licence: AGPL-3.0
+    php_files: 1573
+    php_loc: 123263
+    wave: 1
+    pr_subset: false
+    rationale: >
+      Large personal CRM application. Last commit on Laravel 11 before upgrading
+      to Laravel 12. Covers complex domain models, API routes, blade templates,
+      and background jobs.

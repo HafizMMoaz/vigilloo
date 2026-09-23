@@ -65,7 +65,10 @@ class SSABuilder:
                     for name, val in self.block_out[pred.id].items():
                         if name not in incoming_vars:
                             incoming_vars[name] = set()
-                        incoming_vars[name].add(val)
+                        if isinstance(val, PhiNode) and val.name == name:
+                            incoming_vars[name].update(val.sources)
+                        else:
+                            incoming_vars[name].add(val)
 
                 for name, vals in incoming_vars.items():
                     if len(vals) == 1:

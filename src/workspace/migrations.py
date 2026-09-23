@@ -138,6 +138,18 @@ CREATE TABLE summary_cache (
 );
 """,
     ),
+    Migration(
+        to_version=5,
+        summary="add the symbol_cache table for incremental AST symbol extraction",
+        sql="""
+CREATE TABLE symbol_cache (
+    file_sha TEXT PRIMARY KEY,
+    parser_version TEXT NOT NULL,
+    symbols BLOB NOT NULL,
+    created_at TEXT
+);
+""",
+    ),
 )
 
 # Derived, never written down twice. The top of the ladder is by definition the version this

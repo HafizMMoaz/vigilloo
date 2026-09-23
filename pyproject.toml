@@ -28,6 +28,7 @@ dev = [
     "pip-audit>=2.9,<2.10",
     "pre-commit>=4.4,<4.5",
     "hypothesis>=6.145,<6.146",
+    "pytest-benchmark>=5.1,<5.2",
 ]
 
 [build-system]
@@ -45,8 +46,12 @@ build-backend = "setuptools.build_meta"
 #      silently omits it. Hatchling was dropped for this layout: it cannot do
 #      editable installs when sources renames a prefix.
 [tool.setuptools]
-package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel", "vigilloo.workspace" = "src/workspace", "vigilloo.analysis" = "src/analysis", "vigilloo.report" = "src/report" }
-packages = ["vigilloo", "vigilloo.laravel", "vigilloo.workspace", "vigilloo.analysis", "vigilloo.report"]
+package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel", "vigilloo.workspace" = "src/workspace", "vigilloo.analysis" = "src/analysis", "vigilloo.report" = "src/report", "vigilloo.deps" = "src/deps", "vigilloo.secrets" = "src/secrets", "vigilloo.sdk" = "src/sdk", "vigilloo.security" = "src/security", "vigilloo.parser" = "src/parser", "vigilloo.graph" = "src/graph" }
+packages = ["vigilloo", "vigilloo.laravel", "vigilloo.workspace", "vigilloo.analysis", "vigilloo.report", "vigilloo.deps", "vigilloo.secrets", "vigilloo.sdk", "vigilloo.security", "vigilloo.parser", "vigilloo.graph"]
+
+[tool.setuptools.package-data]
+"vigilloo.deps" = ["data/*.json"]
+"vigilloo.laravel" = ["rules/*.yml"]
 
 [tool.ruff]
 line-length = 100
@@ -93,3 +98,7 @@ files = ["src", "scripts/corpus.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--ignore=tests/perf"
+markers = [
+    "perf: performance benchmarks against NFR targets (run nightly)",
+]

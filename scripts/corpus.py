@@ -50,13 +50,15 @@ class Pin:
     pr_subset: bool = False
 
 
-def load_pins(path: Path = PINS) -> dict[str, Pin]:
+def load_pins(path: Path | None = None) -> dict[str, Pin]:
     """Read `corpus/pins.yml`.
 
     An application without a `pin` raises rather than defaulting to HEAD. A corpus that
     silently tracks a moving target produces precision numbers that cannot be compared
     between runs, which defeats the entire measurement.
     """
+    if path is None:
+        path = PINS
     document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     applications = document.get("applications") or {}
     pins: dict[str, Pin] = {}
@@ -99,7 +101,7 @@ def scan_app(name: str, root: Path, out: Path, timeout_s: int = DEFAULT_TIMEOUT_
                 f"{name}: scan exceeded {timeout_s}s; refusing to record a partial report"
             ) from exc
 
-        if completed.returncode != 0:
+        if completed.returncode not in (0, 1):
             raise RuntimeError(
                 f"{name}: scan exited {completed.returncode}: {completed.stderr[-500:]}"
             )
@@ -109,8 +111,16 @@ def scan_app(name: str, root: Path, out: Path, timeout_s: int = DEFAULT_TIMEOUT_
         try:
             document = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"{name}: scan exited {completed.returncode}: {completed.stderr[-500:]}"
+                ) from exc
             raise RuntimeError(f"{name}: scan produced unparseable JSON: {exc}") from exc
         if "findings" not in document or "coverage" not in document:
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    f"{name}: scan exited {completed.returncode}: {completed.stderr[-500:]}"
+                )
             raise RuntimeError(f"{name}: report is missing required keys; refusing to record it")
 
         check_coverage(name, document)
@@ -315,7 +325,18 @@ def main(argv: list[str] | None = None) -> int:
     triage_parser = sub.add_parser("triage", help="Record verdicts for one application.")
     triage_parser.add_argument("app")
     triage_parser.add_argument("--quota", type=int, default=DEFAULT_QUOTA)
-    sub.add_parser("report", help="Print the precision table and drift.")
+    report_parser = sub.add_parser("report", help="Print the precision table and drift.")
+    report_parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="Enforce NFR-6 precision gate (>=90%%) and zero drift.",
+    )
+    report_parser.add_argument(
+        "--precision-floor",
+        type=float,
+        default=0.90,
+        help="Minimum overall precision required when gating (default: 0.90).",
+    )
 
     args = parser.parse_args(argv)
     pins = load_pins()
@@ -365,6 +386,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "report":
         has_missing = False
+        gate_failed = False
+        total_true = 0
+        total_false = 0
+        total_unrev = 0
+        total_drift = 0
+
         for pin in pins.values():
             report_path = REPORTS / f"{pin.name}.json"
             if not report_path.exists():
@@ -378,6 +405,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n{pin.name} @ {pin.pin[:12]}  ({len(findings)} findings)")
             print(f"{'rule':<40} {'true':>5} {'false':>6} {'unrev':>6} {'precision':>10}")
             for row in compute_precision(findings, triage):
+                total_true += row.true_count
+                total_false += row.false_count
+                total_unrev += row.unreviewed_count
                 shown = "undefined" if row.precision is None else f"{row.precision:.1%}"
                 print(
                     f"{row.rule:<40} {row.true_count:>5} {row.false_count:>6} "
@@ -387,10 +417,37 @@ def main(argv: list[str] | None = None) -> int:
             drift = diff_fingerprints(
                 current=[str(f["fingerprint"]) for f in findings], approved=list(triage)
             )
+            drift_count = len(drift.added) + len(drift.removed)
+            total_drift += drift_count
             print(f"drift: {len(drift.added)} new, {len(drift.removed)} gone")
 
         if has_missing:
             return 1
+
+        if getattr(args, "gate", False):
+            total_reviewed = total_true + total_false
+            overall_precision = (total_true / total_reviewed) if total_reviewed else 1.0
+            print("\n--- Gate Evaluation ---")
+            print(f"Overall precision: {overall_precision:.1%} (floor: {args.precision_floor:.1%})")
+            print(f"Unreviewed findings: {total_unrev}")
+            print(f"Total drift: {total_drift}")
+
+            if total_unrev > 0:
+                print(f"GATE FAILED: {total_unrev} findings awaiting review")
+                gate_failed = True
+            if total_drift > 0:
+                print(f"GATE FAILED: drift detected ({total_drift} added/removed)")
+                gate_failed = True
+            if overall_precision < args.precision_floor:
+                print(
+                    f"GATE FAILED: precision {overall_precision:.1%} "
+                    f"below floor {args.precision_floor:.1%}"
+                )
+                gate_failed = True
+
+            if gate_failed:
+                return 1
+
         return 0
 
     return 1
