@@ -13,7 +13,7 @@ from pathlib import Path
 import tree_sitter_php
 from tree_sitter import Language, Node, Parser, Tree
 
-from .models import ParseFailure, Span, Suppression
+from ..models import ParseFailure, Span, Suppression
 
 
 @dataclass
@@ -128,13 +128,6 @@ def find_any(node: Node, type_names: tuple[str, ...]) -> list[Node]:
     return [n for n in walk(node) if n.type in wanted]
 
 
-# The declarations worth naming in a parse failure, and the word each is called
-# by in a report. A construct earns a place here by being something a developer
-# can go and open: "the method OrderController::search failed to parse" is a
-# task, "an ERROR node at byte 4172" is a puzzle. Anonymous forms - closures,
-# arrow functions, anonymous classes - are deliberately absent, because naming
-# one would mean inventing a name, and a made-up location is worse than the
-# honest fallback to the file (see _enclosing_construct).
 _NAMED_CONSTRUCTS = {
     "method_declaration": "method",
     "function_definition": "function",
@@ -144,7 +137,6 @@ _NAMED_CONSTRUCTS = {
     "enum_declaration": "enum",
 }
 
-# The declarations a method can hang off, used only to qualify its name.
 _TYPE_DECLARATIONS = (
     "class_declaration",
     "interface_declaration",
@@ -208,22 +200,7 @@ def _enclosing_construct(node: Node, source: bytes) -> tuple[str, str]:
 
 
 def error_constructs(parsed: ParsedFile) -> tuple[ParseFailure, ...]:
-    """Which constructs in `parsed` failed to parse, deduplicated and sorted.
-
-    Invariant 4 says coverage is reported and never hidden, and a file path is
-    only half of that report: it says a scan went blind somewhere in three
-    hundred lines without saying where, so the parse-rate gate points at a
-    filename instead of at a cause. This names the construct instead.
-
-    Returns empty for a clean file before touching the tree. Every scan of every
-    healthy project takes that path, and it must cost one boolean read.
-
-    Sorted, not walk-ordered, because it feeds a report and invariant 8 requires
-    the same input to render byte-identically. Deduplicated because one broken
-    method usually produces several error nodes - an unclosed parameter list and
-    the unterminated call after it - and reporting one construct twice tells the
-    reader nothing the first mention did not.
-    """
+    """Which constructs in `parsed` failed to parse, deduplicated and sorted."""
     if not parsed.has_errors:
         return ()
 
@@ -241,18 +218,11 @@ def extract_suppressions(comments: list[Node], parsed: ParsedFile) -> list[Suppr
     If the justification or rule ID is missing, `is_invalid` is True.
     """
     suppressions = []
-
-    # regex matches:
-    # 1. optional whitespace
-    # 2. rule id (optional group 1)
-    # 3. optional whitespace + '--' + optional whitespace + justification (optional group 2)
-    # The prefix `// vigilloo-ignore` or `/* vigilloo-ignore` is handled via a broader match first.
     ignore_pattern = re.compile(r"vigilloo-ignore\s*([a-z0-9.-]+)?(?:\s*--\s*(.+))?")
 
     for node in comments:
         text = node_text(node, parsed.source).strip()
 
-        # Strip //, /*, #, */
         if text.startswith("//") or text.startswith("/*") or text.startswith("#"):
             text = text.lstrip("/*# \t").rstrip("*/ \t")
 
@@ -268,7 +238,6 @@ def extract_suppressions(comments: list[Node], parsed: ParsedFile) -> list[Suppr
             if not rule_id or not justification or not justification.strip():
                 is_invalid = True
 
-            # Node start row is 0-indexed, so start_point[0] + 1 is the 1-indexed line number.
             line = node.start_point[0] + 1
 
             suppressions.append(
