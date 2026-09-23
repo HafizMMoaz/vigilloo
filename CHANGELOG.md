@@ -25,6 +25,7 @@ Ruleset hash: `b35162f4d187c91c`.
 
 ### Added
 
+- **Repository layout subpackage reorganization** (TASK-116). Flat modules consolidated into dedicated subpackages (`vigilloo.parser` and `vigilloo.graph`) matching the target repository architecture, with backward-compatibility shims preserving existing imports.
 - **Crashing rule isolation** (TASK-115). Scan execution wraps rules in fault isolation so that an unhandled exception in an individual rule does not crash the scan. Failed rules are recorded in the scan manifest, warned on stderr, and reflected in exit code 3 when degraded.
 - **Declarative YAML rules** (TASK-114). Security rules can now be defined declaratively in YAML format with typed validation schemas, allowing framework and custom rules to be loaded safely without imperative logic.
 - **FrameworkAdapter Protocol** (TASK-113). Extracted framework adaptation into a structural typing Protocol (`vigilloo.sdk.FrameworkAdapter`), providing a framework-neutral integration boundary with `LaravelAdapter` as the reference implementation.

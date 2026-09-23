@@ -15,13 +15,12 @@ from typing import TYPE_CHECKING
 
 from tree_sitter import Node
 
-from .config import VigillooConfig
-from .ids import node_id
-from .laravel.blade import to_php
-from .laravel.config import ProjectConfig, extract_project_config
-from .laravel.detect import Autoload, read_autoload
-from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
-from .models import (
+from ..config import VigillooConfig
+from ..laravel.blade import to_php
+from ..laravel.config import ProjectConfig, extract_project_config
+from ..laravel.detect import Autoload, read_autoload
+from ..laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
+from ..models import (
     Coverage,
     EdgeRow,
     EntryPoint,
@@ -34,13 +33,13 @@ from .models import (
     TaintKind,
     WalkStats,
 )
+from .ids import node_id
 
 if TYPE_CHECKING:
-    from .summaries import FunctionSummary
-from .parser import (
+    from ..summaries import FunctionSummary
+from ..parser import (
     ParsedFile,
     collect_nodes,
-    error_constructs,
     extract_suppressions,
     find_all,
     node_span,
@@ -48,8 +47,11 @@ from .parser import (
     parse_php,
     parse_source,
 )
-from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
-from .workspace import Workspace
+from ..parser import (
+    error_constructs as error_constructs,
+)
+from ..symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
+from ..workspace import Workspace
 
 _EXCLUDED_DIRS = {"vendor", "node_modules", "storage", "bootstrap", ".git"}
 
@@ -360,8 +362,8 @@ def load_project(
     # which written names are already fully qualified, so it has to exist before the
     # first symbol table is built. `Workspace.at` rather than `.open` because loading a
     # project reads and must not create `.vigilloo/` in a tree nobody asked to scan.
-    from .laravel.container import extract_bindings
-    from .laravel.entrypoints import find_entrypoints
+    from ..laravel.container import extract_bindings
+    from ..laravel.entrypoints import find_entrypoints
 
     workspace = Workspace.at(root)
     autoload = read_autoload(workspace)
@@ -414,8 +416,8 @@ def load_project(
 
         project.suppressions.extend(extract_suppressions(record.comments, parsed))
 
+        from ..symbols import PARSER_VERSION
         from . import store
-        from .symbols import PARSER_VERSION
 
         file_sha = project.digests[rel_path]
         cached_syms = None
@@ -453,10 +455,10 @@ def load_project(
     if opened_conn and conn is not None:
         conn.close()
 
-    from .laravel.middleware import extract_middleware_groups
-    from .laravel.migrations import extract_schema
-    from .laravel.policies import extract_explicit_policies
-    from .laravel.routes import discover_route_files
+    from ..laravel.middleware import extract_middleware_groups
+    from ..laravel.migrations import extract_schema
+    from ..laravel.policies import extract_explicit_policies
+    from ..laravel.routes import discover_route_files
 
     properties_by_file = {p: r.properties for p, r in php_records.items()}
     scoped_calls_by_file = {p: r.scoped_calls for p, r in php_records.items()}
@@ -840,7 +842,7 @@ class _RowBuilder:
         scoped_calls = []
         member_calls = []
 
-        from .parser import walk
+        from ..parser import walk
 
         for node in walk(method):
             t = node.type
