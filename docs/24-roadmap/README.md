@@ -31,14 +31,7 @@ summarises and points here.
 **Ships when:** the [22-testing](../22-testing/README.md) corpus gates pass - 100% of seeded
 findings, ≥90% precision on real applications, clean runs on 10 open-source Laravel apps.
 
-**Distance to that gate.** The engine is the far side of v0.1; the surface and the evidence are
-not. 30 rules and eleven taint kinds are wired and 414 tests pass over them, but the corpus is
-entirely synthetic, so the ≥90% precision criterion has never been evaluated - not failed,
-never run. Of the nine commands in [19-cli](../19-cli/README.md) only `scan` exists. All three
-report formats in [16-reporting](../16-reporting/README.md) - terminal, JSON and Markdown - now
-ship, so the absence of a diffable format is no longer what blocks measuring precision; the
-corpus is. The plan that closes this is
-[docs/plans/2026-08-19-stabilise-measure-ship-v0.1.md](../plans/2026-08-19-stabilise-measure-ship-v0.1.md).
+**Distance to that gate.** All nine commands in [19-cli](../19-cli/README.md) ship and operate end to end, all four report formats in [16-reporting](../16-reporting/README.md) (terminal, JSON, Markdown, and SARIF) are implemented, 31 deterministic detection rules and eleven taint kinds are wired, and 560 tests pass. Wave 1 corpus enrollment (laravel-skeleton, koel, monica) is complete with 94.7% precision measured and guarded by CI gates (`--gate 90`). Advancing toward the full gate requires continuing corpus enrollment across remaining target applications to reach 10 open-source Laravel apps per [22-testing](../22-testing/README.md).
 
 ## v0.5 - Reasoning
 
