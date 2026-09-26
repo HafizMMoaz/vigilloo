@@ -18,7 +18,14 @@ from .core import (
     graph_rows,
     load_project,
 )
-from .export import JSON_FORMAT_VERSION, export_graphml, export_json
+from .export import (
+    JSON_FORMAT_VERSION,
+    export_dot,
+    export_gexf,
+    export_graphml,
+    export_json,
+    filter_graph,
+)
 from .ids import node_id
 from .queries import (
     run_graph_build,
@@ -65,8 +72,11 @@ __all__ = [
     "connect",
     "coverage",
     "error_constructs",
+    "export_dot",
+    "export_gexf",
     "export_graphml",
     "export_json",
+    "filter_graph",
     "findings_by_fingerprint",
     "graph_for_project",
     "graph_rows",

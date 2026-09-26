@@ -29,6 +29,7 @@ import json
 # GraphML *importer* ever lands, it is reading a file some other tool produced, and that is the
 # point at which hardened parsing becomes a requirement rather than a reflex.
 import xml.etree.ElementTree as ET
+from collections import defaultdict, deque
 from collections.abc import Iterable, Mapping
 from dataclasses import fields
 
@@ -42,6 +43,20 @@ JSON_FORMAT_VERSION = 1
 _GRAPHML_NS = "http://graphml.graphdrawing.org/xmlns"
 _XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 _GRAPHML_XSD = "http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd"
+_GEXF_NS = "http://www.gexf.net/1.2draft"
+
+_LAYER_EDGE_KINDS: dict[str, frozenset[str]] = {
+    "ast": frozenset({"CHILD_OF", "NEXT_SIBLING"}),
+    "symbol": frozenset({"EXTENDS", "IMPLEMENTS", "USES_TRAIT", "DECLARES", "IMPORTS"}),
+    "call": frozenset({"CALLS", "INSTANTIATES", "RESOLVES_TO"}),
+    "cfg": frozenset({"FLOWS_TO", "BRANCH_TRUE", "BRANCH_FALSE", "THROWS", "CATCHES"}),
+    "control_flow": frozenset({"FLOWS_TO", "BRANCH_TRUE", "BRANCH_FALSE", "THROWS", "CATCHES"}),
+    "data_flow": frozenset({"ASSIGNS_TO", "PROPAGATES_TO", "TAINTS", "SANITIZES"}),
+    "framework": frozenset(
+        {"HANDLES", "PROTECTED_BY", "RENDERS", "AUTHORIZES", "BINDS", "DISPATCHES"}
+    ),
+    "dependency": frozenset({"DEPENDS_ON", "AFFECTED_BY", "RESOLVES_TO_VERSION"}),
+}
 
 # Every attribute either exporter emits, and the GraphML type it declares. GraphML has no list
 # and no nested-object type, so `attrs` - the kind-specific bag from docs/04-knowledge-graph,
@@ -144,6 +159,166 @@ def export_graphml(nodes: Iterable[NodeRow], edges: Iterable[EdgeRow]) -> str:
     ET.indent(root, space="  ")
     body = ET.tostring(root, encoding="unicode")
     return f'<?xml version="1.0" encoding="UTF-8"?>\n{body}\n'
+
+
+def export_dot(nodes: Iterable[NodeRow], edges: Iterable[EdgeRow]) -> str:
+    """Graphviz DOT format.
+
+    Deterministic, sorted by kind/fqn/id for nodes and kind/endpoints/attributes for edges.
+    """
+    sorted_nodes = sorted(nodes, key=_node_key)
+    sorted_edges = sorted(edges, key=_edge_key)
+
+    lines = [
+        "digraph G {",
+        "  rankdir=LR;",
+        '  node [shape=box, fontname="sans-serif", fontsize=10];',
+        '  edge [fontname="sans-serif", fontsize=8];',
+    ]
+    for node in sorted_nodes:
+        label = f"{node.kind}: {node.fqn or node.name}"
+        escaped_label = label.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'  "{node.id}" [label="{escaped_label}"];')
+
+    for edge in sorted_edges:
+        label = edge.kind
+        escaped_label = label.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'  "{edge.src_id}" -> "{edge.dst_id}" [label="{escaped_label}"];')
+
+    lines.append("}\n")
+    return "\n".join(lines)
+
+
+def export_gexf(nodes: Iterable[NodeRow], edges: Iterable[EdgeRow]) -> str:
+    """GEXF 1.2, for Gephi and Cytoscape."""
+    root = ET.Element(
+        "gexf",
+        {
+            "xmlns": _GEXF_NS,
+            "version": "1.2",
+        },
+    )
+    graph = ET.SubElement(
+        root,
+        "graph",
+        {
+            "mode": "static",
+            "defaultedgetype": "directed",
+        },
+    )
+    node_attrs = ET.SubElement(graph, "attributes", {"class": "node"})
+    for name, attr_type in _NODE_KEYS:
+        gexf_type = (
+            "string" if attr_type == "string" else ("integer" if attr_type == "int" else "double")
+        )
+        ET.SubElement(
+            node_attrs, "attribute", {"id": f"n_{name}", "title": name, "type": gexf_type}
+        )
+
+    edge_attrs = ET.SubElement(graph, "attributes", {"class": "edge"})
+    for name, attr_type in _EDGE_KEYS:
+        gexf_type = (
+            "string" if attr_type == "string" else ("integer" if attr_type == "int" else "double")
+        )
+        ET.SubElement(
+            edge_attrs, "attribute", {"id": f"e_{name}", "title": name, "type": gexf_type}
+        )
+
+    nodes_elem = ET.SubElement(graph, "nodes")
+    for node in sorted(nodes, key=_node_key):
+        n_elem = ET.SubElement(
+            nodes_elem, "node", {"id": node.id, "label": node.name or node.fqn or node.id}
+        )
+        attvalues = ET.SubElement(n_elem, "attvalues")
+        for name, _ in _NODE_KEYS:
+            val = getattr(node, name)
+            if val is not None:
+                val_str = _attrs_text(val) if name == "attrs" else str(val)
+                ET.SubElement(attvalues, "attvalue", {"for": f"n_{name}", "value": val_str})
+
+    edges_elem = ET.SubElement(graph, "edges")
+    for i, edge in enumerate(sorted(edges, key=_edge_key)):
+        e_elem = ET.SubElement(
+            edges_elem,
+            "edge",
+            {
+                "id": str(i),
+                "source": edge.src_id,
+                "target": edge.dst_id,
+                "label": edge.kind,
+            },
+        )
+        attvalues = ET.SubElement(e_elem, "attvalues")
+        for name, _ in _EDGE_KEYS:
+            val = getattr(edge, name)
+            if val is not None:
+                val_str = _attrs_text(val) if name == "attrs" else str(val)
+                ET.SubElement(attvalues, "attvalue", {"for": f"e_{name}", "value": val_str})
+
+    ET.indent(root, space="  ")
+    body = ET.tostring(root, encoding="unicode")
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n{body}\n'
+
+
+def filter_graph(
+    nodes: Iterable[NodeRow],
+    edges: Iterable[EdgeRow],
+    layer: str | None = None,
+    focus: str | None = None,
+    depth: int | None = None,
+) -> tuple[list[NodeRow], list[EdgeRow]]:
+    """Filter nodes and edges by layer and/or focus node neighborhood."""
+    filtered_nodes = list(nodes)
+    filtered_edges = list(edges)
+
+    if layer is not None:
+        layer_key = layer.strip().lower()
+        if layer_key not in _LAYER_EDGE_KINDS:
+            valid = ", ".join(sorted(_LAYER_EDGE_KINDS.keys()))
+            raise ValueError(f"Unknown layer '{layer}'. Valid layers are: {valid}")
+        allowed_kinds = _LAYER_EDGE_KINDS[layer_key]
+        filtered_edges = [e for e in filtered_edges if e.kind in allowed_kinds]
+        connected_node_ids = {e.src_id for e in filtered_edges} | {e.dst_id for e in filtered_edges}
+        filtered_nodes = [n for n in filtered_nodes if n.id in connected_node_ids]
+
+    if focus is not None:
+        focus_term = focus.strip()
+        seed_ids: set[str] = set()
+        for n in filtered_nodes:
+            if n.id == focus_term or n.fqn == focus_term or n.name == focus_term:
+                seed_ids.add(n.id)
+        if not seed_ids:
+            for n in filtered_nodes:
+                if (
+                    focus_term.lower() in (n.fqn or "").lower()
+                    or focus_term.lower() in (n.name or "").lower()
+                ):
+                    seed_ids.add(n.id)
+
+        if not seed_ids:
+            return [], []
+
+        max_depth = 1 if depth is None else max(0, depth)
+
+        adj: dict[str, set[str]] = defaultdict(set)
+        for e in filtered_edges:
+            adj[e.src_id].add(e.dst_id)
+            adj[e.dst_id].add(e.src_id)
+
+        visited: set[str] = set(seed_ids)
+        queue: deque[tuple[str, int]] = deque((sid, 0) for sid in seed_ids)
+        while queue:
+            curr_id, curr_d = queue.popleft()
+            if curr_d < max_depth:
+                for neighbor in adj.get(curr_id, ()):
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, curr_d + 1))
+
+        filtered_nodes = [n for n in filtered_nodes if n.id in visited]
+        filtered_edges = [e for e in filtered_edges if e.src_id in visited and e.dst_id in visited]
+
+    return filtered_nodes, filtered_edges
 
 
 def _declare_key(root: ET.Element, target: str, name: str, attr_type: str) -> None:

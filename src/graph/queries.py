@@ -18,7 +18,7 @@ from ..models import EdgeRow, NodeRow, Route, WalkStats
 from ..workspace import Workspace
 from . import store
 from .core import graph_rows, load_project
-from .export import export_graphml, export_json
+from .export import export_dot, export_gexf, export_graphml, export_json, filter_graph
 
 _AUTH_MIDDLEWARES = frozenset({"auth", "auth:api", "auth:sanctum", "verified"})
 
@@ -65,9 +65,12 @@ def run_graph_export(
     path: Path,
     output_format: str = "json",
     output_file: Path | None = None,
+    layer: str | None = None,
+    focus: str | None = None,
+    depth: int | None = None,
     console: Console | None = None,
 ) -> int:
-    """Export knowledge graph to JSON or GraphML format."""
+    """Export knowledge graph to JSON, GraphML, DOT, or GEXF format."""
     if console is None:
         console = Console(stderr=True)
 
@@ -80,14 +83,26 @@ def run_graph_export(
         return 2
 
     fmt = output_format.lower()
-    if fmt not in ("json", "graphml"):
-        console.print(f"[red]Error: invalid format '{output_format}'. Use json or graphml.[/red]")
+    if fmt not in ("json", "graphml", "dot", "gexf"):
+        console.print(
+            f"[red]Error: invalid format '{output_format}'. Use json, graphml, dot, or gexf.[/red]"
+        )
         return 2
 
     _, nodes, edges, _, _ = _get_or_build_graph(resolved_path)
 
+    try:
+        nodes, edges = filter_graph(nodes, edges, layer=layer, focus=focus, depth=depth)
+    except ValueError as err:
+        console.print(f"[red]Error: {err}[/red]")
+        return 2
+
     if fmt == "graphml":
         body = export_graphml(nodes, edges)
+    elif fmt == "dot":
+        body = export_dot(nodes, edges)
+    elif fmt == "gexf":
+        body = export_gexf(nodes, edges)
     else:
         body = export_json(nodes, edges)
 

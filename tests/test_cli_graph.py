@@ -74,6 +74,58 @@ def test_graph_export_graphml(tmp_path: Path) -> None:
     assert "</graphml>" in res.stdout
 
 
+def test_graph_export_dot_and_gexf(tmp_path: Path) -> None:
+    root = _setup_project(tmp_path)
+
+    # DOT format
+    res_dot = runner.invoke(app, ["graph", "export", str(root), "--format", "dot"])
+    assert res_dot.exit_code == 0
+    assert "digraph G {" in res_dot.stdout
+
+    # GEXF format
+    res_gexf = runner.invoke(app, ["graph", "export", str(root), "--format", "gexf"])
+    assert res_gexf.exit_code == 0
+    assert "<gexf" in res_gexf.stdout
+
+
+def test_graph_export_filtered_layer_and_focus(tmp_path: Path) -> None:
+    root = _setup_project(tmp_path)
+
+    # Filter by layer
+    res_layer = runner.invoke(
+        app, ["graph", "export", str(root), "--format", "json", "--layer", "symbol"]
+    )
+    assert res_layer.exit_code == 0
+    data = json.loads(res_layer.stdout)
+    assert len(data["edges"]) > 0
+
+    # Filter with invalid layer returns exit code 2
+    res_err = runner.invoke(
+        app, ["graph", "export", str(root), "--format", "json", "--layer", "nonexistent"]
+    )
+    assert res_err.exit_code == 2
+
+    # Filter by focus and depth
+    node_id = data["nodes"][0]["id"]
+    res_focus = runner.invoke(
+        app,
+        [
+            "graph",
+            "export",
+            str(root),
+            "--format",
+            "json",
+            "--focus",
+            node_id,
+            "--depth",
+            "1",
+        ],
+    )
+    assert res_focus.exit_code == 0
+    data_focus = json.loads(res_focus.stdout)
+    assert any(n["id"] == node_id for n in data_focus["nodes"])
+
+
 def test_graph_build(tmp_path: Path) -> None:
     root = _setup_project(tmp_path)
 

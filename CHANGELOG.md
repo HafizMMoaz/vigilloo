@@ -25,6 +25,7 @@ Ruleset hash: `b35162f4d187c91c`.
 
 ### Added
 
+- **Knowledge graph export formats and filtering** (TASK-117). Added DOT (Graphviz) and GEXF (Gephi/Cytoscape) export formats alongside existing JSON and GraphML serializers, and implemented `--layer`, `--focus`, and `--depth` ego-network graph filtering on `vigilloo graph export`.
 - **Repository layout subpackage reorganization** (TASK-116). Flat modules consolidated into dedicated subpackages (`vigilloo.parser`, `vigilloo.graph`, `vigilloo.security`, `vigilloo.analysis`, `vigilloo.workspace`, and `vigilloo.cli`) matching the target repository architecture, with backward-compatibility shims preserving existing imports.
 - **Crashing rule isolation** (TASK-115). Scan execution wraps rules in fault isolation so that an unhandled exception in an individual rule does not crash the scan. Failed rules are recorded in the scan manifest, warned on stderr, and reflected in exit code 3 when degraded.
 - **Declarative YAML rules** (TASK-114). Security rules can now be defined declaratively in YAML format with typed validation schemas, allowing framework and custom rules to be loaded safely without imperative logic.

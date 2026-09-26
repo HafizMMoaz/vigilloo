@@ -728,7 +728,7 @@ def graph_export_cmd(
         "json",
         "--format",
         "-f",
-        help="Export format (json, graphml).",
+        help="Export format (json, graphml, dot, gexf).",
     ),
     output: Path | None = typer.Option(  # noqa: B008
         None,
@@ -736,9 +736,33 @@ def graph_export_cmd(
         "--output",
         help="Output file path (prints to stdout if omitted).",
     ),
+    layer: str | None = typer.Option(
+        None,
+        "-l",
+        "--layer",
+        help="Filter graph by layer (symbol, call, framework, data_flow, dependency).",
+    ),
+    focus: str | None = typer.Option(
+        None,
+        "--focus",
+        help="Focus ego network on a specific node by ID, FQN, or name.",
+    ),
+    depth: int | None = typer.Option(
+        None,
+        "-d",
+        "--depth",
+        help="Neighborhood depth around focus node (defaults to 1).",
+    ),
 ) -> None:
-    """Export the knowledge graph to JSON or GraphML."""
-    code = run_graph_export(path=path, output_format=output_format, output_file=output)
+    """Export the knowledge graph to JSON, GraphML, DOT, or GEXF."""
+    code = run_graph_export(
+        path=path,
+        output_format=output_format,
+        output_file=output,
+        layer=layer,
+        focus=focus,
+        depth=depth,
+    )
     raise typer.Exit(code)
 
 
