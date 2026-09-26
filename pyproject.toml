@@ -46,8 +46,8 @@ build-backend = "setuptools.build_meta"
 #      silently omits it. Hatchling was dropped for this layout: it cannot do
 #      editable installs when sources renames a prefix.
 [tool.setuptools]
-package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel", "vigilloo.workspace" = "src/workspace", "vigilloo.analysis" = "src/analysis", "vigilloo.report" = "src/report", "vigilloo.deps" = "src/deps", "vigilloo.secrets" = "src/secrets", "vigilloo.sdk" = "src/sdk", "vigilloo.security" = "src/security", "vigilloo.parser" = "src/parser", "vigilloo.graph" = "src/graph" }
-packages = ["vigilloo", "vigilloo.laravel", "vigilloo.workspace", "vigilloo.analysis", "vigilloo.report", "vigilloo.deps", "vigilloo.secrets", "vigilloo.sdk", "vigilloo.security", "vigilloo.parser", "vigilloo.graph"]
+package-dir = { "vigilloo" = "src", "vigilloo.laravel" = "src/laravel", "vigilloo.workspace" = "src/workspace", "vigilloo.analysis" = "src/analysis", "vigilloo.report" = "src/report", "vigilloo.deps" = "src/deps", "vigilloo.secrets" = "src/secrets", "vigilloo.sdk" = "src/sdk", "vigilloo.security" = "src/security", "vigilloo.parser" = "src/parser", "vigilloo.graph" = "src/graph", "vigilloo.cli" = "src/cli" }
+packages = ["vigilloo", "vigilloo.laravel", "vigilloo.workspace", "vigilloo.analysis", "vigilloo.report", "vigilloo.deps", "vigilloo.secrets", "vigilloo.sdk", "vigilloo.security", "vigilloo.parser", "vigilloo.graph", "vigilloo.cli"]
 
 [tool.setuptools.package-data]
 "vigilloo.deps" = ["data/*.json"]
@@ -77,6 +77,7 @@ known-first-party = ["vigilloo"]
 # is to print to the terminal - not part of the scan pipeline T20 is guarding.
 [tool.ruff.lint.per-file-ignores]
 "src/cli.py" = ["T20"]
+"src/cli/**" = ["T20"]
 "src/report/terminal.py" = ["T20"]
 "scripts/dump_ast.py" = ["T20"]
 "scripts/debt.py" = ["T20"]

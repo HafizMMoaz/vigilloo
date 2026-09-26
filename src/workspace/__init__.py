@@ -9,7 +9,7 @@ docs/23-dev-guide section Security makes that question load-bearing: a crafted
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..config import VigillooConfig
+from .config import VigillooConfig
 
 # The store, the caches and the run manifest live here (docs/17-database). It belongs in
 # .gitignore, unlike vigilloo.yml and the baseline, which are committed.
@@ -63,3 +63,6 @@ class Workspace:
         if not candidate.is_relative_to(self.root):
             raise ValueError(f"path escapes the project root: {path}")
         return candidate
+
+
+__all__ = ["DIR_NAME", "Workspace"]

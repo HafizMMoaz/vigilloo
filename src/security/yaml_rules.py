@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from ..rules import Rule
+from .rules import Rule
 
 
 @dataclass(frozen=True)
