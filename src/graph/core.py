@@ -7,6 +7,7 @@ identity from the same Project would be a second place for the two to drift apar
 """
 
 import hashlib
+import sqlite3
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
@@ -14,13 +15,12 @@ from typing import TYPE_CHECKING
 
 from tree_sitter import Node
 
-from .config import VigillooConfig
-from .ids import node_id
-from .laravel.blade import to_php
-from .laravel.config import ProjectConfig, extract_project_config
-from .laravel.detect import Autoload, read_autoload
-from .laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
-from .models import (
+from ..config import VigillooConfig
+from ..laravel.blade import to_php
+from ..laravel.config import ProjectConfig, extract_project_config
+from ..laravel.detect import Autoload, read_autoload
+from ..laravel.routes import UNRESOLVED_MIDDLEWARE, extract_routes
+from ..models import (
     Coverage,
     EdgeRow,
     EntryPoint,
@@ -33,13 +33,13 @@ from .models import (
     TaintKind,
     WalkStats,
 )
+from .ids import node_id
 
 if TYPE_CHECKING:
-    from .summaries import FunctionSummary
-from .parser import (
+    from ..summaries import FunctionSummary
+from ..parser import (
     ParsedFile,
     collect_nodes,
-    error_constructs,
     extract_suppressions,
     find_all,
     node_span,
@@ -47,8 +47,11 @@ from .parser import (
     parse_php,
     parse_source,
 )
-from .symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
-from .workspace import Workspace
+from ..parser import (
+    error_constructs as error_constructs,
+)
+from ..symbols import ClassInfo, FileSymbols, extract_symbols, resolve_type_name
+from ..workspace import Workspace
 
 _EXCLUDED_DIRS = {"vendor", "node_modules", "storage", "bootstrap", ".git"}
 
@@ -90,6 +93,7 @@ class Project:
     config: ProjectConfig = field(default_factory=ProjectConfig)
     vigilloo_config: VigillooConfig = field(default_factory=VigillooConfig)
     suppressions: list[Suppression] = field(default_factory=list)
+    failed_rules: dict[str, str] = field(default_factory=dict)
     _method_node_cache: dict[str, tuple[Node, ParsedFile] | None] = field(
         default_factory=dict, init=False, repr=False, hash=False, compare=False
     )
@@ -349,18 +353,34 @@ def _blade_files(root: Path) -> list[Path]:
     return sorted(found)  # sorted for determinism
 
 
-def load_project(root: Path, stats: WalkStats | None = None) -> Project:
+def load_project(
+    root: Path,
+    stats: WalkStats | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> Project:
     # Read before any file is parsed: the autoload map is what tells the symbol layer
     # which written names are already fully qualified, so it has to exist before the
     # first symbol table is built. `Workspace.at` rather than `.open` because loading a
     # project reads and must not create `.vigilloo/` in a tree nobody asked to scan.
-    from .laravel.container import extract_bindings
-    from .laravel.entrypoints import find_entrypoints
+    from ..laravel.container import extract_bindings
+    from ..laravel.entrypoints import find_entrypoints
 
     workspace = Workspace.at(root)
     autoload = read_autoload(workspace)
     autoload_roots = autoload.prefixes
     project = Project(root=root, autoload=autoload, vigilloo_config=workspace.config)
+
+    opened_conn = False
+    if conn is None:
+        db_file = root / ".vigilloo" / "vigilloo.db"
+        if db_file.is_file():
+            try:
+                from . import store
+
+                conn = store.connect(workspace)
+                opened_conn = True
+            except Exception:
+                conn = None
 
     php_records = {}
     for path in _php_files(root):
@@ -395,9 +415,35 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         php_records[rel_path] = record
 
         project.suppressions.extend(extract_suppressions(record.comments, parsed))
-        syms = extract_symbols(
-            record.namespaces, record.imports, record.classes, record.traits, parsed, autoload_roots
-        )
+
+        from ..symbols import PARSER_VERSION
+        from . import store
+
+        file_sha = project.digests[rel_path]
+        cached_syms = None
+        if conn is not None:
+            try:
+                cached_syms = store.load_symbols(conn, file_sha, PARSER_VERSION)
+            except Exception:
+                cached_syms = None
+
+        if cached_syms is not None:
+            syms = cached_syms
+        else:
+            syms = extract_symbols(
+                record.namespaces,
+                record.imports,
+                record.classes,
+                record.traits,
+                parsed,
+                autoload_roots,
+            )
+            if conn is not None:
+                try:
+                    store.save_symbols(conn, file_sha, PARSER_VERSION, syms)
+                except Exception:
+                    pass
+
         project.symbols[rel_path] = syms
         project.classes.update(syms.classes)
         project.traits.update(syms.traits)
@@ -406,10 +452,13 @@ def load_project(root: Path, stats: WalkStats | None = None) -> Project:
         for interface, implementations in file_bindings.items():
             project.bindings.setdefault(interface, []).extend(implementations)
 
-    from .laravel.middleware import extract_middleware_groups
-    from .laravel.migrations import extract_schema
-    from .laravel.policies import extract_explicit_policies
-    from .laravel.routes import discover_route_files
+    if opened_conn and conn is not None:
+        conn.close()
+
+    from ..laravel.middleware import extract_middleware_groups
+    from ..laravel.migrations import extract_schema
+    from ..laravel.policies import extract_explicit_policies
+    from ..laravel.routes import discover_route_files
 
     properties_by_file = {p: r.properties for p, r in php_records.items()}
     scoped_calls_by_file = {p: r.scoped_calls for p, r in php_records.items()}
@@ -531,6 +580,7 @@ class _RowBuilder:
         self.nodes: list[NodeRow] = []
         self.edges: list[EdgeRow] = []
         self.unresolved_calls = 0
+        self._duck_cache: dict[str, list[tuple[str, str, float]]] = {}
 
     def _id(self, kind: str, fqn: str) -> str:
         return node_id(self.project_id, kind, fqn)
@@ -722,7 +772,12 @@ class _RowBuilder:
                     continue
                 short = node_text(name_node, parsed.source)
                 class_fqn = f"{syms.namespace}\\{short}" if syms.namespace else short
-                for method in find_all(cls, "method_declaration"):
+                body = cls.child_by_field_name("body")
+                if body is None:
+                    continue
+                for method in body.named_children:
+                    if method.type != "method_declaration":
+                        continue
                     m_name = method.child_by_field_name("name")
                     if m_name is None:
                         continue
@@ -746,7 +801,12 @@ class _RowBuilder:
                 # trait is followed even where this edge is absent. Upgrade trigger: a
                 # per-consumer call layer, which needs edges that can say which
                 # composition they belong to (docs/07-call-graph, `RESOLVES_TO`).
-                for method in find_all(trait, "method_declaration"):
+                body = trait.child_by_field_name("body")
+                if body is None:
+                    continue
+                for method in body.named_children:
+                    if method.type != "method_declaration":
+                        continue
                     m_name = method.child_by_field_name("name")
                     if m_name is None:
                         continue
@@ -782,7 +842,7 @@ class _RowBuilder:
         scoped_calls = []
         member_calls = []
 
-        from .parser import walk
+        from ..parser import walk
 
         for node in walk(method):
             t = node.type
@@ -933,12 +993,16 @@ class _RowBuilder:
             return results
 
         # Duck typing fallback
+        if method_name in self._duck_cache:
+            return self._duck_cache[method_name]
+
         candidates = []
         for cls_fqn in self.project.classes:
             if self.project.method(f"{cls_fqn}::{method_name}") is not None:
                 candidates.append(cls_fqn)
 
         if not candidates:
+            self._duck_cache[method_name] = []
             return []
 
         confidence = 0.4 if len(candidates) == 1 else 0.4 / len(candidates)
@@ -947,6 +1011,7 @@ class _RowBuilder:
             target = self.project.method(f"{candidate}::{method_name}")
             if target is not None:
                 results.append((target.fqn, "duck_type", confidence))
+        self._duck_cache[method_name] = results
         return results
 
     def _declares(self, parent_id: str, child_id: str) -> None:

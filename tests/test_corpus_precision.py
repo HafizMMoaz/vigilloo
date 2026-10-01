@@ -203,6 +203,32 @@ def test_scan_app_on_success_writes_a_report_that_round_trips(
     assert json.loads(out.read_text(encoding="utf-8")) == document
 
 
+def test_scan_app_on_findings_exit_1_writes_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`vigilloo scan` exits 1 when findings are found (docs/19-cli). scan_app must accept this."""
+    document = {
+        "findings": [{"rule_id": "test.rule", "fingerprint": "abc"}],
+        "coverage": {"parse_success_rate": 1.0},
+    }
+    stdout = json.dumps(document)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["vigilloo"], returncode=1, stdout=stdout, stderr=""
+        )
+
+    monkeypatch.setattr(corpus.subprocess, "run", fake_run)
+    root = tmp_path / "app"
+    root.mkdir()
+    out = tmp_path / "reports" / "demo.json"
+
+    result = scan_app("demo", root, out)
+
+    assert result == out
+    assert json.loads(out.read_text(encoding="utf-8")) == document
+
+
 def test_scan_app_removes_the_vigilloo_workspace_even_when_the_scan_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -490,3 +516,108 @@ def test_scan_continues_when_one_application_produces_unparseable_json(
     assert scanned == ["app1", "app2"]
     assert exit_code != 0
     assert "app1" in stdout
+
+
+def test_report_gate_passes_when_above_floor_and_zero_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from corpus import TriageEntry, main, save_triage
+
+    pins_file = tmp_path / "pins.yml"
+    pins_file.write_text(
+        yaml.safe_dump(
+            {"applications": {"app1": {"repo": "https://example.invalid", "pin": "a" * 40}}}
+        )
+    )
+    triage_dir = tmp_path / "triage"
+    triage_dir.mkdir()
+    save_triage(
+        triage_dir / "app1.yml",
+        pin="a" * 40,
+        ruleset="r" * 16,
+        entries={"fp1": TriageEntry(verdict="true", rule="rule.a", note="ok", seen_at="a:1")},
+    )
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    (reports_dir / "app1.json").write_text(
+        json.dumps({"findings": [{"rule_id": "rule.a", "fingerprint": "fp1"}]})
+    )
+
+    monkeypatch.setattr(corpus, "PINS", pins_file)
+    monkeypatch.setattr(corpus, "REPORTS", reports_dir)
+    monkeypatch.setattr(corpus, "CORPUS", tmp_path)
+
+    exit_code = main(["report", "--gate", "--precision-floor", "0.90"])
+    stdout = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Overall precision: 100.0%" in stdout
+
+
+def test_report_gate_fails_when_below_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from corpus import TriageEntry, main, save_triage
+
+    pins_file = tmp_path / "pins.yml"
+    pins_file.write_text(
+        yaml.safe_dump(
+            {"applications": {"app1": {"repo": "https://example.invalid", "pin": "a" * 40}}}
+        )
+    )
+    triage_dir = tmp_path / "triage"
+    triage_dir.mkdir()
+    save_triage(
+        triage_dir / "app1.yml",
+        pin="a" * 40,
+        ruleset="r" * 16,
+        entries={"fp1": TriageEntry(verdict="false", rule="rule.a", note="fp", seen_at="a:1")},
+    )
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    (reports_dir / "app1.json").write_text(
+        json.dumps({"findings": [{"rule_id": "rule.a", "fingerprint": "fp1"}]})
+    )
+
+    monkeypatch.setattr(corpus, "PINS", pins_file)
+    monkeypatch.setattr(corpus, "REPORTS", reports_dir)
+    monkeypatch.setattr(corpus, "CORPUS", tmp_path)
+
+    exit_code = main(["report", "--gate", "--precision-floor", "0.90"])
+    stdout = capsys.readouterr().out
+    assert exit_code == 1
+    assert "GATE FAILED: precision 0.0% below floor 90.0%" in stdout
+
+
+def test_report_gate_fails_when_unreviewed_findings_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from corpus import TriageEntry, main, save_triage
+
+    pins_file = tmp_path / "pins.yml"
+    pins_file.write_text(
+        yaml.safe_dump(
+            {"applications": {"app1": {"repo": "https://example.invalid", "pin": "a" * 40}}}
+        )
+    )
+    triage_dir = tmp_path / "triage"
+    triage_dir.mkdir()
+    save_triage(
+        triage_dir / "app1.yml",
+        pin="a" * 40,
+        ruleset="r" * 16,
+        entries={"fp1": TriageEntry(verdict="unreviewed", rule="rule.a", note="", seen_at="a:1")},
+    )
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    (reports_dir / "app1.json").write_text(
+        json.dumps({"findings": [{"rule_id": "rule.a", "fingerprint": "fp1"}]})
+    )
+
+    monkeypatch.setattr(corpus, "PINS", pins_file)
+    monkeypatch.setattr(corpus, "REPORTS", reports_dir)
+    monkeypatch.setattr(corpus, "CORPUS", tmp_path)
+
+    exit_code = main(["report", "--gate"])
+    stdout = capsys.readouterr().out
+    assert exit_code == 1
+    assert "GATE FAILED: 1 findings awaiting review" in stdout

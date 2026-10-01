@@ -103,13 +103,7 @@ dependency, and nothing in core may assume Cypher.
 Whole-graph export at scale is unusable as a picture, so `--focus` + `--depth` (ego network
 around a node) is the primary interactive mode. Report diagrams show the taint path only.
 
-**What is built today: the JSON and GraphML serialisers only, in `vigilloo.graph_export`, as
-two functions over a project's nodes and edges.** DOT, GEXF, `--layer`, `--focus`, `--depth`
-and the `vigilloo graph` command itself are still specified only - the CLI surface is its own
-task, and the whole-graph filters above are what makes it worth designing once rather than
-growing an option at a time. Both serialisers accept either the rows a scan has just built or
-the rows read back out of SQLite by `store.graph_for_project`, so exporting a project scanned
-earlier never means re-analysing it.
+**What is built today: JSON, GraphML, DOT, and GEXF serialisers in `vigilloo.graph.export` (and re-exported in `vigilloo.graph_export`), along with `filter_graph` for `--layer`, `--focus`, and `--depth` ego-network filtering.** The `vigilloo graph export` command surfaces all four formats and filtering options. All serialisers accept either the rows a scan has just built or the rows read back out of SQLite by `store.graph_for_project`, so exporting a project scanned earlier never means re-analysing it.
 
 The persisted symbol/call layer also includes trait nodes and `USES_TRAIT` edges. Calls to
 inherited or trait-provided methods point at the method node that actually declares the body,

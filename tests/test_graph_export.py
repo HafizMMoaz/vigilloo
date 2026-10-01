@@ -11,7 +11,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from vigilloo.graph import GraphRows, Project, graph_rows, load_project
-from vigilloo.graph_export import export_graphml, export_json
+from vigilloo.graph_export import (
+    export_dot,
+    export_gexf,
+    export_graphml,
+    export_json,
+    filter_graph,
+)
 from vigilloo.models import EdgeRow, NodeRow
 from vigilloo.store import connect, graph_for_project, record_scan
 from vigilloo.workspace import Workspace
@@ -238,3 +244,100 @@ def test_a_second_read_of_the_store_exports_the_same_bytes(fixture_project: Path
     second = graph_for_project(conn, project_id)
     assert export_json(*first) == export_json(*second)
     assert export_graphml(*first) == export_graphml(*second)
+    assert export_dot(*first) == export_dot(*second)
+    assert export_gexf(*first) == export_gexf(*second)
+
+
+# ─── DOT & GEXF ─────────────────────────────────────────────────────────────
+
+
+def test_two_dot_exports_of_the_same_project_are_byte_identical() -> None:
+    first, second = _fixture_rows(), _fixture_rows()
+    assert (
+        export_dot(first.nodes, first.edges).encode()
+        == export_dot(second.nodes, second.edges).encode()
+    )
+
+
+def test_two_gexf_exports_of_the_same_project_are_byte_identical() -> None:
+    first, second = _fixture_rows(), _fixture_rows()
+    assert (
+        export_gexf(first.nodes, first.edges).encode()
+        == export_gexf(second.nodes, second.edges).encode()
+    )
+
+
+def test_dot_export_contains_digraph_and_nodes_edges() -> None:
+    rows = _fixture_rows()
+    dot = export_dot(rows.nodes, rows.edges)
+    assert dot.startswith("digraph G {")
+    assert dot.strip().endswith("}")
+    assert "rankdir=LR;" in dot
+    for node in rows.nodes[:5]:
+        assert f'"{node.id}"' in dot
+
+
+def test_gexf_export_contains_xml_attributes_nodes_edges() -> None:
+    rows = _fixture_rows()
+    gexf = export_gexf(rows.nodes, rows.edges)
+    assert gexf.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+    assert "<gexf" in gexf
+    assert "</gexf>" in gexf
+    assert '<graph mode="static" defaultedgetype="directed">' in gexf
+    for node in rows.nodes[:5]:
+        assert f'id="{node.id}"' in gexf
+
+
+# ─── Graph Filtering ────────────────────────────────────────────────────────
+
+
+def test_filter_graph_by_layer() -> None:
+    rows = _fixture_rows()
+    # Filter by symbol layer
+    sym_nodes, sym_edges = filter_graph(rows.nodes, rows.edges, layer="symbol")
+    assert len(sym_edges) > 0
+    assert len(sym_edges) < len(rows.edges)
+    assert all(
+        e.kind in {"EXTENDS", "IMPLEMENTS", "USES_TRAIT", "DECLARES", "IMPORTS"} for e in sym_edges
+    )
+    # Filter by framework layer
+    fw_nodes, fw_edges = filter_graph(rows.nodes, rows.edges, layer="framework")
+    assert len(fw_edges) > 0
+    assert all(
+        e.kind in {"HANDLES", "PROTECTED_BY", "RENDERS", "AUTHORIZES", "BINDS", "DISPATCHES"}
+        for e in fw_edges
+    )
+
+
+def test_filter_graph_unknown_layer_raises() -> None:
+    rows = _fixture_rows()
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown layer 'invalid'"):
+        filter_graph(rows.nodes, rows.edges, layer="invalid")
+
+
+def test_filter_graph_by_focus_and_depth() -> None:
+    rows = _fixture_rows()
+    # Pick a route node
+    route_nodes = [n for n in rows.nodes if n.kind == "route"]
+    assert len(route_nodes) > 0
+    target_route = route_nodes[0]
+
+    # Focus on this route with depth 1
+    f_nodes, f_edges = filter_graph(rows.nodes, rows.edges, focus=target_route.id, depth=1)
+    assert len(f_nodes) > 0
+    assert any(n.id == target_route.id for n in f_nodes)
+    assert len(f_nodes) < len(rows.nodes)
+
+    # Focus with depth 0 should return only the matching node itself
+    f0_nodes, f0_edges = filter_graph(rows.nodes, rows.edges, focus=target_route.id, depth=0)
+    assert len(f0_nodes) == 1
+    assert f0_nodes[0].id == target_route.id
+
+
+def test_filter_graph_nonexistent_focus_returns_empty() -> None:
+    rows = _fixture_rows()
+    f_nodes, f_edges = filter_graph(rows.nodes, rows.edges, focus="completely_nonexistent_node_id")
+    assert f_nodes == []
+    assert f_edges == []

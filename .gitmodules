@@ -1,3 +1,9 @@
 [submodule "corpus/laravel-skeleton"]
 	path = corpus/laravel-skeleton
 	url = https://github.com/laravel/laravel.git
+[submodule "corpus/monica"]
+	path = corpus/monica
+	url = https://github.com/monicahq/monica.git
+[submodule "corpus/koel"]
+	path = corpus/koel
+	url = https://github.com/koel/koel.git

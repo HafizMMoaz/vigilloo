@@ -1,0 +1,32 @@
+id: php.sql-injection
+title: SQL Injection
+severity: critical
+confidence: 1.0
+cwe:
+  - CWE-89
+owasp:
+  - "A03:2021"
+kind: TAINT
+languages:
+  - php
+frameworks:
+  - laravel
+remediation: >-
+  Pass user input as a query binding rather than interpolating it into the SQL string, or validate it against an allowlist. For an ORDER BY direction: $dir = $sort === 'asc' ? 'asc' : 'desc';
+taint_kind: sql
+sources:
+  - laravel.request.*
+  - php.superglobal.*
+sinks:
+  - laravel.db.raw
+  - laravel.query.where_raw
+  - php.pdo.query
+  - php.mysqli.query
+sanitizers:
+  - php.intval
+  - laravel.query.binding
+  - php.cast.int
+require_reachable_from:
+  - route
+  - command
+  - job

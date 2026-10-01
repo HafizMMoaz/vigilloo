@@ -1,0 +1,78 @@
+findings:
+  001acbf74429e4cc:
+    note: Unsanitized getClientOriginalName() used as destination filename in temporary storage.
+    rule: laravel.unsafe-upload
+    seen_at: app/Services/SongStorages/Concerns/MovesUploadedFile.php:19
+    verdict: 'true'
+  027b5a37d51773ab:
+    note: env() called directly inside migration file rather than reading from config.
+    rule: laravel.env-outside-config
+    seen_at: database/migrations/2025_05_17_131024_add_folders_table.php:11
+    verdict: 'true'
+  05a22e58a4c00140:
+    note: Unescaped record path logged directly via Log::info.
+    rule: php.log-injection
+    seen_at: app/Services/Scanners/WatchRecordScanner.php:54
+    verdict: 'true'
+  07289a81f5d92945:
+    note: Session cookie secure flag is hardcoded to false.
+    rule: laravel.session-cookie
+    seen_at: config/session.php:1
+    verdict: 'true'
+  1641e5fa64ff493f:
+    note: Unescaped directory record path logged directly via Log::info.
+    rule: php.log-injection
+    seen_at: app/Services/Scanners/WatchRecordScanner.php:41
+    verdict: 'true'
+  3958d71964acc447:
+    note: Unescaped file record path logged directly via Log::info.
+    rule: php.log-injection
+    seen_at: app/Services/Scanners/WatchRecordScanner.php:29
+    verdict: 'true'
+  3fbecf307ddae39a:
+    note: env() called directly inside console command.
+    rule: laravel.env-outside-config
+    seen_at: app/Console/Commands/Storage/SetupDropboxStorageCommand.php:39
+    verdict: 'true'
+  4b01f7080e84cd23:
+    note: Unsanitized getClientOriginalName() used as destination filename in UploadController.
+    rule: laravel.unsafe-upload
+    seen_at: app/Http/Controllers/API/UploadController.php:38
+    verdict: 'true'
+  6034ca40e595880f:
+    note: env() called in RouteServiceProvider.
+    rule: laravel.env-outside-config
+    seen_at: app/Providers/RouteServiceProvider.php:31
+    verdict: 'true'
+  63f0f37e4088bda2:
+    note: Unescaped directory scan path logged directly via Log::info.
+    rule: php.log-injection
+    seen_at: app/Services/Scanners/WatchRecordScanner.php:84
+    verdict: 'true'
+  77eca694519b594c:
+    note: Unescaped deletion count and path logged directly via Log::info.
+    rule: php.log-injection
+    seen_at: app/Services/Scanners/WatchRecordScanner.php:72
+    verdict: 'true'
+  bfb7e46c7cb32849:
+    note: Unescaped scan path logged directly via Log::info.
+    rule: php.log-injection
+    seen_at: app/Services/Scanners/WatchRecordScanner.php:61
+    verdict: 'true'
+  d93c9c28e22b5ce1:
+    note: Unescaped watch record path logged directly via Log::info.
+    rule: php.log-injection
+    seen_at: app/Services/Scanners/WatchRecordScanner.php:17
+    verdict: 'true'
+  e9fa76bf00115ae6:
+    note: env() called directly inside console command.
+    rule: laravel.env-outside-config
+    seen_at: app/Console/Commands/Storage/SetupDropboxStorageCommand.php:38
+    verdict: 'true'
+  eb85666e3f669a79:
+    note: Unescaped path logged directly via Log::info.
+    rule: php.log-injection
+    seen_at: app/Services/Scanners/WatchRecordScanner.php:74
+    verdict: 'true'
+pin: 90adda2ad867d7a6b9ac76ac5396d366619b411b
+reviewed_ruleset: b35162f4d187c91c

@@ -1,0 +1,122 @@
+[
+  {
+    "id": "GHSA-c24v-8rfc-w8vw",
+    "cve": "CVE-2022-31090",
+    "package_name": "guzzlehttp/guzzle",
+    "affected_range": "<6.5.8 || >=7.0.0,<7.4.5",
+    "fixed_version": "7.4.5",
+    "severity": "high",
+    "cvss": 7.5,
+    "cwe": "CWE-200",
+    "summary": "CURLOPT_HTTPAUTH environment variable bypass on cross-domain redirect",
+    "functions": ["send", "request", "sendAsync", "requestAsync"]
+  },
+  {
+    "id": "GHSA-25mq-v84q-4j7r",
+    "cve": "CVE-2022-31091",
+    "package_name": "guzzlehttp/guzzle",
+    "affected_range": "<6.5.8 || >=7.0.0,<7.4.5",
+    "fixed_version": "7.4.5",
+    "severity": "medium",
+    "cvss": 6.1,
+    "cwe": "CWE-200",
+    "summary": "Change in request headers on cross-origin redirects leaks Authorization header",
+    "functions": ["send", "request"]
+  },
+  {
+    "id": "GHSA-vfrx-2qhj-5pg8",
+    "cve": "CVE-2022-21658",
+    "package_name": "monolog/monolog",
+    "affected_range": ">=2.0.0,<2.3.5",
+    "fixed_version": "2.3.5",
+    "severity": "high",
+    "cvss": 7.8,
+    "cwe": "CWE-78",
+    "summary": "Formatting of logs may execute code through ProcessHandler",
+    "functions": ["handle", "addRecord"]
+  },
+  {
+    "id": "GHSA-562v-m2j3-cw26",
+    "cve": "CVE-2022-24894",
+    "package_name": "symfony/http-kernel",
+    "affected_range": ">=2.0.0,<4.4.50 || >=5.0.0,<5.4.20 || >=6.0.0,<6.0.20 || >=6.1.0,<6.1.12 || >=6.2.0,<6.2.6",
+    "fixed_version": "6.2.6",
+    "severity": "high",
+    "cvss": 7.5,
+    "cwe": "CWE-524",
+    "summary": "HttpCache allows storing response with sensitive cookie",
+    "functions": ["handle", "terminate"]
+  },
+  {
+    "id": "GHSA-cf4h-m557-h7pw",
+    "cve": "CVE-2022-24895",
+    "package_name": "symfony/http-foundation",
+    "affected_range": ">=2.0.0,<4.4.50 || >=5.0.0,<5.4.20 || >=6.0.0,<6.0.20 || >=6.1.0,<6.1.12 || >=6.2.0,<6.2.6",
+    "fixed_version": "6.2.6",
+    "severity": "medium",
+    "cvss": 5.3,
+    "cwe": "CWE-200",
+    "summary": "HeaderUtils::parseCookieResponse can be tricked into opening cookie security",
+    "functions": ["parseCookieResponse"]
+  },
+  {
+    "id": "GHSA-3p32-j457-345p",
+    "cve": "CVE-2021-43808",
+    "package_name": "laravel/framework",
+    "affected_range": ">=8.0.0,<8.75.0",
+    "fixed_version": "8.75.0",
+    "severity": "high",
+    "cvss": 7.2,
+    "cwe": "CWE-79",
+    "summary": "Possible XSS in Blade Component attribute rendering",
+    "functions": ["render", "toHtml"]
+  },
+  {
+    "id": "GHSA-95v8-f9m5-77v7",
+    "cve": "CVE-2022-40737",
+    "package_name": "laravel/framework",
+    "affected_range": ">=9.0.0,<9.32.0",
+    "fixed_version": "9.32.0",
+    "severity": "medium",
+    "cvss": 6.5,
+    "cwe": "CWE-384",
+    "summary": "Session fixation in password confirmation flow",
+    "functions": ["confirmPassword"]
+  },
+  {
+    "id": "GHSA-5927-43am-9572",
+    "cve": "CVE-2021-32708",
+    "package_name": "league/flysystem",
+    "affected_range": ">=1.0.0,<1.1.4",
+    "fixed_version": "1.1.4",
+    "severity": "high",
+    "cvss": 7.5,
+    "cwe": "CWE-22",
+    "summary": "Whitespace in filename leads to directory traversal in AWS S3 adapter",
+    "functions": ["write", "writeStream", "read"]
+  },
+  {
+    "id": "GHSA-2w8c-7v93-5735",
+    "cve": "CVE-2020-7634",
+    "package_name": "phpunit/phpunit",
+    "affected_range": "<7.5.20 || >=8.0.0,<8.5.1 || >=9.0.0,<9.0.1",
+    "fixed_version": "9.0.1",
+    "severity": "critical",
+    "cvss": 9.8,
+    "cwe": "CWE-78",
+    "summary": "Remote code execution via PHPUnit test runner configuration file",
+    "functions": ["run"]
+  },
+  {
+    "id": "GHSA-7955-v6wf-2cqw",
+    "cve": "CVE-2023-38146",
+    "package_name": "phpoffice/phpspreadsheet",
+    "affected_range": "<1.29.0",
+    "fixed_version": "1.29.0",
+    "severity": "high",
+    "cvss": 7.5,
+    "cwe": "CWE-611",
+    "summary": "XML External Entity (XXE) injection in XML file parser",
+    "functions": ["load", "loadIntoExisting"]
+  }
+]
